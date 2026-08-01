@@ -15,11 +15,14 @@ import {
   Copy,
   Download,
   Eye,
+  EyeOff,
   FileSpreadsheet,
   Filter,
   History,
   Loader2,
+  Lock,
   LockKeyhole,
+  LogOut,
   Mail,
   Menu,
   MessageCircle,
@@ -39,6 +42,7 @@ import {
   Sun,
   Trash2,
   Upload,
+  User,
   UserCheck,
   UserCog,
   Users,
@@ -78,6 +82,7 @@ type ModuleConfig = {
 type RowRecord = Record<string, string> & { id: string };
 type RecordsByModule = Record<ModuleKey, RowRecord[]>;
 type ToastState = { type: "success" | "error"; message: string } | null;
+type ActivityEntry = { id: string; message: string; moduleKey: ModuleKey; row: RowRecord | null };
 
 const modules: ModuleConfig[] = [
   {
@@ -629,8 +634,159 @@ const VIEW_ACTION_LABELS = new Set([
 ]);
 
 const PAGE_SIZE = 6;
+const AUTH_STORAGE_KEY = "qualify-learn-crm-auth";
+const VALID_USERNAME = "qualifylearncrm";
+const VALID_PASSWORD = "crmworkingphase";
 
-export default function SuperAdminPage() {
+export default function AuthGate() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const stored =
+      window.localStorage.getItem(AUTH_STORAGE_KEY) === "true" || window.sessionStorage.getItem(AUTH_STORAGE_KEY) === "true";
+    setAuthed(stored);
+  }, []);
+
+  function handleLoginSuccess(remember: boolean) {
+    if (remember) {
+      window.localStorage.setItem(AUTH_STORAGE_KEY, "true");
+    } else {
+      window.sessionStorage.setItem(AUTH_STORAGE_KEY, "true");
+    }
+    setAuthed(true);
+  }
+
+  function handleLogout() {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    setAuthed(false);
+  }
+
+  if (authed === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex size-12 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!authed) {
+    return <LoginScreen onSuccess={handleLoginSuccess} />;
+  }
+
+  return <SuperAdminPage onLogout={handleLogout} />;
+}
+
+function LoginScreen({ onSuccess }: { onSuccess: (remember: boolean) => void }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    window.setTimeout(() => {
+      if (username === VALID_USERNAME && password === VALID_PASSWORD) {
+        setError("");
+        onSuccess(rememberMe);
+      } else {
+        setError("Invalid Username or Password.");
+      }
+      setSubmitting(false);
+    }, 320);
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+      <div className="w-full max-w-md">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <div className="mb-4 flex size-16 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
+          </div>
+          <h1 className="text-2xl font-bold">Welcome back</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in to the Qualify Learn Super Admin CRM</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="rounded-2xl border bg-card p-6 shadow-soft sm:p-8">
+          <div className="space-y-4">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-semibold">Username</span>
+              <div className="relative">
+                <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                  placeholder="Enter your username"
+                  autoComplete="username"
+                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                />
+              </div>
+            </label>
+
+            <label className="block space-y-1.5">
+              <span className="text-sm font-semibold">Password</span>
+              <div className="relative">
+                <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-10 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((value) => !value)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </button>
+              </div>
+            </label>
+
+            {error ? (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 dark:bg-red-950 dark:text-red-200">{error}</p>
+            ) : null}
+
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={(event) => setRememberMe(event.target.checked)}
+                  className="size-4 rounded border-input accent-teal-600"
+                />
+                Remember me
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
+              Sign In
+            </button>
+          </div>
+        </form>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">Qualify Learn - Empowering Minds, Elevating Futures.</p>
+      </div>
+    </div>
+  );
+}
+
+function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   const [activeKey, setActiveKey] = useState<ModuleKey>("reports");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState(() => modules.find((module) => module.key === "reports")?.filters[0] ?? "All");
@@ -641,7 +797,9 @@ export default function SuperAdminPage() {
   const [editingRecord, setEditingRecord] = useState<RowRecord | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
-  const [activityLog, setActivityLog] = useState<string[]>(recentActivities);
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() =>
+    recentActivities.map((message, index) => ({ id: `seed-${index}`, message, moduleKey: "reports", row: null }))
+  );
   const [toast, setToast] = useState<ToastState>(null);
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [dark, setDark] = useState(false);
@@ -734,8 +892,59 @@ export default function SuperAdminPage() {
     window.setTimeout(() => setToast(null), 2600);
   }
 
-  function logActivity(message: string) {
-    setActivityLog((current) => [message, ...current].slice(0, 8));
+  function logActivity(message: string, moduleKey: ModuleKey, row: RowRecord | null) {
+    const entry: ActivityEntry = { id: `activity-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, message, moduleKey, row };
+    setActivityLog((current) => [entry, ...current].slice(0, 8));
+  }
+
+  function viewActivityRecord(moduleKey: ModuleKey, row: RowRecord) {
+    const targetModule = modules.find((module) => module.key === moduleKey);
+    if (!targetModule) return;
+    const currentRow = (recordsByModule[moduleKey] ?? []).find((item) => item.id === row.id);
+    if (!currentRow) {
+      showToast({ type: "error", message: "This record no longer exists." });
+      return;
+    }
+    setActiveKey(moduleKey);
+    setFilter(targetModule.filters[0] ?? "All");
+    setEditingRecord(currentRow);
+    setModalMode("view");
+    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, currentRow[column] ?? ""])));
+    setModalOpen(true);
+  }
+
+  function editActivityRecord(moduleKey: ModuleKey, row: RowRecord) {
+    const targetModule = modules.find((module) => module.key === moduleKey);
+    if (!targetModule) return;
+    const currentRow = (recordsByModule[moduleKey] ?? []).find((item) => item.id === row.id);
+    if (!currentRow) {
+      showToast({ type: "error", message: "This record no longer exists." });
+      return;
+    }
+    setActiveKey(moduleKey);
+    setFilter(targetModule.filters[0] ?? "All");
+    setEditingRecord(currentRow);
+    setModalMode("edit");
+    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, currentRow[column] ?? ""])));
+    setModalOpen(true);
+  }
+
+  function deleteActivityRecord(moduleKey: ModuleKey, row: RowRecord) {
+    const targetModule = modules.find((module) => module.key === moduleKey);
+    if (!targetModule) return;
+    const exists = (recordsByModule[moduleKey] ?? []).some((item) => item.id === row.id);
+    if (!exists) {
+      showToast({ type: "error", message: "This record no longer exists." });
+      return;
+    }
+    const confirmed = window.confirm(`Delete this ${targetModule.title} record? This cannot be undone.`);
+    if (!confirmed) return;
+    setRecordsByModule((current) => ({
+      ...current,
+      [moduleKey]: (current[moduleKey] ?? []).filter((item) => item.id !== row.id)
+    }));
+    showToast({ type: "success", message: `${targetModule.title} record deleted.` });
+    logActivity(`Deleted a ${targetModule.title} record.`, moduleKey, null);
   }
 
   function openCreateModal() {
@@ -802,26 +1011,24 @@ export default function SuperAdminPage() {
         [activeKey]: [newRecord, ...(current[activeKey] ?? [])]
       }));
       showToast({ type: "success", message: `${activeModule.title} record created.` });
-      logActivity(`Created a new ${activeModule.title} record.`);
+      logActivity(`Created a new ${activeModule.title} record.`, activeKey, newRecord);
       setModalOpen(false);
       return;
     }
 
     if (!editingRecord) return;
 
+    const updatedRecord: RowRecord = {
+      ...editingRecord,
+      ...Object.fromEntries(activeModule.columns.map((column) => [column, formData[column]]))
+    };
+
     setRecordsByModule((current) => ({
       ...current,
-      [activeKey]: (current[activeKey] ?? []).map((row) =>
-        row.id === editingRecord.id
-          ? {
-              ...row,
-              ...Object.fromEntries(activeModule.columns.map((column) => [column, formData[column]]))
-            }
-          : row
-      )
+      [activeKey]: (current[activeKey] ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
     }));
     showToast({ type: "success", message: `${activeModule.title} record updated.` });
-    logActivity(`Updated a ${activeModule.title} record.`);
+    logActivity(`Updated a ${activeModule.title} record.`, activeKey, updatedRecord);
     setModalOpen(false);
     setEditingRecord(null);
   }
@@ -834,7 +1041,7 @@ export default function SuperAdminPage() {
       [activeKey]: (current[activeKey] ?? []).filter((item) => item.id !== row.id)
     }));
     showToast({ type: "success", message: `${activeModule.title} record deleted.` });
-    logActivity(`Deleted a ${activeModule.title} record.`);
+    logActivity(`Deleted a ${activeModule.title} record.`, activeKey, null);
   }
 
   function duplicateRecord(row: RowRecord) {
@@ -844,7 +1051,7 @@ export default function SuperAdminPage() {
       [activeKey]: [clone, ...(current[activeKey] ?? [])]
     }));
     showToast({ type: "success", message: `${activeModule.title} record duplicated.` });
-    logActivity(`Duplicated a ${activeModule.title} record.`);
+    logActivity(`Duplicated a ${activeModule.title} record.`, activeKey, clone);
   }
 
   function cycleFilter() {
@@ -867,7 +1074,7 @@ export default function SuperAdminPage() {
       leads: (current.leads ?? []).map((row) => (row.Duplicate === "Possible" ? { ...row, Duplicate: "Merged" } : row))
     }));
     showToast({ type: "success", message: `${possibleCount} duplicate lead${possibleCount === 1 ? "" : "s"} merged.` });
-    logActivity(`Merged ${possibleCount} duplicate lead${possibleCount === 1 ? "" : "s"}.`);
+    logActivity(`Merged ${possibleCount} duplicate lead${possibleCount === 1 ? "" : "s"}.`, "leads", null);
   }
 
   function triggerImport(moduleKey: ModuleKey = activeKey) {
@@ -910,7 +1117,11 @@ export default function SuperAdminPage() {
         type: "success",
         message: `${imported.length} record${imported.length === 1 ? "" : "s"} imported into ${targetModule.title}.`
       });
-      logActivity(`Imported ${imported.length} record${imported.length === 1 ? "" : "s"} into ${targetModule.title}.`);
+      logActivity(
+        `Imported ${imported.length} record${imported.length === 1 ? "" : "s"} into ${targetModule.title}.`,
+        targetKey,
+        imported[0] ?? null
+      );
     };
     reader.readAsText(file);
   }
@@ -921,7 +1132,7 @@ export default function SuperAdminPage() {
     if (label === "Export CSV" || label === "Export Excel" || label === "Export Trail") {
       exportRecordsToCsv(activeModule, rows);
       showToast({ type: "success", message: `${rows.length} ${activeModule.title} record${rows.length === 1 ? "" : "s"} exported.` });
-      logActivity(`Exported ${rows.length} ${activeModule.title} record${rows.length === 1 ? "" : "s"}.`);
+      logActivity(`Exported ${rows.length} ${activeModule.title} record${rows.length === 1 ? "" : "s"}.`, activeKey, null);
       return;
     }
 
@@ -934,7 +1145,7 @@ export default function SuperAdminPage() {
       setIsLoading(true);
       window.setTimeout(() => setIsLoading(false), 480);
       showToast({ type: "success", message: "Report refreshed with the latest data." });
-      logActivity("Refreshed the reports dashboard.");
+      logActivity("Refreshed the reports dashboard.", activeKey, null);
       return;
     }
 
@@ -945,7 +1156,7 @@ export default function SuperAdminPage() {
 
     if (label === "Set Reminder") {
       showToast({ type: "success", message: "Reminder scheduled for the selected records." });
-      logActivity("Scheduled a reminder for pending records.");
+      logActivity("Scheduled a reminder for pending records.", activeKey, null);
       return;
     }
 
@@ -980,12 +1191,12 @@ export default function SuperAdminPage() {
     if (!leadsModule) return;
     exportRecordsToCsv(leadsModule, leadRows);
     showToast({ type: "success", message: `${leadRows.length} lead record${leadRows.length === 1 ? "" : "s"} exported.` });
-    logActivity(`Exported ${leadRows.length} lead record${leadRows.length === 1 ? "" : "s"}.`);
+    logActivity(`Exported ${leadRows.length} lead record${leadRows.length === 1 ? "" : "s"}.`, "leads", null);
   }
 
   function quickSendReminder() {
     showToast({ type: "success", message: "Payment reminders sent to customers with pending balances." });
-    logActivity("Sent payment reminders to customers with pending balances.");
+    logActivity("Sent payment reminders to customers with pending balances.", "payments", null);
   }
 
   function quickAssignTask() {
@@ -1021,6 +1232,11 @@ export default function SuperAdminPage() {
           activityLog={activityLog}
           searchResults={globalSearchResults}
           onSearchResultClick={goToSearchResult}
+          onLogout={onLogout}
+          onViewActivity={viewActivityRecord}
+          onEditActivity={editActivityRecord}
+          onDeleteActivity={deleteActivityRecord}
+          onCreateForModule={openCreateModalFor}
         />
 
         <div className="flex">
@@ -1144,6 +1360,10 @@ export default function SuperAdminPage() {
                     onSendReminder={quickSendReminder}
                     onAssignTask={quickAssignTask}
                     onRefresh={refreshCurrentModule}
+                    onViewActivity={viewActivityRecord}
+                    onEditActivity={editActivityRecord}
+                    onDeleteActivity={deleteActivityRecord}
+                    onCreateForModule={openCreateModalFor}
                   />
                 ) : (
                   <ModuleChartSection module={activeModule} records={activeRecords} />
@@ -1287,7 +1507,12 @@ function TopNavbar({
   onNewClick,
   activityLog,
   searchResults,
-  onSearchResultClick
+  onSearchResultClick,
+  onLogout,
+  onViewActivity,
+  onEditActivity,
+  onDeleteActivity,
+  onCreateForModule
 }: {
   dark: boolean;
   onToggleDark: () => void;
@@ -1295,12 +1520,18 @@ function TopNavbar({
   searchValue: string;
   onSearchChange: (value: string) => void;
   onNewClick: () => void;
-  activityLog: string[];
+  activityLog: ActivityEntry[];
   searchResults: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }>;
   onSearchResultClick: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onLogout: () => void;
+  onViewActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onEditActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onDeleteActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onCreateForModule: (moduleKey: ModuleKey) => void;
 }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b bg-card px-4 shadow-sm xl:px-6">
@@ -1389,15 +1620,61 @@ function TopNavbar({
           {notifOpen ? (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setNotifOpen(false)} />
-              <div className="absolute right-0 top-12 z-20 w-72 overflow-hidden rounded-xl border bg-card shadow-soft">
+              <div className="absolute right-0 top-12 z-20 w-80 overflow-hidden rounded-xl border bg-card shadow-soft">
                 <div className="border-b px-4 py-3 text-sm font-bold">Notifications</div>
-                <div className="max-h-72 overflow-y-auto">
+                <div className="max-h-96 overflow-y-auto">
                   {activityLog.length === 0 ? (
                     <p className="px-4 py-6 text-center text-sm text-muted-foreground">No activity yet.</p>
                   ) : (
-                    activityLog.slice(0, 6).map((item, index) => (
-                      <div key={`${index}-${item}`} className="border-b px-4 py-3 text-sm last:border-b-0">
-                        {item}
+                    activityLog.slice(0, 6).map((item) => (
+                      <div key={item.id} className="border-b px-4 py-3 last:border-b-0">
+                        <p className="text-sm">{item.message}</p>
+                        <div className="mt-2 flex items-center gap-1.5">
+                          {item.row ? (
+                            <>
+                              <button
+                                onClick={() => {
+                                  if (item.row) onViewActivity(item.moduleKey, item.row);
+                                  setNotifOpen(false);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                              >
+                                <Eye className="size-3" />
+                                View
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (item.row) onEditActivity(item.moduleKey, item.row);
+                                  setNotifOpen(false);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                              >
+                                <Pencil className="size-3" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (item.row) onDeleteActivity(item.moduleKey, item.row);
+                                  setNotifOpen(false);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                              >
+                                <Trash2 className="size-3" />
+                                Delete
+                              </button>
+                            </>
+                          ) : null}
+                          <button
+                            onClick={() => {
+                              onCreateForModule(item.moduleKey);
+                              setNotifOpen(false);
+                            }}
+                            className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+                          >
+                            <Plus className="size-3" />
+                            New
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -1415,11 +1692,36 @@ function TopNavbar({
           {dark ? <Sun className="size-5 text-amber-400" /> : <Moon className="size-5 text-zinc-700" />}
         </button>
 
-        <div
-          className="flex size-9 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white"
-          title="Super Admin"
-        >
-          SA
+        <div className="relative">
+          <button
+            onClick={() => setProfileOpen((value) => !value)}
+            className="flex size-9 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white"
+            aria-label="Profile menu"
+            title="Super Admin"
+          >
+            SA
+          </button>
+          {profileOpen ? (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setProfileOpen(false)} />
+              <div className="absolute right-0 top-12 z-20 w-56 overflow-hidden rounded-xl border bg-card shadow-soft">
+                <div className="border-b px-4 py-3">
+                  <p className="text-sm font-bold">Super Admin</p>
+                  <p className="text-xs text-muted-foreground">Qualify Learn CRM</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    onLogout();
+                  }}
+                  className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                >
+                  <LogOut className="size-4" />
+                  Logout
+                </button>
+              </div>
+            </>
+          ) : null}
         </div>
       </div>
     </header>
@@ -1489,18 +1791,26 @@ function AnalyticsDashboard({
   onExportLeads,
   onSendReminder,
   onAssignTask,
-  onRefresh
+  onRefresh,
+  onViewActivity,
+  onEditActivity,
+  onDeleteActivity,
+  onCreateForModule
 }: {
   kpis: Array<{ label: string; value: string; change: string }>;
   recentLeads: RowRecord[];
   paymentRows: RowRecord[];
-  activityLog: string[];
+  activityLog: ActivityEntry[];
   onQuickAdd: () => void;
   onImportLeads: () => void;
   onExportLeads: () => void;
   onSendReminder: () => void;
   onAssignTask: () => void;
   onRefresh: () => void;
+  onViewActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onEditActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onDeleteActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onCreateForModule: (moduleKey: ModuleKey) => void;
 }) {
   const [activeTab, setActiveTab] = useState("Status");
   const [favorited, setFavorited] = useState(true);
@@ -1510,6 +1820,19 @@ function AnalyticsDashboard({
 
   const topPerformers = [...employeePerformanceData].sort((a, b) => b.value - a.value).slice(0, 3);
   const openRequests = paymentRows.filter((row) => parseCurrency(row.Balance) > 0).slice(0, 5);
+
+  const tabVisibility: Record<string, string[]> = {
+    performers: ["Status", "Sales"],
+    leadConversion: ["Status", "Marketing"],
+    gauge: ["Status", "Marketing", "Sales"],
+    openRequests: ["Status", "Sales", "Requests"],
+    monthlyRevenue: ["Status", "Sales"],
+    leadSources: ["Status", "Marketing"],
+    monthlyLeads: ["Status", "Marketing"],
+    employeePerformance: ["Status", "Sales"],
+    paymentStatus: ["Status", "Sales", "Requests"]
+  };
+  const isVisible = (key: string) => tabVisibility[key].includes(activeTab);
 
   return (
     <section className="space-y-4">
@@ -1565,65 +1888,83 @@ function AnalyticsDashboard({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-4">
-        <ChartCard title="Top Performers" subtitle="Against monthly target">
-          <div className="space-y-4 py-1">
-            {topPerformers.map((person) => (
-              <div key={person.label} className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="flex size-9 items-center justify-center rounded-full bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
-                    {person.label.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="text-sm font-semibold">{person.label}</span>
-                </div>
-                <span className="text-lg font-bold">{person.value}%</span>
-              </div>
-            ))}
-          </div>
-        </ChartCard>
-        <ChartCard title="Lead Conversion" subtitle="Pipeline stage volume">
-          <BarChart data={conversionData} />
-        </ChartCard>
-        <ChartCard title="Conversion Rate" subtitle="Leads converted to customers">
-          <GaugeChart value={conversionValue} label={conversionKpi?.change ?? ""} />
-        </ChartCard>
-        <ChartCard title="Open Requests" subtitle="Payments with an outstanding balance">
-          <div className="space-y-3 py-1">
-            {openRequests.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">No open requests.</p>
-            ) : (
-              openRequests.map((row) => (
-                <div key={row.id} className="flex items-center gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
-                    <CircleDollarSign className="size-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold">{row.Customer}</p>
-                    <p className="text-xs text-muted-foreground">{row.Reminder}</p>
+        {isVisible("performers") ? (
+          <ChartCard title="Top Performers" subtitle="Against monthly target">
+            <div className="space-y-4 py-1">
+              {topPerformers.map((person) => (
+                <div key={person.label} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-9 items-center justify-center rounded-full bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      {person.label.slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="text-sm font-semibold">{person.label}</span>
                   </div>
-                  <span className="shrink-0 text-sm font-bold">{row.Balance}</span>
+                  <span className="text-lg font-bold">{person.value}%</span>
                 </div>
-              ))
-            )}
-          </div>
-        </ChartCard>
+              ))}
+            </div>
+          </ChartCard>
+        ) : null}
+        {isVisible("leadConversion") ? (
+          <ChartCard title="Lead Conversion" subtitle="Pipeline stage volume">
+            <BarChart data={conversionData} />
+          </ChartCard>
+        ) : null}
+        {isVisible("gauge") ? (
+          <ChartCard title="Conversion Rate" subtitle="Leads converted to customers">
+            <GaugeChart value={conversionValue} label={conversionKpi?.change ?? ""} />
+          </ChartCard>
+        ) : null}
+        {isVisible("openRequests") ? (
+          <ChartCard title="Open Requests" subtitle="Payments with an outstanding balance">
+            <div className="space-y-3 py-1">
+              {openRequests.length === 0 ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">No open requests.</p>
+              ) : (
+                openRequests.map((row) => (
+                  <div key={row.id} className="flex items-center gap-3">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
+                      <CircleDollarSign className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{row.Customer}</p>
+                      <p className="text-xs text-muted-foreground">{row.Reminder}</p>
+                    </div>
+                    <span className="shrink-0 text-sm font-bold">{row.Balance}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </ChartCard>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <ChartCard title="Monthly Revenue" subtitle="Revenue trend in thousands">
-          <LineChart data={revenueData} prefix="$" suffix="K" />
-        </ChartCard>
-        <ChartCard title="Lead Sources" subtitle="Source mix by percentage">
-          <PieChart data={sourceData} donut={false} />
-        </ChartCard>
-        <ChartCard title="Monthly Leads" subtitle="New leads captured">
-          <AreaChart data={monthlyLeadsData} />
-        </ChartCard>
-        <ChartCard title="Employee Performance" subtitle="Team completion score">
-          <BarChart data={employeePerformanceData} suffix="%" />
-        </ChartCard>
-        <ChartCard title="Payment Status" subtitle="Paid, partial, and pending">
-          <PieChart data={paymentStatusData} donut />
-        </ChartCard>
+        {isVisible("monthlyRevenue") ? (
+          <ChartCard title="Monthly Revenue" subtitle="Revenue trend in thousands">
+            <LineChart data={revenueData} prefix="$" suffix="K" />
+          </ChartCard>
+        ) : null}
+        {isVisible("leadSources") ? (
+          <ChartCard title="Lead Sources" subtitle="Source mix by percentage">
+            <PieChart data={sourceData} donut={false} />
+          </ChartCard>
+        ) : null}
+        {isVisible("monthlyLeads") ? (
+          <ChartCard title="Monthly Leads" subtitle="New leads captured">
+            <AreaChart data={monthlyLeadsData} />
+          </ChartCard>
+        ) : null}
+        {isVisible("employeePerformance") ? (
+          <ChartCard title="Employee Performance" subtitle="Team completion score">
+            <BarChart data={employeePerformanceData} suffix="%" />
+          </ChartCard>
+        ) : null}
+        {isVisible("paymentStatus") ? (
+          <ChartCard title="Payment Status" subtitle="Paid, partial, and pending">
+            <PieChart data={paymentStatusData} donut />
+          </ChartCard>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -1709,7 +2050,14 @@ function AnalyticsDashboard({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <TimelineCard title="Recent Activities" items={activityLog} />
+        <TimelineCard
+          title="Recent Activities"
+          items={activityLog}
+          onView={onViewActivity}
+          onEdit={onEditActivity}
+          onDelete={onDeleteActivity}
+          onCreate={onCreateForModule}
+        />
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
           <h3 className="text-lg font-bold">Upcoming Follow-ups</h3>
           <div className="mt-4 space-y-3">
@@ -1951,15 +2299,65 @@ function ChartTooltip({ text }: { text: string }) {
   return <div className="pointer-events-none absolute right-3 top-1 z-10 rounded-lg bg-zinc-950 px-2 py-1 text-xs font-bold text-white shadow-soft">{text}</div>;
 }
 
-function TimelineCard({ title, items }: { title: string; items: string[] }) {
+function TimelineCard({
+  title,
+  items,
+  onView,
+  onEdit,
+  onDelete,
+  onCreate
+}: {
+  title: string;
+  items: ActivityEntry[];
+  onView: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onEdit: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onDelete: (moduleKey: ModuleKey, row: RowRecord) => void;
+  onCreate: (moduleKey: ModuleKey) => void;
+}) {
   return (
     <article className="rounded-2xl border bg-card p-5 shadow-sm">
       <h3 className="text-lg font-bold">{title}</h3>
       <div className="mt-4 space-y-4">
-        {items.map((item, index) => (
-          <div key={`${index}-${item}`} className="flex gap-3">
-            <span className="mt-1.5 size-2.5 rounded-full bg-teal-600 ring-4 ring-teal-100 dark:ring-teal-950" />
-            <p className="text-sm text-muted-foreground">{item}</p>
+        {items.map((item) => (
+          <div key={item.id} className="flex gap-3">
+            <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-teal-600 ring-4 ring-teal-100 dark:ring-teal-950" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-muted-foreground">{item.message}</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {item.row ? (
+                  <>
+                    <button
+                      onClick={() => item.row && onView(item.moduleKey, item.row)}
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                    >
+                      <Eye className="size-3" />
+                      View
+                    </button>
+                    <button
+                      onClick={() => item.row && onEdit(item.moduleKey, item.row)}
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                    >
+                      <Pencil className="size-3" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => item.row && onDelete(item.moduleKey, item.row)}
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                    >
+                      <Trash2 className="size-3" />
+                      Delete
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  onClick={() => onCreate(item.moduleKey)}
+                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+                >
+                  <Plus className="size-3" />
+                  New
+                </button>
+              </div>
+            </div>
           </div>
         ))}
       </div>
