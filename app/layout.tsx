@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Super Admin CRM",
-  description: "Production-ready Super Admin CRM panel"
+  title: "Qualify Learn | Super Admin CRM",
+  description: "Qualify Learn - Super Admin CRM panel",
+  icons: {
+    icon: "/qualify-learn-logo.jpeg"
+  }
 };
 
 export default function RootLayout({

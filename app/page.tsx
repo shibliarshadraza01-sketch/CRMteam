@@ -2,6 +2,9 @@
 
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Bell,
   Building2,
   CalendarDays,
@@ -78,6 +81,44 @@ type ToastState = { type: "success" | "error"; message: string } | null;
 
 const modules: ModuleConfig[] = [
   {
+    key: "reports",
+    title: "Reports & Dashboard",
+    subtitle: "Monitor full company performance, revenue, lead conversion rates, and export reports to CSV or Excel.",
+    icon: FileSpreadsheet,
+    accent: "from-teal-700 to-emerald-500",
+    features: [
+      "Full company dashboard for all team performance",
+      "Revenue reports and lead conversion rates",
+      "Export reports as CSV or Excel"
+    ],
+    stats: [
+      { label: "Team performance", value: "91%", change: "+6.4%" },
+      { label: "Lead conversion", value: "18.7%", change: "+2.1%" },
+      { label: "Revenue report", value: "$842K", change: "Company total" },
+      { label: "Exports", value: "38", change: "CSV and Excel" }
+    ],
+    columns: ["Report", "Scope", "Metric", "Period", "Export"],
+    rows: [
+      { Report: "Company dashboard", Scope: "All teams", Metric: "Performance 91%", Period: "July", Export: "CSV" },
+      { Report: "Revenue", Scope: "Company", Metric: "$842K", Period: "Q3", Export: "Excel" },
+      { Report: "Lead conversion", Scope: "All owners", Metric: "18.7%", Period: "Monthly", Export: "CSV" },
+      { Report: "Manager scorecard", Scope: "Managers", Metric: "Pipeline health", Period: "Weekly", Export: "Excel" }
+    ],
+    filters: ["All reports", "Revenue", "Conversion", "Team performance", "CSV", "Excel"],
+    actions: [
+      { label: "Export CSV", icon: Download, primary: true },
+      { label: "Export Excel", icon: FileSpreadsheet },
+      { label: "Refresh Report", icon: RefreshCw }
+    ],
+    formTitle: "Generate Report",
+    formFields: [
+      { label: "Report type", type: "select", placeholder: "Revenue / Conversion / Performance" },
+      { label: "Date range", type: "select", placeholder: "This month / Quarter / Custom" },
+      { label: "Export format", type: "select", placeholder: "CSV / Excel" },
+      { label: "Recipient email", type: "email", placeholder: "admin@company.com" }
+    ]
+  },
+  {
     key: "users",
     title: "User Management",
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
@@ -98,10 +139,10 @@ const modules: ModuleConfig[] = [
     ],
     columns: ["Name", "Role", "Email", "Status", "Permissions"],
     rows: [
-      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@euau.edu", Status: "Active", Permissions: "Leads, Customers, Tasks" },
-      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@euau.edu", Status: "Invited", Permissions: "Assigned leads only" },
-      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@euau.edu", Status: "Inactive", Permissions: "Payments hidden" },
-      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@euau.edu", Status: "Active", Permissions: "Calls, WhatsApp, Follow-ups" }
+      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Status: "Active", Permissions: "Leads, Customers, Tasks" },
+      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Status: "Invited", Permissions: "Assigned leads only" },
+      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Status: "Inactive", Permissions: "Payments hidden" },
+      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Status: "Active", Permissions: "Calls, WhatsApp, Follow-ups" }
     ],
     filters: ["All roles", "Manager", "Employee", "Active", "Invited", "Inactive"],
     actions: [
@@ -320,44 +361,6 @@ const modules: ModuleConfig[] = [
     ]
   },
   {
-    key: "reports",
-    title: "Reports & Dashboard",
-    subtitle: "Monitor full company performance, revenue, lead conversion rates, and export reports to CSV or Excel.",
-    icon: FileSpreadsheet,
-    accent: "from-teal-700 to-emerald-500",
-    features: [
-      "Full company dashboard for all team performance",
-      "Revenue reports and lead conversion rates",
-      "Export reports as CSV or Excel"
-    ],
-    stats: [
-      { label: "Team performance", value: "91%", change: "+6.4%" },
-      { label: "Lead conversion", value: "18.7%", change: "+2.1%" },
-      { label: "Revenue report", value: "$842K", change: "Company total" },
-      { label: "Exports", value: "38", change: "CSV and Excel" }
-    ],
-    columns: ["Report", "Scope", "Metric", "Period", "Export"],
-    rows: [
-      { Report: "Company dashboard", Scope: "All teams", Metric: "Performance 91%", Period: "July", Export: "CSV" },
-      { Report: "Revenue", Scope: "Company", Metric: "$842K", Period: "Q3", Export: "Excel" },
-      { Report: "Lead conversion", Scope: "All owners", Metric: "18.7%", Period: "Monthly", Export: "CSV" },
-      { Report: "Manager scorecard", Scope: "Managers", Metric: "Pipeline health", Period: "Weekly", Export: "Excel" }
-    ],
-    filters: ["All reports", "Revenue", "Conversion", "Team performance", "CSV", "Excel"],
-    actions: [
-      { label: "Export CSV", icon: Download, primary: true },
-      { label: "Export Excel", icon: FileSpreadsheet },
-      { label: "Refresh Report", icon: RefreshCw }
-    ],
-    formTitle: "Generate Report",
-    formFields: [
-      { label: "Report type", type: "select", placeholder: "Revenue / Conversion / Performance" },
-      { label: "Date range", type: "select", placeholder: "This month / Quarter / Custom" },
-      { label: "Export format", type: "select", placeholder: "CSV / Excel" },
-      { label: "Recipient email", type: "email", placeholder: "admin@company.com" }
-    ]
-  },
-  {
     key: "audit",
     title: "Audit Logs - Super Admin Only",
     subtitle: "A protected log of who did what and when, visible only to Super Admins.",
@@ -407,7 +410,7 @@ const modules: ModuleConfig[] = [
       "System-wide settings"
     ],
     stats: [
-      { label: "Organization", value: "EUAU CRM", change: "Active workspace" },
+      { label: "Organization", value: "Qualify Learn", change: "Active workspace" },
       { label: "Integrations", value: "3/3", change: "Email, WhatsApp, Calling" },
       { label: "System rules", value: "24", change: "Company-wide" },
       { label: "Security", value: "On", change: "Super Admin managed" }
@@ -628,10 +631,11 @@ const VIEW_ACTION_LABELS = new Set([
 const PAGE_SIZE = 6;
 
 export default function SuperAdminPage() {
-  const [activeKey, setActiveKey] = useState<ModuleKey>("users");
+  const [activeKey, setActiveKey] = useState<ModuleKey>("reports");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("All roles");
+  const [filter, setFilter] = useState(() => modules.find((module) => module.key === "reports")?.filters[0] ?? "All");
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit" | "view">("create");
   const [editingRecord, setEditingRecord] = useState<RowRecord | null>(null);
@@ -653,16 +657,46 @@ export default function SuperAdminPage() {
 
   const rows = useMemo(() => {
     const lowerQuery = query.toLowerCase();
-    return activeRecords.filter((row) => {
+    const filtered = activeRecords.filter((row) => {
       const matchesQuery = !lowerQuery || Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
       return matchesQuery && rowMatchesFilter(row, filter);
     });
-  }, [activeRecords, query, filter]);
+
+    if (!sort) return filtered;
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aValue = a[sort.column] ?? "";
+      const bValue = b[sort.column] ?? "";
+      const aNumeric = parseCurrency(aValue);
+      const bNumeric = parseCurrency(bValue);
+      const bothNumeric = /[\d]/.test(aValue) && /[\d]/.test(bValue) && !Number.isNaN(aNumeric) && !Number.isNaN(bNumeric);
+      const comparison = bothNumeric ? aNumeric - bNumeric : aValue.localeCompare(bValue);
+      return sort.direction === "asc" ? comparison : -comparison;
+    });
+    return sorted;
+  }, [activeRecords, query, filter, sort]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pagedRows = useMemo(() => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [rows, page]);
 
   const kpis = useMemo(() => computeKpis(recordsByModule), [recordsByModule]);
+
+  const globalSearchResults = useMemo(() => {
+    const lowerQuery = query.trim().toLowerCase();
+    if (!lowerQuery) return [];
+    const results: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }> = [];
+    for (const module of modules) {
+      const moduleRows = recordsByModule[module.key] ?? [];
+      for (const row of moduleRows) {
+        const matches = Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
+        if (matches) {
+          results.push({ moduleKey: module.key, moduleTitle: module.title, row, label: row[module.columns[0]] ?? row.id });
+          if (results.length >= 8) return results;
+        }
+      }
+    }
+    return results;
+  }, [recordsByModule, query]);
 
   useEffect(() => {
     setPage(1);
@@ -671,6 +705,29 @@ export default function SuperAdminPage() {
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    setSort(null);
+  }, [activeKey]);
+
+  function toggleSort(column: string) {
+    setSort((current) => {
+      if (!current || current.column !== column) return { column, direction: "asc" };
+      if (current.direction === "asc") return { column, direction: "desc" };
+      return null;
+    });
+  }
+
+  function goToSearchResult(moduleKey: ModuleKey, row: RowRecord) {
+    const targetModule = modules.find((module) => module.key === moduleKey);
+    if (!targetModule) return;
+    setActiveKey(moduleKey);
+    setFilter(targetModule.filters[0] ?? "All");
+    setEditingRecord(row);
+    setModalMode("view");
+    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, row[column] ?? ""])));
+    setModalOpen(true);
+  }
 
   function showToast(nextToast: ToastState) {
     setToast(nextToast);
@@ -962,6 +1019,8 @@ export default function SuperAdminPage() {
           onSearchChange={setQuery}
           onNewClick={openCreateModal}
           activityLog={activityLog}
+          searchResults={globalSearchResults}
+          onSearchResultClick={goToSearchResult}
         />
 
         <div className="flex">
@@ -996,7 +1055,7 @@ export default function SuperAdminPage() {
             <div className="border-b bg-background/60 px-4 py-4 xl:px-8">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600">Super Admin</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600">Qualify Learn | Super Admin</p>
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1132,6 +1191,8 @@ export default function SuperAdminPage() {
                       onView={openViewModal}
                       onDuplicate={duplicateRecord}
                       onDelete={deleteRecord}
+                      sort={sort}
+                      onSort={toggleSort}
                     />
                   )}
 
@@ -1205,11 +1266,12 @@ export default function SuperAdminPage() {
 function Brand() {
   return (
     <div className="mb-6 flex items-center gap-3 rounded-xl bg-teal-600 p-3 text-white shadow-soft">
-      <div className="flex size-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/25">
-        <ShieldCheck className="size-5" />
+      <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-white/25">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
       </div>
       <div>
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/75">CRM</p>
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/75">Qualify Learn</p>
         <h2 className="font-bold">Super Admin Panel</h2>
       </div>
     </div>
@@ -1223,7 +1285,9 @@ function TopNavbar({
   searchValue,
   onSearchChange,
   onNewClick,
-  activityLog
+  activityLog,
+  searchResults,
+  onSearchResultClick
 }: {
   dark: boolean;
   onToggleDark: () => void;
@@ -1232,8 +1296,11 @@ function TopNavbar({
   onSearchChange: (value: string) => void;
   onNewClick: () => void;
   activityLog: string[];
+  searchResults: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }>;
+  onSearchResultClick: (moduleKey: ModuleKey, row: RowRecord) => void;
 }) {
   const [notifOpen, setNotifOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b bg-card px-4 shadow-sm xl:px-6">
@@ -1246,10 +1313,11 @@ function TopNavbar({
       </button>
 
       <div className="flex shrink-0 items-center gap-2">
-        <div className="flex size-9 items-center justify-center rounded-lg bg-teal-600 text-white shadow-soft">
-          <ShieldCheck className="size-5" />
+        <div className="flex size-9 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
         </div>
-        <span className="hidden text-sm font-bold sm:block">Super Admin CRM</span>
+        <span className="hidden text-sm font-bold sm:block">Qualify Learn CRM</span>
       </div>
 
       <button
@@ -1260,15 +1328,49 @@ function TopNavbar({
         New
       </button>
 
-      <label className="relative mx-auto hidden w-full max-w-md md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          value={searchValue}
-          onChange={(event) => onSearchChange(event.target.value)}
-          placeholder="Search for anything..."
-          className="h-10 w-full rounded-full border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-        />
-      </label>
+      <div className="relative mx-auto hidden w-full max-w-md md:block">
+        <label className="relative block">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={searchValue}
+            onChange={(event) => {
+              onSearchChange(event.target.value);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Search for anything..."
+            className="h-10 w-full rounded-full border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        {searchOpen && searchValue.trim() ? (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setSearchOpen(false)} />
+            <div className="absolute left-0 right-0 top-12 z-20 overflow-hidden rounded-xl border bg-card shadow-soft">
+              {searchResults.length === 0 ? (
+                <p className="px-4 py-6 text-center text-sm text-muted-foreground">No matching records found.</p>
+              ) : (
+                <div className="max-h-80 overflow-y-auto">
+                  {searchResults.map((result) => (
+                    <button
+                      key={`${result.moduleKey}-${result.row.id}`}
+                      onClick={() => {
+                        onSearchResultClick(result.moduleKey, result.row);
+                        setSearchOpen(false);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 border-b px-4 py-3 text-left text-sm last:border-b-0 hover:bg-muted"
+                    >
+                      <span className="truncate font-semibold">{result.label}</span>
+                      <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                        {result.moduleTitle}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : null}
+      </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <div className="relative">
@@ -1892,7 +1994,9 @@ function DataTable({
   onEdit,
   onView,
   onDuplicate,
-  onDelete
+  onDelete,
+  sort,
+  onSort
 }: {
   module: ModuleConfig;
   rows: RowRecord[];
@@ -1900,6 +2004,8 @@ function DataTable({
   onView: (row: RowRecord) => void;
   onDuplicate: (row: RowRecord) => void;
   onDelete: (row: RowRecord) => void;
+  sort: { column: string; direction: "asc" | "desc" } | null;
+  onSort: (column: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
@@ -1920,11 +2026,24 @@ function DataTable({
       <table className="w-full min-w-[760px] border-collapse text-left">
         <thead>
           <tr className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
-            {module.columns.map((column) => (
-              <th key={column} className="px-4 py-3 font-bold">
-                {column}
-              </th>
-            ))}
+            {module.columns.map((column) => {
+              const isSorted = sort?.column === column;
+              const SortIcon = isSorted ? (sort?.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+              return (
+                <th key={column} className="px-4 py-3 font-bold">
+                  <button
+                    onClick={() => onSort(column)}
+                    className={cn(
+                      "inline-flex items-center gap-1 transition hover:text-foreground",
+                      isSorted && "text-teal-700 dark:text-teal-300"
+                    )}
+                  >
+                    {column}
+                    <SortIcon className="size-3" />
+                  </button>
+                </th>
+              );
+            })}
             <th className="px-4 py-3 text-right font-bold">Actions</th>
           </tr>
         </thead>
