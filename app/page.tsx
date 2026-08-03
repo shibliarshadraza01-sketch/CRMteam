@@ -53,6 +53,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type ModuleKey =
   | "users"
+  | "team"
+  | "dashboard"
   | "leads"
   | "customers"
   | "payments"
@@ -61,6 +63,8 @@ type ModuleKey =
   | "reports"
   | "audit"
   | "settings";
+
+type Role = "superadmin" | "manager" | "employee";
 
 type ModuleConfig = {
   key: ModuleKey;
@@ -121,6 +125,91 @@ const modules: ModuleConfig[] = [
       { label: "Date range", type: "select", placeholder: "This month / Quarter / Custom" },
       { label: "Export format", type: "select", placeholder: "CSV / Excel" },
       { label: "Recipient email", type: "email", placeholder: "admin@company.com" }
+    ]
+  },
+  {
+    key: "team",
+    title: "Team Management",
+    subtitle: "View your team's employees, assign or reassign leads, and track employee performance.",
+    icon: Users,
+    accent: "from-teal-700 to-indigo-500",
+    features: [
+      "View employees on your team",
+      "Assign or reassign leads to your employees",
+      "Track employee performance"
+    ],
+    stats: [
+      { label: "Team members", value: "5", change: "1 pending invite" },
+      { label: "Leads assigned", value: "117", change: "This month" },
+      { label: "Avg. performance", value: "83.6%", change: "+4.1%" },
+      { label: "Top performer", value: "Aarav", change: "92% completion" }
+    ],
+    columns: ["Employee", "Role", "Leads Assigned", "Performance", "Status"],
+    rows: [
+      { Employee: "Aarav Mehta", Role: "Employee", "Leads Assigned": "32", Performance: "92%", Status: "Active" },
+      { Employee: "Nisha Rao", Role: "Employee", "Leads Assigned": "27", Performance: "87%", Status: "Active" },
+      { Employee: "Kabir Sethi", Role: "Employee", "Leads Assigned": "19", Performance: "79%", Status: "Active" },
+      { Employee: "Zoya Khan", Role: "Employee", "Leads Assigned": "24", Performance: "84%", Status: "Invited" },
+      { Employee: "Maya Iyer", Role: "Employee", "Leads Assigned": "15", Performance: "76%", Status: "Active" }
+    ],
+    filters: ["All employees", "Active", "Invited", "High performers"],
+    actions: [
+      { label: "Assign Lead", icon: UserCheck, primary: true },
+      { label: "Reassign Lead", icon: RefreshCw },
+      { label: "View Performance", icon: Eye }
+    ],
+    chart: {
+      title: "Employee Performance",
+      subtitle: "Completion score per team member",
+      column: "Performance",
+      mode: "sum",
+      labelColumn: "Employee",
+      suffix: "%"
+    },
+    formTitle: "Assign or Reassign Lead",
+    formFields: [
+      { label: "Employee", type: "select", placeholder: "Select team member" },
+      { label: "Lead", type: "select", placeholder: "Select lead to assign" },
+      { label: "Priority", type: "select", placeholder: "High / Medium / Low" },
+      { label: "Note", type: "text", placeholder: "Assignment note" }
+    ]
+  },
+  {
+    key: "dashboard",
+    title: "My Dashboard",
+    subtitle: "Track your assigned leads, customers, tasks, and personal performance.",
+    icon: Activity,
+    accent: "from-teal-700 to-sky-500",
+    features: [
+      "Personal performance dashboard",
+      "Assigned lead status overview",
+      "Pending follow-ups and task summary"
+    ],
+    stats: [
+      { label: "My Leads", value: "18", change: "5 new this week" },
+      { label: "My Customers", value: "6", change: "2 active" },
+      { label: "My Revenue", value: "$12.4K", change: "Collected to date" },
+      { label: "My Conversion Rate", value: "22.0%", change: "+3.1%" }
+    ],
+    columns: ["Item", "Type", "Status", "Updated"],
+    rows: [
+      { Item: "Priya Sharma", Type: "Lead", Status: "Hot", Updated: "Today" },
+      { Item: "Acme Learning", Type: "Customer", Status: "Active", Updated: "Yesterday" },
+      { Item: "Call hot leads", Type: "Task", Status: "Open", Updated: "Today" },
+      { Item: "Payment follow-up", Type: "Follow-up", Status: "Scheduled", Updated: "Aug 03" }
+    ],
+    filters: ["All items", "Leads", "Customers", "Tasks", "Follow-ups"],
+    actions: [
+      { label: "Export CSV", icon: Download, primary: true },
+      { label: "Refresh Report", icon: RefreshCw }
+    ],
+    chart: { title: "My Activity Overview", subtitle: "Status mix across my leads, customers, and tasks", column: "Type", mode: "count" },
+    formTitle: "Log Personal Activity",
+    formFields: [
+      { label: "Item", type: "text", placeholder: "Lead, customer, or task name" },
+      { label: "Type", type: "select", placeholder: "Lead / Customer / Task / Follow-up" },
+      { label: "Status", type: "select", placeholder: "Current status" },
+      { label: "Note", type: "text", placeholder: "Add a note" }
     ]
   },
   {
@@ -444,6 +533,38 @@ const modules: ModuleConfig[] = [
   }
 ];
 
+const MODULE_ACCESS: Record<Role, ModuleKey[]> = {
+  superadmin: ["reports", "users", "leads", "customers", "payments", "communication", "tasks", "audit", "settings"],
+  manager: ["reports", "team", "leads", "customers", "payments", "communication", "tasks"],
+  employee: ["dashboard", "leads", "customers", "payments", "communication", "tasks"]
+};
+
+const HOME_MODULE: Record<Role, ModuleKey> = {
+  superadmin: "reports",
+  manager: "reports",
+  employee: "dashboard"
+};
+
+const ROLE_LABEL: Record<Role, string> = {
+  superadmin: "Super Admin",
+  manager: "Manager",
+  employee: "Employee"
+};
+
+const ROLE_AVATAR: Record<Role, string> = {
+  superadmin: "SA",
+  manager: "M",
+  employee: "E"
+};
+
+const EMPLOYEE_MODULE_COPY: Partial<Record<ModuleKey, { title: string; subtitle: string }>> = {
+  leads: { title: "Leads - Assigned to Me", subtitle: "View leads assigned to you, add new leads manually, update status, and edit lead details." },
+  customers: { title: "Customers - Assigned to Me", subtitle: "View your assigned customers, convert leads where permitted, and review each customer's profile and history." },
+  payments: { title: "Payments - Assigned Customers", subtitle: "Add payments for your customers, track partial payments, and view their payment history." },
+  communication: { title: "Communication - My Activity", subtitle: "Send email, WhatsApp, and calls to your leads and customers, and view your own communication history." },
+  tasks: { title: "My Tasks & Follow-ups", subtitle: "View tasks assigned to you, schedule follow-ups, set reminders, and mark tasks complete." }
+};
+
 const badgeStyles: Record<string, string> = {
   Active: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
   Invited: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
@@ -635,34 +756,40 @@ const VIEW_ACTION_LABELS = new Set([
 
 const PAGE_SIZE = 6;
 const AUTH_STORAGE_KEY = "qualify-learn-crm-auth";
+const ROLE_STORAGE_KEY = "qualify-learn-crm-role";
 const VALID_USERNAME = "qualifylearncrm";
 const VALID_PASSWORD = "crmworkingphase";
+const VALID_MANAGER_USERNAME = "qualifylearnmanagercrm";
+const VALID_MANAGER_PASSWORD = "crmworkingphasemanager";
+const VALID_EMPLOYEE_USERNAME = "qualifylearnemployeecrm";
+const VALID_EMPLOYEE_PASSWORD = "crmworkingphaseemployee";
 
 export default function AuthGate() {
-  const [authed, setAuthed] = useState<boolean | null>(null);
+  const [role, setRole] = useState<Role | null | undefined>(undefined);
 
   useEffect(() => {
-    const stored =
+    const authed =
       window.localStorage.getItem(AUTH_STORAGE_KEY) === "true" || window.sessionStorage.getItem(AUTH_STORAGE_KEY) === "true";
-    setAuthed(stored);
+    const storedRole = (window.localStorage.getItem(ROLE_STORAGE_KEY) ?? window.sessionStorage.getItem(ROLE_STORAGE_KEY)) as Role | null;
+    setRole(authed && storedRole ? storedRole : null);
   }, []);
 
-  function handleLoginSuccess(remember: boolean) {
-    if (remember) {
-      window.localStorage.setItem(AUTH_STORAGE_KEY, "true");
-    } else {
-      window.sessionStorage.setItem(AUTH_STORAGE_KEY, "true");
-    }
-    setAuthed(true);
+  function handleLoginSuccess(nextRole: Role, remember: boolean) {
+    const storage = remember ? window.localStorage : window.sessionStorage;
+    storage.setItem(AUTH_STORAGE_KEY, "true");
+    storage.setItem(ROLE_STORAGE_KEY, nextRole);
+    setRole(nextRole);
   }
 
   function handleLogout() {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.localStorage.removeItem(ROLE_STORAGE_KEY);
     window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
-    setAuthed(false);
+    window.sessionStorage.removeItem(ROLE_STORAGE_KEY);
+    setRole(null);
   }
 
-  if (authed === null) {
+  if (role === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex size-12 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
@@ -673,14 +800,14 @@ export default function AuthGate() {
     );
   }
 
-  if (!authed) {
+  if (role === null) {
     return <LoginScreen onSuccess={handleLoginSuccess} />;
   }
 
-  return <SuperAdminPage onLogout={handleLogout} />;
+  return <SuperAdminPage role={role} onLogout={handleLogout} />;
 }
 
-function LoginScreen({ onSuccess }: { onSuccess: (remember: boolean) => void }) {
+function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -694,7 +821,13 @@ function LoginScreen({ onSuccess }: { onSuccess: (remember: boolean) => void }) 
     window.setTimeout(() => {
       if (username === VALID_USERNAME && password === VALID_PASSWORD) {
         setError("");
-        onSuccess(rememberMe);
+        onSuccess("superadmin", rememberMe);
+      } else if (username === VALID_MANAGER_USERNAME && password === VALID_MANAGER_PASSWORD) {
+        setError("");
+        onSuccess("manager", rememberMe);
+      } else if (username === VALID_EMPLOYEE_USERNAME && password === VALID_EMPLOYEE_PASSWORD) {
+        setError("");
+        onSuccess("employee", rememberMe);
       } else {
         setError("Invalid Username or Password.");
       }
@@ -711,7 +844,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (remember: boolean) => void }) 
             <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
           </div>
           <h1 className="text-2xl font-bold">Welcome back</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to the Qualify Learn Super Admin CRM</p>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in to the Qualify Learn CRM</p>
         </div>
 
         <form onSubmit={handleSubmit} className="rounded-2xl border bg-card p-6 shadow-soft sm:p-8">
@@ -786,10 +919,12 @@ function LoginScreen({ onSuccess }: { onSuccess: (remember: boolean) => void }) 
   );
 }
 
-function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
-  const [activeKey, setActiveKey] = useState<ModuleKey>("reports");
+function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }) {
+  const visibleModules = useMemo(() => modules.filter((module) => MODULE_ACCESS[role].includes(module.key)), [role]);
+  const [activeKey, setActiveKey] = useState<ModuleKey>(() => HOME_MODULE[role]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState(() => modules.find((module) => module.key === "reports")?.filters[0] ?? "All");
+  const [globalQuery, setGlobalQuery] = useState("");
+  const [filter, setFilter] = useState(() => modules.find((module) => module.key === HOME_MODULE[role])?.filters[0] ?? "All");
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -812,6 +947,9 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   const activeModule = modules.find((module) => module.key === activeKey) ?? modules[0];
   const activeRecords = recordsByModule[activeKey] ?? [];
   const Icon = activeModule.icon;
+  const employeeCopy = role === "employee" ? EMPLOYEE_MODULE_COPY[activeModule.key] : undefined;
+  const displayModuleTitle = employeeCopy?.title ?? activeModule.title;
+  const displayModuleSubtitle = employeeCopy?.subtitle ?? activeModule.subtitle;
 
   const rows = useMemo(() => {
     const lowerQuery = query.toLowerCase();
@@ -840,10 +978,10 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   const kpis = useMemo(() => computeKpis(recordsByModule), [recordsByModule]);
 
   const globalSearchResults = useMemo(() => {
-    const lowerQuery = query.trim().toLowerCase();
+    const lowerQuery = globalQuery.trim().toLowerCase();
     if (!lowerQuery) return [];
     const results: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }> = [];
-    for (const module of modules) {
+    for (const module of visibleModules) {
       const moduleRows = recordsByModule[module.key] ?? [];
       for (const row of moduleRows) {
         const matches = Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
@@ -854,7 +992,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
       }
     }
     return results;
-  }, [recordsByModule, query]);
+  }, [recordsByModule, globalQuery, visibleModules]);
 
   useEffect(() => {
     setPage(1);
@@ -877,7 +1015,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   }
 
   function goToSearchResult(moduleKey: ModuleKey, row: RowRecord) {
-    const targetModule = modules.find((module) => module.key === moduleKey);
+    const targetModule = visibleModules.find((module) => module.key === moduleKey);
     if (!targetModule) return;
     setActiveKey(moduleKey);
     setFilter(targetModule.filters[0] ?? "All");
@@ -885,6 +1023,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
     setModalMode("view");
     setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, row[column] ?? ""])));
     setModalOpen(true);
+    setGlobalQuery("");
   }
 
   function showToast(nextToast: ToastState) {
@@ -959,7 +1098,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
       openCreateModal();
       return;
     }
-    const targetModule = modules.find((module) => module.key === moduleKey);
+    const targetModule = visibleModules.find((module) => module.key === moduleKey);
     if (!targetModule) return;
     setActiveKey(moduleKey);
     setFilter(targetModule.filters[0] ?? "All");
@@ -1204,7 +1343,8 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   }
 
   function selectModule(key: ModuleKey) {
-    const nextModule = modules.find((module) => module.key === key);
+    const nextModule = visibleModules.find((module) => module.key === key);
+    if (!nextModule) return;
     setActiveKey(key);
     setFilter(nextModule?.filters[0] ?? "All");
     setQuery("");
@@ -1223,11 +1363,12 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
     <main className={cn(dark && "dark")}>
       <div className="min-h-screen bg-background text-foreground transition-colors">
         <TopNavbar
+          role={role}
           dark={dark}
           onToggleDark={() => setDark((value) => !value)}
           onOpenMobileNav={() => setMobileNav(true)}
-          searchValue={query}
-          onSearchChange={setQuery}
+          searchValue={globalQuery}
+          onSearchChange={setGlobalQuery}
           onNewClick={openCreateModal}
           activityLog={activityLog}
           searchResults={globalSearchResults}
@@ -1241,7 +1382,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
 
         <div className="flex">
           <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-teal-900 py-4 lg:flex">
-            <SidebarRail activeKey={activeKey} onSelect={selectModule} />
+            <SidebarRail activeKey={activeKey} onSelect={selectModule} modules={visibleModules} />
           </aside>
 
           <AnimatePresence>
@@ -1260,8 +1401,8 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
                   exit={{ x: -320 }}
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <Brand />
-                  <ModuleNav activeKey={activeKey} onSelect={selectModule} />
+                  <Brand role={role} />
+                  <ModuleNav activeKey={activeKey} onSelect={selectModule} modules={visibleModules} />
                 </motion.aside>
               </motion.div>
             ) : null}
@@ -1271,7 +1412,9 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
             <div className="border-b bg-background/60 px-4 py-4 xl:px-8">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600">Qualify Learn | Super Admin</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600">
+                    Qualify Learn | {ROLE_LABEL[role]}
+                  </p>
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1307,10 +1450,14 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
                       <div>
                         <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-sm font-semibold ring-1 ring-white/25">
                           <Icon className="size-4" />
-                          No restriction: full system access
+                          {role === "manager"
+                            ? "Team-level access only"
+                            : role === "employee"
+                            ? "Personal access only"
+                            : "No restriction: full system access"}
                         </div>
-                        <h2 className="text-3xl font-bold">{activeModule.title}</h2>
-                        <p className="mt-2 max-w-3xl text-sm leading-6 text-white/88">{activeModule.subtitle}</p>
+                        <h2 className="text-3xl font-bold">{displayModuleTitle}</h2>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-white/88">{displayModuleSubtitle}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {activeModule.actions.map((action) => {
@@ -1348,8 +1495,9 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
                   </div>
                 </motion.section>
 
-                {activeKey === "reports" ? (
+                {activeKey === "reports" || activeKey === "dashboard" ? (
                   <AnalyticsDashboard
+                    role={role}
                     kpis={kpis}
                     recentLeads={recordsByModule.leads ?? []}
                     paymentRows={recordsByModule.payments ?? []}
@@ -1375,8 +1523,10 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
                   <div className="border-b p-4">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div>
-                        <h3 className="text-lg font-bold">{activeModule.title} Records</h3>
-                        <p className="text-sm text-muted-foreground">Search, filter, paginate, and act on Super Admin data.</p>
+                        <h3 className="text-lg font-bold">{displayModuleTitle} Records</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Search, filter, paginate, and act on {role === "manager" ? "your team's" : role === "employee" ? "your" : "Super Admin"} data.
+                        </p>
                       </div>
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <label className="relative min-w-0 sm:w-72">
@@ -1453,7 +1603,13 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
                     exit={{ opacity: 0, x: 26 }}
                     className="h-fit rounded-2xl border bg-card shadow-soft xl:sticky xl:top-24"
                   >
-                    <DetailDrawer module={activeModule} onClose={() => setDrawerOpen(false)} onAction={handleModuleAction} />
+                    <DetailDrawer
+                      role={role}
+                      module={activeModule}
+                      moduleTitle={displayModuleTitle}
+                      onClose={() => setDrawerOpen(false)}
+                      onAction={handleModuleAction}
+                    />
                   </motion.aside>
                 ) : null}
               </AnimatePresence>
@@ -1483,7 +1639,7 @@ function SuperAdminPage({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-function Brand() {
+function Brand({ role }: { role: Role }) {
   return (
     <div className="mb-6 flex items-center gap-3 rounded-xl bg-teal-600 p-3 text-white shadow-soft">
       <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-white/25">
@@ -1492,13 +1648,14 @@ function Brand() {
       </div>
       <div>
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white/75">Qualify Learn</p>
-        <h2 className="font-bold">Super Admin Panel</h2>
+        <h2 className="font-bold">{ROLE_LABEL[role]} Panel</h2>
       </div>
     </div>
   );
 }
 
 function TopNavbar({
+  role,
   dark,
   onToggleDark,
   onOpenMobileNav,
@@ -1514,6 +1671,7 @@ function TopNavbar({
   onDeleteActivity,
   onCreateForModule
 }: {
+  role: Role;
   dark: boolean;
   onToggleDark: () => void;
   onOpenMobileNav: () => void;
@@ -1697,16 +1855,16 @@ function TopNavbar({
             onClick={() => setProfileOpen((value) => !value)}
             className="flex size-9 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white"
             aria-label="Profile menu"
-            title="Super Admin"
+            title={ROLE_LABEL[role]}
           >
-            SA
+            {ROLE_AVATAR[role]}
           </button>
           {profileOpen ? (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setProfileOpen(false)} />
               <div className="absolute right-0 top-12 z-20 w-56 overflow-hidden rounded-xl border bg-card shadow-soft">
                 <div className="border-b px-4 py-3">
-                  <p className="text-sm font-bold">Super Admin</p>
+                  <p className="text-sm font-bold">{ROLE_LABEL[role]}</p>
                   <p className="text-xs text-muted-foreground">Qualify Learn CRM</p>
                 </div>
                 <button
@@ -1728,7 +1886,15 @@ function TopNavbar({
   );
 }
 
-function SidebarRail({ activeKey, onSelect }: { activeKey: ModuleKey; onSelect: (key: ModuleKey) => void }) {
+function SidebarRail({
+  activeKey,
+  onSelect,
+  modules
+}: {
+  activeKey: ModuleKey;
+  onSelect: (key: ModuleKey) => void;
+  modules: ModuleConfig[];
+}) {
   return (
     <nav className="flex flex-col items-center gap-1">
       {modules.map((module) => {
@@ -1753,7 +1919,15 @@ function SidebarRail({ activeKey, onSelect }: { activeKey: ModuleKey; onSelect: 
   );
 }
 
-function ModuleNav({ activeKey, onSelect }: { activeKey: ModuleKey; onSelect: (key: ModuleKey) => void }) {
+function ModuleNav({
+  activeKey,
+  onSelect,
+  modules
+}: {
+  activeKey: ModuleKey;
+  onSelect: (key: ModuleKey) => void;
+  modules: ModuleConfig[];
+}) {
   return (
     <nav className="space-y-1">
       {modules.map((module, index) => {
@@ -1782,6 +1956,7 @@ function ModuleNav({ activeKey, onSelect }: { activeKey: ModuleKey; onSelect: (k
 }
 
 function AnalyticsDashboard({
+  role,
   kpis,
   recentLeads,
   paymentRows,
@@ -1797,6 +1972,7 @@ function AnalyticsDashboard({
   onDeleteActivity,
   onCreateForModule
 }: {
+  role: Role;
   kpis: Array<{ label: string; value: string; change: string }>;
   recentLeads: RowRecord[];
   paymentRows: RowRecord[];
@@ -1877,7 +2053,9 @@ function AnalyticsDashboard({
           ))}
         </div>
         <div className="flex items-center gap-2 pt-3">
-          <h3 className="text-lg font-bold">Key figures for the Super Admin team</h3>
+          <h3 className="text-lg font-bold">
+            {role === "manager" ? "Key figures for your team" : role === "employee" ? "Key figures for you" : "Key figures for the Super Admin team"}
+          </h3>
           <button onClick={() => setFavorited((value) => !value)} aria-label="Toggle favorite">
             <Star className={cn("size-4", favorited ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
           </button>
@@ -2414,7 +2592,7 @@ function DataTable({
           <Search className="size-6" />
         </div>
         <h3 className="text-lg font-bold">No records found</h3>
-        <p className="mt-1 max-w-md text-sm text-muted-foreground">Try a different search term or filter for this Super Admin module.</p>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">Try a different search term or filter for this module.</p>
       </div>
     );
   }
@@ -2569,7 +2747,7 @@ function WorkflowPanel({ module }: { module: ModuleConfig }) {
                   )}
                 />
               )}
-              {index === 1 ? <span className="text-xs font-medium text-red-600">This field is required for Super Admin actions.</span> : null}
+              {index === 1 ? <span className="text-xs font-medium text-red-600">This field is required.</span> : null}
             </label>
           ))}
         </div>
@@ -2614,11 +2792,15 @@ function Toast({ toast }: { toast: { type: "success" | "error"; message: string 
 }
 
 function DetailDrawer({
+  role,
   module,
+  moduleTitle,
   onClose,
   onAction
 }: {
+  role: Role;
   module: ModuleConfig;
+  moduleTitle: string;
   onClose: () => void;
   onAction: (action: { label: string; icon: React.ElementType; primary?: boolean }) => void;
 }) {
@@ -2630,8 +2812,8 @@ function DetailDrawer({
           <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
             <Icon className="size-5" />
           </div>
-          <h3 className="text-lg font-bold">Super Admin Detail Drawer</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Quick actions and permission summary for {module.title}.</p>
+          <h3 className="text-lg font-bold">{ROLE_LABEL[role]} Detail Drawer</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Quick actions and permission summary for {moduleTitle}.</p>
         </div>
         <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border">
           <X className="size-4" />
@@ -2641,7 +2823,13 @@ function DetailDrawer({
       <div className="space-y-4 p-5">
         <div className="rounded-xl border bg-background p-4">
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Permissions</p>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">Super Admin can view, create, update, assign, configure, export, and audit this module with no restrictions.</p>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {role === "manager"
+              ? "Manager can view, create, update, assign, and export this module for their own team only. Audit Logs and other teams' data stay hidden."
+              : role === "employee"
+              ? "Employee can view, create, and update records assigned to them only. Other employees' data, reports, audit logs, and settings stay hidden."
+              : "Super Admin can view, create, update, assign, configure, export, and audit this module with no restrictions."}
+          </p>
         </div>
         <div className="space-y-2">
           {module.actions.map((action) => {
@@ -2755,7 +2943,7 @@ function RecordModal({
               className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm"
             >
               <Check className="size-4" />
-              {mode === "edit" ? "Save Changes" : "Save Super Admin Action"}
+              {mode === "edit" ? "Save Changes" : "Save Record"}
             </button>
           ) : null}
         </div>
