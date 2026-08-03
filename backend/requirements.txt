@@ -1,0 +1,32 @@
+# Qualify Learn CRM — Backend dependencies (CP1 / INITIAL set)
+#
+# Pinned to the versions actually installed and verified on this machine.
+#
+# LATER-only packages (celery, redis, django-redis, boto3, django-storages,
+# calling/STT/storage provider SDKs, sentry-sdk) are intentionally NOT here yet —
+# they are introduced at the checkpoints that actually use them (CP15/CP16/CP17).
+#
+# openpyxl  -> introduced at CP8 when real XLSX export/import is implemented.
+# factory-boy -> introduced when the testing strategy requires factories.
+# (Both are currently installed in the local venv from the interrupted first
+# attempt; they are intentionally NOT listed here until their checkpoints.)
+
+# --- Core framework ---
+Django==5.1.4
+djangorestframework==3.15.2
+
+# --- Database driver (PostgreSQL) ---
+psycopg[binary]==3.2.3
+
+# --- API tooling ---
+django-filter==24.3
+drf-spectacular==0.28.0
+django-cors-headers==4.6.0
+
+# --- Configuration ---
+python-dotenv==1.0.1
+
+# --- Testing ---
+pytest==8.3.4
+pytest-django==4.9.0
+pytest-cov==6.0.0
