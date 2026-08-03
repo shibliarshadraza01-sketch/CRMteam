@@ -1528,6 +1528,7 @@ video {
   --input: 199 25% 90%;
   --ring: 173 80% 30%;
   --radius: 0.875rem;
+  color-scheme: light;
 }
 
 .dark {
@@ -1546,6 +1547,7 @@ video {
   --border: 199 33% 18%;
   --input: 199 33% 18%;
   --ring: 173 70% 40%;
+  color-scheme: dark;
 }
 
 * {
@@ -1556,6 +1558,51 @@ body {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   font-feature-settings: "rlig" 1, "calt" 1;
+}
+
+/*
+  .dark is toggled on a container element (not <html>/<body>), so any element
+  that isn't a descendant of the specific node carrying the explicit
+  `text-foreground` class would otherwise inherit color from <body>, which
+  never leaves the light-mode value. Setting color explicitly on every .dark
+  scope root guarantees every descendant relying on inherited color (modals,
+  toasts, and anything else that isn't nested under that one wrapper) recomputes
+  against the dark palette instead of inheriting the stale light one.
+*/
+.dark {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+input,
+select,
+textarea,
+button {
+  color: inherit;
+  background-color: transparent;
+}
+
+::-moz-placeholder {
+  color: hsl(var(--muted-foreground));
+  opacity: 1;
+}
+
+::placeholder {
+  color: hsl(var(--muted-foreground));
+  opacity: 1;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.7;
+}
+
+option {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--card));
 }
 
 ::-moz-selection {

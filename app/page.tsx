@@ -1179,6 +1179,13 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   const [reminders, setReminders] = useState<Reminder[]>(() => createInitialReminders());
   const [notes, setNotes] = useState<CalendarNote[]>(() => createInitialNotes());
 
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    return () => {
+      document.documentElement.classList.remove("dark");
+    };
+  }, [dark]);
+
   const importInputRef = useRef<HTMLInputElement>(null);
   const importTargetRef = useRef<ModuleKey>("leads");
   const notifiedReminderIds = useRef<Set<string>>(new Set());
@@ -1654,7 +1661,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   }
 
   return (
-    <main className={cn(dark && "dark")}>
+    <main>
       <div className="min-h-screen bg-background text-foreground transition-colors">
         <TopNavbar
           role={role}
@@ -1792,6 +1799,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                 {activeKey === "calendar" ? (
                   <SmartCalendarModule
                     role={role}
+                    dark={dark}
                     recordsByModule={recordsByModule}
                     reminders={reminders}
                     notes={notes}
@@ -1837,7 +1845,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                       <div className="border-b p-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                           <div>
-                            <h3 className="text-lg font-bold">{displayModuleTitle} Records</h3>
+                            <h3 className="text-lg font-bold text-foreground">{displayModuleTitle} Records</h3>
                             <p className="text-sm text-muted-foreground">
                               Search, filter, paginate, and act on {role === "manager" ? "your team's" : role === "employee" ? "your" : "Super Admin"} data.
                             </p>
@@ -1871,6 +1879,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                         <DataTable
                           module={activeModule}
                           rows={pagedRows}
+                          dark={dark}
                           onEdit={openEditModal}
                           onView={openViewModal}
                           onDuplicate={duplicateRecord}
@@ -2380,7 +2389,7 @@ function AnalyticsDashboard({
           ))}
         </div>
         <div className="flex items-center gap-2 pt-3">
-          <h3 className="text-lg font-bold">
+          <h3 className="text-lg font-bold text-foreground">
             {role === "manager" ? "Key figures for your team" : role === "employee" ? "Key figures for you" : "Key figures for the Super Admin team"}
           </h3>
           <button onClick={() => setFavorited((value) => !value)} aria-label="Toggle favorite">
@@ -2476,7 +2485,7 @@ function AnalyticsDashboard({
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h3 className="text-lg font-bold">Recent Leads</h3>
+              <h3 className="text-lg font-bold text-foreground">Recent Leads</h3>
               <p className="text-sm text-muted-foreground">Fresh leads from Meta, website, CSV, and referrals.</p>
             </div>
             <button onClick={onQuickAdd} className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">
@@ -2520,7 +2529,7 @@ function AnalyticsDashboard({
 
         <div className="grid gap-4">
           <article className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-lg font-bold">Today's Statistics</h3>
+            <h3 className="text-lg font-bold text-foreground">Today's Statistics</h3>
             <div className="mt-4 grid grid-cols-2 gap-3">
               {todayStats.map((item) => (
                 <div key={item.label} className="rounded-xl border bg-background p-3">
@@ -2531,7 +2540,7 @@ function AnalyticsDashboard({
             </div>
           </article>
           <article className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-lg font-bold">Quick Actions</h3>
+            <h3 className="text-lg font-bold text-foreground">Quick Actions</h3>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <button onClick={onImportLeads} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
                 <Upload className="size-4 text-teal-600" />
@@ -2564,7 +2573,7 @@ function AnalyticsDashboard({
           onCreate={onCreateForModule}
         />
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
-          <h3 className="text-lg font-bold">Upcoming Follow-ups</h3>
+          <h3 className="text-lg font-bold text-foreground">Upcoming Follow-ups</h3>
           <div className="mt-4 space-y-3">
             {upcomingFollowUps.map((item) => (
               <div key={`${item.time}-${item.title}`} className="flex items-center gap-3 rounded-xl border bg-background p-3">
@@ -2583,7 +2592,7 @@ function AnalyticsDashboard({
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-lg font-bold">Upcoming Reminders</h3>
+              <h3 className="text-lg font-bold text-foreground">Upcoming Reminders</h3>
               <p className="text-sm text-muted-foreground">Reminders, meetings, and follow-ups from your Smart Calendar.</p>
             </div>
             <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
@@ -2660,6 +2669,7 @@ function emptyDayData(): CalendarDayData {
 
 function SmartCalendarModule({
   role,
+  dark,
   recordsByModule,
   reminders,
   notes,
@@ -2673,6 +2683,7 @@ function SmartCalendarModule({
   onToggleNotePin
 }: {
   role: Role;
+  dark: boolean;
   recordsByModule: RecordsByModule;
   reminders: Reminder[];
   notes: CalendarNote[];
@@ -2806,7 +2817,7 @@ function SmartCalendarModule({
               <CalendarDays className="size-4 text-teal-600" />
               Today
             </button>
-            <h3 className="ml-1 text-lg font-bold">
+            <h3 className="ml-1 text-lg font-bold text-foreground">
               {view === "day"
                 ? cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
                 : view === "week"
@@ -2945,6 +2956,7 @@ function SmartCalendarModule({
         {selectedDate ? (
           <DateDetailsPanel
             role={role}
+            dark={dark}
             identity={identity}
             dateKey={selectedDate}
             day={dayMap.get(selectedDate) ?? emptyDayData()}
@@ -2966,6 +2978,7 @@ function SmartCalendarModule({
 
 function DateDetailsPanel({
   role,
+  dark,
   identity,
   dateKey,
   day,
@@ -2980,6 +2993,7 @@ function DateDetailsPanel({
   onToggleNotePin
 }: {
   role: Role;
+  dark: boolean;
   identity: string;
   dateKey: string;
   day: CalendarDayData;
@@ -2994,7 +3008,7 @@ function DateDetailsPanel({
   onToggleNotePin: (id: string) => void;
 }) {
   return createPortal(
-    <>
+    <div className={cn(dark && "dark")}>
       <motion.div
         className="fixed inset-0 z-[70] bg-black/40"
         initial={{ opacity: 0 }}
@@ -3003,7 +3017,7 @@ function DateDetailsPanel({
         onClick={onClose}
       />
       <motion.aside
-        className="glass-scrollbar fixed right-0 top-0 z-[80] h-full w-full max-w-md overflow-y-auto border-l bg-card p-5 shadow-soft"
+        className="glass-scrollbar fixed right-0 top-0 z-[80] h-full w-full max-w-md overflow-y-auto border-l bg-card text-foreground p-5 shadow-soft"
         initial={{ x: 420 }}
         animate={{ x: 0 }}
         exit={{ x: 420 }}
@@ -3012,7 +3026,7 @@ function DateDetailsPanel({
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Date Details</p>
-            <h3 className="text-lg font-bold">{parseDateKey(dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
+            <h3 className="text-lg font-bold text-foreground">{parseDateKey(dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
           </div>
           <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border" aria-label="Close">
             <X className="size-4" />
@@ -3033,7 +3047,7 @@ function DateDetailsPanel({
           onToggleNotePin={onToggleNotePin}
         />
       </motion.aside>
-    </>,
+    </div>,
     document.body
   );
 }
@@ -3508,7 +3522,7 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
     <article className="rounded-2xl border bg-card p-5 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-base font-bold">{title}</h3>
+          <h3 className="text-base font-bold text-foreground">{title}</h3>
           <p className="text-sm text-muted-foreground">{subtitle}</p>
         </div>
         <MoreHorizontal className="size-4 shrink-0 text-muted-foreground" />
@@ -3742,7 +3756,7 @@ function TimelineCard({
 }) {
   return (
     <article className="rounded-2xl border bg-card p-5 shadow-sm">
-      <h3 className="text-lg font-bold">{title}</h3>
+      <h3 className="text-lg font-bold text-foreground">{title}</h3>
       <div className="mt-4 space-y-4">
         {items.map((item) => (
           <div key={item.id} className="flex gap-3">
@@ -3815,6 +3829,7 @@ function FeatureCards({ module }: { module: ModuleConfig }) {
 function DataTable({
   module,
   rows,
+  dark,
   onEdit,
   onView,
   onDuplicate,
@@ -3824,6 +3839,7 @@ function DataTable({
 }: {
   module: ModuleConfig;
   rows: RowRecord[];
+  dark: boolean;
   onEdit: (row: RowRecord) => void;
   onView: (row: RowRecord) => void;
   onDuplicate: (row: RowRecord) => void;
@@ -3857,7 +3873,7 @@ function DataTable({
         <div className="mb-4 flex size-14 items-center justify-center rounded-xl bg-teal-50 text-teal-600 dark:bg-teal-950">
           <Search className="size-6" />
         </div>
-        <h3 className="text-lg font-bold">No records found</h3>
+        <h3 className="text-lg font-bold text-foreground">No records found</h3>
         <p className="mt-1 max-w-md text-sm text-muted-foreground">Try a different search term or filter for this module.</p>
       </div>
     );
@@ -3936,10 +3952,10 @@ function DataTable({
       </table>
       {openMenuRow && menuPos
         ? createPortal(
-            <>
+            <div className={cn(dark && "dark")}>
               <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
               <div
-                className="fixed z-50 w-40 overflow-hidden rounded-lg border bg-card shadow-soft"
+                className="fixed z-50 w-40 overflow-hidden rounded-lg border bg-card text-foreground shadow-soft"
                 style={{ top: menuPos.top, left: menuPos.left }}
               >
                 <button
@@ -3963,7 +3979,7 @@ function DataTable({
                   Delete
                 </button>
               </div>
-            </>,
+            </div>,
             document.body
           )
         : null}
@@ -3996,7 +4012,7 @@ function WorkflowPanel({ module }: { module: ModuleConfig }) {
       <article className="rounded-2xl border bg-card p-5 shadow-sm">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold">Form & Validation</h3>
+            <h3 className="text-lg font-bold text-foreground">Form & Validation</h3>
             <p className="text-sm text-muted-foreground">{module.formTitle} with required field checks.</p>
           </div>
           <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-700 dark:bg-red-950 dark:text-red-200">Required</span>
@@ -4028,7 +4044,7 @@ function WorkflowPanel({ module }: { module: ModuleConfig }) {
       <article className="rounded-2xl border bg-card p-5 shadow-sm">
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-bold">Empty & Loading States</h3>
+            <h3 className="text-lg font-bold text-foreground">Empty & Loading States</h3>
             <p className="text-sm text-muted-foreground">Production states for slow or missing records.</p>
           </div>
           <Loader2 className="size-5 animate-spin text-teal-600" />
@@ -4084,7 +4100,7 @@ function DetailDrawer({
           <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
             <Icon className="size-5" />
           </div>
-          <h3 className="text-lg font-bold">{ROLE_LABEL[role]} Detail Drawer</h3>
+          <h3 className="text-lg font-bold text-foreground">{ROLE_LABEL[role]} Detail Drawer</h3>
           <p className="mt-1 text-sm text-muted-foreground">Quick actions and permission summary for {moduleTitle}.</p>
         </div>
         <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border">
@@ -4178,17 +4194,17 @@ function RecordModal({
       >
         <div className="flex items-start justify-between gap-4 border-b p-5">
           <div>
-            <h3 className="text-xl font-bold">{title}</h3>
+            <h3 className="text-xl font-bold text-foreground">{title}</h3>
             <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
           </div>
-          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border">
+          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border text-foreground">
             <X className="size-4" />
           </button>
         </div>
         <div className="grid gap-4 p-5 sm:grid-cols-2">
           {module.columns.map((column, index) => (
             <label key={column} className="space-y-1.5">
-              <span className="text-sm font-semibold">{column}</span>
+              <span className="text-sm font-semibold text-foreground">{column}</span>
               <input
                 type="text"
                 value={formData[column] ?? ""}
@@ -4196,7 +4212,7 @@ function RecordModal({
                 onChange={(event) => onChange(column, event.target.value)}
                 placeholder={`Enter ${column.toLowerCase()}`}
                 className={cn(
-                  "h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4",
+                  "h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4",
                   isView && "cursor-default bg-muted text-muted-foreground",
                   !isView && index === 0 && "border-red-300"
                 )}
@@ -4206,7 +4222,7 @@ function RecordModal({
           ))}
         </div>
         <div className="flex flex-col-reverse gap-2 border-t p-5 sm:flex-row sm:justify-end">
-          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold text-foreground">
             {isView ? "Close" : "Cancel"}
           </button>
           {!isView ? (
