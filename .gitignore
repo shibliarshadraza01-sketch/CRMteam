@@ -1,1 +1,19 @@
+# --- Frontend ---
 node_modules
+
+# --- Backend: secrets ---
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# --- Backend: virtual environment ---
+backend/.venv/
+
+# --- Backend: Python caches / bytecode ---
+backend/**/__pycache__/
+backend/**/*.py[cod]
+
+# --- Backend: test / coverage artifacts ---
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
