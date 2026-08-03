@@ -2,10 +2,12 @@
 
 import {
   Activity,
+  AlarmClock,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   Bell,
+  BellRing,
   Building2,
   CalendarDays,
   Check,
@@ -28,8 +30,10 @@ import {
   MessageCircle,
   Moon,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Phone,
+  Pin,
   Plus,
   RefreshCw,
   Search,
@@ -50,11 +54,13 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type ModuleKey =
   | "users"
   | "team"
   | "dashboard"
+  | "calendar"
   | "leads"
   | "customers"
   | "payments"
@@ -209,6 +215,35 @@ const modules: ModuleConfig[] = [
       { label: "Item", type: "text", placeholder: "Lead, customer, or task name" },
       { label: "Type", type: "select", placeholder: "Lead / Customer / Task / Follow-up" },
       { label: "Status", type: "select", placeholder: "Current status" },
+      { label: "Note", type: "text", placeholder: "Add a note" }
+    ]
+  },
+  {
+    key: "calendar",
+    title: "Smart Calendar",
+    subtitle: "Month, week, and day views with reminders, notes, and a full activity timeline for every date.",
+    icon: CalendarDays,
+    accent: "from-teal-700 to-violet-500",
+    features: [
+      "Month, week, and day calendar views",
+      "Per-date activity previews for leads, customers, calls, tasks, and reminders",
+      "Role-based reminders and notes with priorities and repeats"
+    ],
+    stats: [
+      { label: "Today's Events", value: "-", change: "Live" },
+      { label: "This Week", value: "-", change: "Live" },
+      { label: "Overdue Reminders", value: "-", change: "Live" },
+      { label: "Pinned Notes", value: "-", change: "Live" }
+    ],
+    columns: ["Event", "Type", "Date", "Priority"],
+    rows: [{ Event: "Team pipeline review", Type: "Meeting", Date: "Today", Priority: "Medium" }],
+    filters: ["All events"],
+    actions: [{ label: "Refresh Report", icon: RefreshCw }],
+    formTitle: "Add Calendar Event",
+    formFields: [
+      { label: "Title", type: "text", placeholder: "Event title" },
+      { label: "Date", type: "date", placeholder: "Choose date" },
+      { label: "Priority", type: "select", placeholder: "Low / Medium / High / Urgent" },
       { label: "Note", type: "text", placeholder: "Add a note" }
     ]
   },
@@ -534,9 +569,9 @@ const modules: ModuleConfig[] = [
 ];
 
 const MODULE_ACCESS: Record<Role, ModuleKey[]> = {
-  superadmin: ["reports", "users", "leads", "customers", "payments", "communication", "tasks", "audit", "settings"],
-  manager: ["reports", "team", "leads", "customers", "payments", "communication", "tasks"],
-  employee: ["dashboard", "leads", "customers", "payments", "communication", "tasks"]
+  superadmin: ["reports", "calendar", "users", "leads", "customers", "payments", "communication", "tasks", "audit", "settings"],
+  manager: ["reports", "calendar", "team", "leads", "customers", "payments", "communication", "tasks"],
+  employee: ["dashboard", "calendar", "leads", "customers", "payments", "communication", "tasks"]
 };
 
 const HOME_MODULE: Record<Role, ModuleKey> = {
@@ -565,6 +600,191 @@ const EMPLOYEE_MODULE_COPY: Partial<Record<ModuleKey, { title: string; subtitle:
   tasks: { title: "My Tasks & Follow-ups", subtitle: "View tasks assigned to you, schedule follow-ups, set reminders, and mark tasks complete." }
 };
 
+// ---- Smart Calendar -------------------------------------------------------
+
+type ReminderPriority = "Low" | "Medium" | "High" | "Urgent";
+type ReminderRepeat = "None" | "Daily" | "Weekly" | "Monthly";
+type ReminderKind = "Reminder" | "Meeting" | "Follow-up" | "Task";
+
+type Reminder = {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  priority: ReminderPriority;
+  repeat: ReminderRepeat;
+  kind: ReminderKind;
+  assignedTo: string;
+  createdByRole: Role;
+  completed: boolean;
+  snoozedUntil: string | null;
+};
+
+type NoteVisibility = "private" | "team" | "company";
+
+type CalendarNote = {
+  id: string;
+  date: string;
+  text: string;
+  author: string;
+  pinned: boolean;
+  visibility: NoteVisibility;
+  attachments: string[];
+  createdAt: string;
+};
+
+const TEAM_ROSTER = ["Aarav Mehta", "Nisha Rao", "Kabir Sethi", "Zoya Khan", "Maya Iyer"];
+const CURRENT_EMPLOYEE_NAME = "Aarav Mehta";
+
+function toDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function parseDateKey(key: string): Date {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addDays(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function addMonths(date: Date, amount: number): Date {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + amount);
+  return next;
+}
+
+function startOfWeek(date: Date): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() - next.getDay());
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function ownerOf(row: RowRecord): string | undefined {
+  return row.Owner ?? row["Assigned To"] ?? undefined;
+}
+
+function scopeRowsForCalendar(rows: RowRecord[], role: Role): RowRecord[] {
+  if (role !== "employee") return rows;
+  return rows.filter((row) => ownerOf(row) === CURRENT_EMPLOYEE_NAME);
+}
+
+function pseudoDateForRow(id: string): string {
+  const seed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const offset = (seed % 41) - 20;
+  return toDateKey(addDays(new Date(), offset));
+}
+
+function canSeeReminder(reminder: Reminder, role: Role): boolean {
+  if (role === "superadmin") return true;
+  if (role === "manager") return reminder.assignedTo === "Manager" || TEAM_ROSTER.includes(reminder.assignedTo);
+  return reminder.assignedTo === CURRENT_EMPLOYEE_NAME;
+}
+
+function canSeeNote(note: CalendarNote, role: Role): boolean {
+  if (role === "superadmin") return true;
+  if (role === "manager") return !(note.visibility === "private" && note.author === "Super Admin");
+  return note.author === CURRENT_EMPLOYEE_NAME;
+}
+
+function assigneeOptionsForRole(role: Role): string[] {
+  if (role === "superadmin") return ["Super Admin", "Manager", ...TEAM_ROSTER];
+  if (role === "manager") return ["Manager", ...TEAM_ROSTER];
+  return [CURRENT_EMPLOYEE_NAME];
+}
+
+function createInitialReminders(): Reminder[] {
+  const today = new Date();
+  return [
+    {
+      id: "reminder-seed-1",
+      title: "Follow up with Priya Sharma",
+      date: toDateKey(today),
+      time: "10:30",
+      priority: "High",
+      repeat: "None",
+      kind: "Follow-up",
+      assignedTo: CURRENT_EMPLOYEE_NAME,
+      createdByRole: "manager",
+      completed: false,
+      snoozedUntil: null
+    },
+    {
+      id: "reminder-seed-2",
+      title: "Team pipeline review",
+      date: toDateKey(addDays(today, 1)),
+      time: "15:00",
+      priority: "Medium",
+      repeat: "Weekly",
+      kind: "Meeting",
+      assignedTo: "Manager",
+      createdByRole: "superadmin",
+      completed: false,
+      snoozedUntil: null
+    },
+    {
+      id: "reminder-seed-3",
+      title: "Send payment reminder to Northstar Labs",
+      date: toDateKey(addDays(today, -1)),
+      time: "09:00",
+      priority: "Urgent",
+      repeat: "None",
+      kind: "Reminder",
+      assignedTo: "Nisha Rao",
+      createdByRole: "manager",
+      completed: false,
+      snoozedUntil: null
+    },
+    {
+      id: "reminder-seed-4",
+      title: "Quarterly audit prep",
+      date: toDateKey(addDays(today, 3)),
+      time: "11:00",
+      priority: "Low",
+      repeat: "Monthly",
+      kind: "Task",
+      assignedTo: "Super Admin",
+      createdByRole: "superadmin",
+      completed: false,
+      snoozedUntil: null
+    }
+  ];
+}
+
+function createInitialNotes(): CalendarNote[] {
+  const today = new Date();
+  return [
+    {
+      id: "note-seed-1",
+      date: toDateKey(today),
+      text: "Discussed onboarding checklist with Acme Learning.",
+      author: "Aarav Mehta",
+      pinned: true,
+      visibility: "team",
+      attachments: [],
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: "note-seed-2",
+      date: toDateKey(addDays(today, -2)),
+      text: "Personal reminder: prep call script for hot leads.",
+      author: CURRENT_EMPLOYEE_NAME,
+      pinned: false,
+      visibility: "private",
+      attachments: [],
+      createdAt: new Date().toISOString()
+    }
+  ];
+}
+
 const badgeStyles: Record<string, string> = {
   Active: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
   Invited: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
@@ -581,6 +801,22 @@ const badgeStyles: Record<string, string> = {
 };
 
 const CHART_PALETTE = ["#0F766E", "#14B8A6", "#F97316", "#0EA5E9", "#8B5CF6", "#F59E0B"];
+
+const REMINDER_PRIORITY_STYLES: Record<ReminderPriority, string> = {
+  Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200",
+  Medium: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200",
+  High: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
+  Urgent: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200"
+};
+
+const CALENDAR_ITEM_DOTS: Array<{ key: "leads" | "customers" | "calls" | "tasks" | "reminders" | "notes"; label: string; color: string }> = [
+  { key: "leads", label: "Leads", color: "bg-orange-500" },
+  { key: "customers", label: "Customers", color: "bg-pink-500" },
+  { key: "calls", label: "Calls", color: "bg-sky-500" },
+  { key: "tasks", label: "Tasks", color: "bg-violet-500" },
+  { key: "reminders", label: "Reminders", color: "bg-red-500" },
+  { key: "notes", label: "Notes", color: "bg-amber-500" }
+];
 
 const revenueData = [
   { label: "Jan", value: 48 },
@@ -940,9 +1176,12 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   const [dark, setDark] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [reminders, setReminders] = useState<Reminder[]>(() => createInitialReminders());
+  const [notes, setNotes] = useState<CalendarNote[]>(() => createInitialNotes());
 
   const importInputRef = useRef<HTMLInputElement>(null);
   const importTargetRef = useRef<ModuleKey>("leads");
+  const notifiedReminderIds = useRef<Set<string>>(new Set());
 
   const activeModule = modules.find((module) => module.key === activeKey) ?? modules[0];
   const activeRecords = recordsByModule[activeKey] ?? [];
@@ -1035,6 +1274,61 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     const entry: ActivityEntry = { id: `activity-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, message, moduleKey, row };
     setActivityLog((current) => [entry, ...current].slice(0, 8));
   }
+
+  function addReminder(input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) {
+    const reminder: Reminder = { ...input, id: `reminder-${Date.now()}`, completed: false, snoozedUntil: null, createdByRole: role };
+    setReminders((current) => [reminder, ...current]);
+    showToast({ type: "success", message: `Reminder "${reminder.title}" created for ${reminder.assignedTo}.` });
+    logActivity(`New reminder "${reminder.title}" (${reminder.kind}) assigned to ${reminder.assignedTo}.`, "calendar", null);
+  }
+
+  function updateReminder(id: string, patch: Partial<Reminder>) {
+    setReminders((current) => current.map((reminder) => (reminder.id === id ? { ...reminder, ...patch } : reminder)));
+  }
+
+  function deleteReminder(id: string) {
+    setReminders((current) => current.filter((reminder) => reminder.id !== id));
+    showToast({ type: "success", message: "Reminder deleted." });
+  }
+
+  function toggleReminderComplete(id: string) {
+    setReminders((current) =>
+      current.map((reminder) => (reminder.id === id ? { ...reminder, completed: !reminder.completed } : reminder))
+    );
+  }
+
+  function snoozeReminder(id: string, days = 1) {
+    const snoozedUntil = toDateKey(addDays(new Date(), days));
+    setReminders((current) => current.map((reminder) => (reminder.id === id ? { ...reminder, snoozedUntil } : reminder)));
+    showToast({ type: "success", message: `Reminder snoozed until ${snoozedUntil}.` });
+  }
+
+  function addNote(input: Omit<CalendarNote, "id" | "createdAt" | "pinned">) {
+    const note: CalendarNote = { ...input, id: `note-${Date.now()}`, createdAt: new Date().toISOString(), pinned: false };
+    setNotes((current) => [note, ...current]);
+    showToast({ type: "success", message: "Note added." });
+  }
+
+  function deleteNote(id: string) {
+    setNotes((current) => current.filter((note) => note.id !== id));
+  }
+
+  function toggleNotePin(id: string) {
+    setNotes((current) => current.map((note) => (note.id === id ? { ...note, pinned: !note.pinned } : note)));
+  }
+
+  useEffect(() => {
+    const todayKey = toDateKey(new Date());
+    reminders
+      .filter((reminder) => canSeeReminder(reminder, role) && !reminder.completed && reminder.date <= todayKey)
+      .forEach((reminder) => {
+        if (notifiedReminderIds.current.has(reminder.id)) return;
+        notifiedReminderIds.current.add(reminder.id);
+        const overdue = reminder.date < todayKey;
+        logActivity(`${overdue ? "Overdue" : "Due today"}: ${reminder.kind} "${reminder.title}" (${reminder.priority} priority).`, "calendar", null);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reminders, role]);
 
   function viewActivityRecord(moduleKey: ModuleKey, row: RowRecord) {
     const targetModule = modules.find((module) => module.key === moduleKey);
@@ -1495,104 +1789,126 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                   </div>
                 </motion.section>
 
-                {activeKey === "reports" || activeKey === "dashboard" ? (
-                  <AnalyticsDashboard
+                {activeKey === "calendar" ? (
+                  <SmartCalendarModule
                     role={role}
-                    kpis={kpis}
-                    recentLeads={recordsByModule.leads ?? []}
-                    paymentRows={recordsByModule.payments ?? []}
-                    activityLog={activityLog}
-                    onQuickAdd={quickAddLead}
-                    onImportLeads={quickImportLeads}
-                    onExportLeads={quickExportLeads}
-                    onSendReminder={quickSendReminder}
-                    onAssignTask={quickAssignTask}
-                    onRefresh={refreshCurrentModule}
-                    onViewActivity={viewActivityRecord}
-                    onEditActivity={editActivityRecord}
-                    onDeleteActivity={deleteActivityRecord}
-                    onCreateForModule={openCreateModalFor}
+                    recordsByModule={recordsByModule}
+                    reminders={reminders}
+                    notes={notes}
+                    onAddReminder={addReminder}
+                    onUpdateReminder={updateReminder}
+                    onDeleteReminder={deleteReminder}
+                    onToggleReminderComplete={toggleReminderComplete}
+                    onSnoozeReminder={snoozeReminder}
+                    onAddNote={addNote}
+                    onDeleteNote={deleteNote}
+                    onToggleNotePin={toggleNotePin}
                   />
                 ) : (
-                  <ModuleChartSection module={activeModule} records={activeRecords} />
-                )}
+                  <>
+                    {activeKey === "reports" || activeKey === "dashboard" ? (
+                      <AnalyticsDashboard
+                        role={role}
+                        kpis={kpis}
+                        recentLeads={recordsByModule.leads ?? []}
+                        paymentRows={recordsByModule.payments ?? []}
+                        activityLog={activityLog}
+                        reminders={reminders}
+                        onQuickAdd={quickAddLead}
+                        onImportLeads={quickImportLeads}
+                        onExportLeads={quickExportLeads}
+                        onSendReminder={quickSendReminder}
+                        onAssignTask={quickAssignTask}
+                        onRefresh={refreshCurrentModule}
+                        onViewActivity={viewActivityRecord}
+                        onEditActivity={editActivityRecord}
+                        onDeleteActivity={deleteActivityRecord}
+                        onCreateForModule={openCreateModalFor}
+                        onCompleteReminder={toggleReminderComplete}
+                        onSnoozeReminder={snoozeReminder}
+                      />
+                    ) : (
+                      <ModuleChartSection module={activeModule} records={activeRecords} />
+                    )}
 
-                <FeatureCards module={activeModule} />
+                    <FeatureCards module={activeModule} />
 
-                <section className="rounded-2xl border bg-card shadow-sm">
-                  <div className="border-b p-4">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold">{displayModuleTitle} Records</h3>
+                    <section className="rounded-2xl border bg-card shadow-sm">
+                      <div className="border-b p-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                          <div>
+                            <h3 className="text-lg font-bold">{displayModuleTitle} Records</h3>
+                            <p className="text-sm text-muted-foreground">
+                              Search, filter, paginate, and act on {role === "manager" ? "your team's" : role === "employee" ? "your" : "Super Admin"} data.
+                            </p>
+                          </div>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <label className="relative min-w-0 sm:w-72">
+                              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                              <input
+                                value={query}
+                                onChange={(event) => setQuery(event.target.value)}
+                                placeholder="Search records..."
+                                className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                              />
+                            </label>
+                            <select
+                              value={filter}
+                              onChange={(event) => setFilter(event.target.value)}
+                              className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+                            >
+                              {activeModule.filters.map((item) => (
+                                <option key={item}>{item}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {isLoading ? (
+                        <LoadingSkeleton columns={activeModule.columns} />
+                      ) : (
+                        <DataTable
+                          module={activeModule}
+                          rows={pagedRows}
+                          onEdit={openEditModal}
+                          onView={openViewModal}
+                          onDuplicate={duplicateRecord}
+                          onDelete={deleteRecord}
+                          sort={sort}
+                          onSort={toggleSort}
+                        />
+                      )}
+
+                      <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-sm text-muted-foreground">
-                          Search, filter, paginate, and act on {role === "manager" ? "your team's" : role === "employee" ? "your" : "Super Admin"} data.
+                          Showing <span className="font-semibold text-foreground">{pagedRows.length}</span> of {rows.length} filtered
+                          {rows.length !== activeRecords.length ? ` (${activeRecords.length} total)` : ""}
                         </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setPage((current) => Math.max(1, current - 1))}
+                            disabled={page <= 1}
+                            className="inline-flex size-9 items-center justify-center rounded-lg border bg-background disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <ChevronLeft className="size-4" />
+                          </button>
+                          <span className="rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">{page}</span>
+                          <span className="text-sm text-muted-foreground">of {totalPages}</span>
+                          <button
+                            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                            disabled={page >= totalPages}
+                            className="inline-flex size-9 items-center justify-center rounded-lg border bg-background disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <ChevronRight className="size-4" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex flex-col gap-2 sm:flex-row">
-                        <label className="relative min-w-0 sm:w-72">
-                          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                          <input
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Search records..."
-                            className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-                          />
-                        </label>
-                        <select
-                          value={filter}
-                          onChange={(event) => setFilter(event.target.value)}
-                          className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
-                        >
-                          {activeModule.filters.map((item) => (
-                            <option key={item}>{item}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
+                    </section>
 
-                  {isLoading ? (
-                    <LoadingSkeleton columns={activeModule.columns} />
-                  ) : (
-                    <DataTable
-                      module={activeModule}
-                      rows={pagedRows}
-                      onEdit={openEditModal}
-                      onView={openViewModal}
-                      onDuplicate={duplicateRecord}
-                      onDelete={deleteRecord}
-                      sort={sort}
-                      onSort={toggleSort}
-                    />
-                  )}
-
-                  <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-muted-foreground">
-                      Showing <span className="font-semibold text-foreground">{pagedRows.length}</span> of {rows.length} filtered
-                      {rows.length !== activeRecords.length ? ` (${activeRecords.length} total)` : ""}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setPage((current) => Math.max(1, current - 1))}
-                        disabled={page <= 1}
-                        className="inline-flex size-9 items-center justify-center rounded-lg border bg-background disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <ChevronLeft className="size-4" />
-                      </button>
-                      <span className="rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">{page}</span>
-                      <span className="text-sm text-muted-foreground">of {totalPages}</span>
-                      <button
-                        onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-                        disabled={page >= totalPages}
-                        className="inline-flex size-9 items-center justify-center rounded-lg border bg-background disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <ChevronRight className="size-4" />
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                <WorkflowPanel module={activeModule} />
+                    <WorkflowPanel module={activeModule} />
+                  </>
+                )}
               </div>
 
               <AnimatePresence>
@@ -1961,6 +2277,7 @@ function AnalyticsDashboard({
   recentLeads,
   paymentRows,
   activityLog,
+  reminders,
   onQuickAdd,
   onImportLeads,
   onExportLeads,
@@ -1970,13 +2287,16 @@ function AnalyticsDashboard({
   onViewActivity,
   onEditActivity,
   onDeleteActivity,
-  onCreateForModule
+  onCreateForModule,
+  onCompleteReminder,
+  onSnoozeReminder
 }: {
   role: Role;
   kpis: Array<{ label: string; value: string; change: string }>;
   recentLeads: RowRecord[];
   paymentRows: RowRecord[];
   activityLog: ActivityEntry[];
+  reminders: Reminder[];
   onQuickAdd: () => void;
   onImportLeads: () => void;
   onExportLeads: () => void;
@@ -1987,6 +2307,8 @@ function AnalyticsDashboard({
   onEditActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
   onDeleteActivity: (moduleKey: ModuleKey, row: RowRecord) => void;
   onCreateForModule: (moduleKey: ModuleKey) => void;
+  onCompleteReminder: (id: string) => void;
+  onSnoozeReminder: (id: string) => void;
 }) {
   const [activeTab, setActiveTab] = useState("Status");
   const [favorited, setFavorited] = useState(true);
@@ -1996,6 +2318,11 @@ function AnalyticsDashboard({
 
   const topPerformers = [...employeePerformanceData].sort((a, b) => b.value - a.value).slice(0, 3);
   const openRequests = paymentRows.filter((row) => parseCurrency(row.Balance) > 0).slice(0, 5);
+
+  const upcomingReminders = reminders
+    .filter((reminder) => canSeeReminder(reminder, role) && !reminder.completed)
+    .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
+    .slice(0, 5);
 
   const tabVisibility: Record<string, string[]> = {
     performers: ["Status", "Sales"],
@@ -2251,7 +2578,928 @@ function AnalyticsDashboard({
           </div>
         </article>
       </div>
+
+      <div className="grid gap-4">
+        <article className="rounded-2xl border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold">Upcoming Reminders</h3>
+              <p className="text-sm text-muted-foreground">Reminders, meetings, and follow-ups from your Smart Calendar.</p>
+            </div>
+            <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+              {upcomingReminders.length} pending
+            </span>
+          </div>
+          {upcomingReminders.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No upcoming reminders.</p>
+          ) : (
+            <div className="space-y-3">
+              {upcomingReminders.map((reminder) => {
+                const overdue = reminder.date < toDateKey(new Date());
+                return (
+                  <div key={reminder.id} className="flex flex-wrap items-center gap-3 rounded-xl border bg-background p-3">
+                    <div
+                      className={cn(
+                        "rounded-lg px-2 py-1 text-xs font-bold",
+                        overdue
+                          ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-200"
+                          : "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                      )}
+                    >
+                      {reminder.date} - {reminder.time}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold">{reminder.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {reminder.kind} - Assigned to {reminder.assignedTo}
+                      </p>
+                    </div>
+                    <span className={cn("rounded-full px-2 py-1 text-xs font-bold ring-1", REMINDER_PRIORITY_STYLES[reminder.priority])}>
+                      {reminder.priority}
+                    </span>
+                    <button
+                      onClick={() => onCompleteReminder(reminder.id)}
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      aria-label="Mark reminder complete"
+                    >
+                      <Check className="size-4" />
+                    </button>
+                    <button
+                      onClick={() => onSnoozeReminder(reminder.id)}
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      aria-label="Snooze reminder"
+                    >
+                      <BellRing className="size-4" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </article>
+      </div>
     </section>
+  );
+}
+
+type CalendarDayData = {
+  leads: RowRecord[];
+  customers: RowRecord[];
+  payments: RowRecord[];
+  calls: RowRecord[];
+  communication: RowRecord[];
+  tasks: RowRecord[];
+  audit: RowRecord[];
+  reminders: Reminder[];
+  notes: CalendarNote[];
+};
+
+function emptyDayData(): CalendarDayData {
+  return { leads: [], customers: [], payments: [], calls: [], communication: [], tasks: [], audit: [], reminders: [], notes: [] };
+}
+
+function SmartCalendarModule({
+  role,
+  recordsByModule,
+  reminders,
+  notes,
+  onAddReminder,
+  onUpdateReminder,
+  onDeleteReminder,
+  onToggleReminderComplete,
+  onSnoozeReminder,
+  onAddNote,
+  onDeleteNote,
+  onToggleNotePin
+}: {
+  role: Role;
+  recordsByModule: RecordsByModule;
+  reminders: Reminder[];
+  notes: CalendarNote[];
+  onAddReminder: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
+  onUpdateReminder: (id: string, patch: Partial<Reminder>) => void;
+  onDeleteReminder: (id: string) => void;
+  onToggleReminderComplete: (id: string) => void;
+  onSnoozeReminder: (id: string, days?: number) => void;
+  onAddNote: (input: Omit<CalendarNote, "id" | "createdAt" | "pinned">) => void;
+  onDeleteNote: (id: string) => void;
+  onToggleNotePin: (id: string) => void;
+}) {
+  const [view, setView] = useState<"month" | "week" | "day">("month");
+  const [cursor, setCursor] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const identity = role === "employee" ? CURRENT_EMPLOYEE_NAME : role === "manager" ? "Manager" : "Super Admin";
+  const todayKey = toDateKey(new Date());
+
+  const visibleReminders = useMemo(() => reminders.filter((reminder) => canSeeReminder(reminder, role)), [reminders, role]);
+  const visibleNotes = useMemo(() => notes.filter((note) => canSeeNote(note, role)), [notes, role]);
+
+  const dayMap = useMemo(() => {
+    const map = new Map<string, CalendarDayData>();
+    function ensure(key: string) {
+      if (!map.has(key)) map.set(key, emptyDayData());
+      return map.get(key)!;
+    }
+    scopeRowsForCalendar(recordsByModule.leads ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).leads.push(row));
+    scopeRowsForCalendar(recordsByModule.customers ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).customers.push(row));
+    scopeRowsForCalendar(recordsByModule.payments ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).payments.push(row));
+    scopeRowsForCalendar(recordsByModule.tasks ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).tasks.push(row));
+    scopeRowsForCalendar(recordsByModule.communication ?? [], role).forEach((row) => {
+      const bucket = ensure(pseudoDateForRow(row.id));
+      bucket.communication.push(row);
+      if (row.Channel === "Call") bucket.calls.push(row);
+    });
+    if (role === "superadmin") {
+      (recordsByModule.audit ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).audit.push(row));
+    }
+    visibleReminders.forEach((reminder) => ensure(reminder.date).reminders.push(reminder));
+    visibleNotes.forEach((note) => ensure(note.date).notes.push(note));
+    return map;
+  }, [recordsByModule, role, visibleReminders, visibleNotes]);
+
+  const lowerSearch = search.trim().toLowerCase();
+  function dayMatchesSearch(key: string): boolean {
+    if (!lowerSearch) return false;
+    const day = dayMap.get(key);
+    if (!day) return false;
+    const haystack = [
+      ...day.leads.map((row) => row.Lead ?? ""),
+      ...day.customers.map((row) => row.Customer ?? ""),
+      ...day.tasks.map((row) => row.Task ?? ""),
+      ...day.reminders.map((reminder) => reminder.title),
+      ...day.notes.map((note) => note.text)
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(lowerSearch);
+  }
+
+  function goToday() {
+    setCursor(new Date());
+  }
+  function goPrev() {
+    if (view === "month") setCursor((current) => addMonths(current, -1));
+    else if (view === "week") setCursor((current) => addDays(current, -7));
+    else setCursor((current) => addDays(current, -1));
+  }
+  function goNext() {
+    if (view === "month") setCursor((current) => addMonths(current, 1));
+    else if (view === "week") setCursor((current) => addDays(current, 7));
+    else setCursor((current) => addDays(current, 1));
+  }
+
+  const monthLabel = cursor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  const monthDays = useMemo(() => {
+    const firstOfMonth = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+    const gridStart = startOfWeek(firstOfMonth);
+    return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
+  }, [cursor]);
+
+  const weekDays = useMemo(() => {
+    const start = startOfWeek(cursor);
+    return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+  }, [cursor]);
+
+  function DayBadges({ dateKey }: { dateKey: string }) {
+    const day = dayMap.get(dateKey);
+    if (!day) return null;
+    const counts: Record<string, number> = {
+      leads: day.leads.length,
+      customers: day.customers.length,
+      calls: day.calls.length,
+      tasks: day.tasks.length,
+      reminders: day.reminders.length,
+      notes: day.notes.length
+    };
+    const active = CALENDAR_ITEM_DOTS.filter((item) => counts[item.key] > 0);
+    if (active.length === 0) return null;
+    return (
+      <div className="mt-1 flex flex-wrap gap-1">
+        {active.slice(0, 4).map((item) => (
+          <span
+            key={item.key}
+            title={`${counts[item.key]} ${item.label}`}
+            className={cn("inline-flex min-w-4 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white", item.color)}
+          >
+            {counts[item.key]}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={goPrev} className="inline-flex size-9 items-center justify-center rounded-lg border bg-background" aria-label="Previous">
+              <ChevronLeft className="size-4" />
+            </button>
+            <button onClick={goNext} className="inline-flex size-9 items-center justify-center rounded-lg border bg-background" aria-label="Next">
+              <ChevronRight className="size-4" />
+            </button>
+            <button onClick={goToday} className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
+              <CalendarDays className="size-4 text-teal-600" />
+              Today
+            </button>
+            <h3 className="ml-1 text-lg font-bold">
+              {view === "day"
+                ? cursor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+                : view === "week"
+                ? `Week of ${weekDays[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                : monthLabel}
+            </h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search events..."
+                className="h-10 w-44 rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4 sm:w-56"
+              />
+            </label>
+            <input
+              type="date"
+              value={toDateKey(cursor)}
+              onChange={(event) => {
+                if (event.target.value) setCursor(parseDateKey(event.target.value));
+              }}
+              className="h-10 rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+            />
+            <div className="flex rounded-lg border bg-background p-1">
+              {(["month", "week", "day"] as const).map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setView(option)}
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition",
+                    view === option ? "bg-teal-600 text-white" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {view === "month" ? (
+        <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+          <div className="grid grid-cols-7 border-b bg-muted/60 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => (
+              <div key={label} className="px-2 py-3 text-center">
+                {label}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7">
+            {monthDays.map((date, index) => {
+              const key = toDateKey(date);
+              const inMonth = date.getMonth() === cursor.getMonth();
+              const isToday = key === todayKey;
+              const matched = dayMatchesSearch(key);
+              return (
+                <button
+                  key={`${key}-${index}`}
+                  onClick={() => setSelectedDate(key)}
+                  className={cn(
+                    "min-h-24 border-b border-r p-2 text-left transition hover:bg-muted/50",
+                    !inMonth && "bg-muted/20 text-muted-foreground",
+                    matched && "ring-2 ring-inset ring-teal-500"
+                  )}
+                >
+                  <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs font-bold", isToday && "bg-teal-600 text-white")}>
+                    {date.getDate()}
+                  </span>
+                  <DayBadges dateKey={key} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {view === "week" ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 xl:grid-cols-7">
+          {weekDays.map((date) => {
+            const key = toDateKey(date);
+            const day = dayMap.get(key);
+            const isToday = key === todayKey;
+            const titles = [
+              ...(day?.reminders.map((reminder) => reminder.title) ?? []),
+              ...(day?.tasks.map((row) => row.Task ?? "Task") ?? [])
+            ];
+            return (
+              <button
+                key={key}
+                onClick={() => setSelectedDate(key)}
+                className={cn(
+                  "min-h-40 rounded-2xl border bg-card p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft",
+                  isToday && "ring-2 ring-teal-500"
+                )}
+              >
+                <p className="text-xs font-bold uppercase text-muted-foreground">{date.toLocaleDateString("en-US", { weekday: "short" })}</p>
+                <p className="text-lg font-bold">{date.getDate()}</p>
+                <DayBadges dateKey={key} />
+                <div className="mt-2 space-y-1">
+                  {titles.slice(0, 3).map((title, index) => (
+                    <p key={index} className="truncate rounded-md bg-muted px-1.5 py-1 text-[11px] font-medium">
+                      {title}
+                    </p>
+                  ))}
+                  {titles.length > 3 ? <p className="text-[11px] text-muted-foreground">+{titles.length - 3} more</p> : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {view === "day" ? (
+        <div className="rounded-2xl border bg-card p-5 shadow-sm">
+          <DayContent
+            role={role}
+            identity={identity}
+            dateKey={toDateKey(cursor)}
+            day={dayMap.get(toDateKey(cursor)) ?? emptyDayData()}
+            onAddReminder={onAddReminder}
+            onUpdateReminder={onUpdateReminder}
+            onDeleteReminder={onDeleteReminder}
+            onToggleReminderComplete={onToggleReminderComplete}
+            onSnoozeReminder={onSnoozeReminder}
+            onAddNote={onAddNote}
+            onDeleteNote={onDeleteNote}
+            onToggleNotePin={onToggleNotePin}
+          />
+        </div>
+      ) : null}
+
+      <AnimatePresence>
+        {selectedDate ? (
+          <DateDetailsPanel
+            role={role}
+            identity={identity}
+            dateKey={selectedDate}
+            day={dayMap.get(selectedDate) ?? emptyDayData()}
+            onClose={() => setSelectedDate(null)}
+            onAddReminder={onAddReminder}
+            onUpdateReminder={onUpdateReminder}
+            onDeleteReminder={onDeleteReminder}
+            onToggleReminderComplete={onToggleReminderComplete}
+            onSnoozeReminder={onSnoozeReminder}
+            onAddNote={onAddNote}
+            onDeleteNote={onDeleteNote}
+            onToggleNotePin={onToggleNotePin}
+          />
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function DateDetailsPanel({
+  role,
+  identity,
+  dateKey,
+  day,
+  onClose,
+  onAddReminder,
+  onUpdateReminder,
+  onDeleteReminder,
+  onToggleReminderComplete,
+  onSnoozeReminder,
+  onAddNote,
+  onDeleteNote,
+  onToggleNotePin
+}: {
+  role: Role;
+  identity: string;
+  dateKey: string;
+  day: CalendarDayData;
+  onClose: () => void;
+  onAddReminder: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
+  onUpdateReminder: (id: string, patch: Partial<Reminder>) => void;
+  onDeleteReminder: (id: string) => void;
+  onToggleReminderComplete: (id: string) => void;
+  onSnoozeReminder: (id: string, days?: number) => void;
+  onAddNote: (input: Omit<CalendarNote, "id" | "createdAt" | "pinned">) => void;
+  onDeleteNote: (id: string) => void;
+  onToggleNotePin: (id: string) => void;
+}) {
+  return createPortal(
+    <>
+      <motion.div
+        className="fixed inset-0 z-[70] bg-black/40"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+      />
+      <motion.aside
+        className="glass-scrollbar fixed right-0 top-0 z-[80] h-full w-full max-w-md overflow-y-auto border-l bg-card p-5 shadow-soft"
+        initial={{ x: 420 }}
+        animate={{ x: 0 }}
+        exit={{ x: 420 }}
+        transition={{ type: "tween", duration: 0.25 }}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Date Details</p>
+            <h3 className="text-lg font-bold">{parseDateKey(dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
+          </div>
+          <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+        <DayContent
+          role={role}
+          identity={identity}
+          dateKey={dateKey}
+          day={day}
+          onAddReminder={onAddReminder}
+          onUpdateReminder={onUpdateReminder}
+          onDeleteReminder={onDeleteReminder}
+          onToggleReminderComplete={onToggleReminderComplete}
+          onSnoozeReminder={onSnoozeReminder}
+          onAddNote={onAddNote}
+          onDeleteNote={onDeleteNote}
+          onToggleNotePin={onToggleNotePin}
+        />
+      </motion.aside>
+    </>,
+    document.body
+  );
+}
+
+function DayContent({
+  role,
+  identity,
+  dateKey,
+  day,
+  onAddReminder,
+  onUpdateReminder,
+  onDeleteReminder,
+  onToggleReminderComplete,
+  onSnoozeReminder,
+  onAddNote,
+  onDeleteNote,
+  onToggleNotePin
+}: {
+  role: Role;
+  identity: string;
+  dateKey: string;
+  day: CalendarDayData;
+  onAddReminder: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
+  onUpdateReminder: (id: string, patch: Partial<Reminder>) => void;
+  onDeleteReminder: (id: string) => void;
+  onToggleReminderComplete: (id: string) => void;
+  onSnoozeReminder: (id: string, days?: number) => void;
+  onAddNote: (input: Omit<CalendarNote, "id" | "createdAt" | "pinned">) => void;
+  onDeleteNote: (id: string) => void;
+  onToggleNotePin: (id: string) => void;
+}) {
+  const timeline = [
+    ...day.leads.map((row) => ({ label: `Lead: ${row.Lead ?? row.id}`, sub: row.Status ?? "" })),
+    ...day.customers.map((row) => ({ label: `Customer: ${row.Customer ?? row.id}`, sub: row.Status ?? "" })),
+    ...day.payments.map((row) => ({ label: `Payment: ${row.Customer ?? row.id}`, sub: row.Balance ?? "" })),
+    ...day.communication.map((row) => ({ label: `${row.Channel ?? "Message"}: ${row.Contact ?? row.id}`, sub: row.Outcome ?? "" })),
+    ...day.tasks.map((row) => ({ label: `Task: ${row.Task ?? row.id}`, sub: row.Status ?? "" }))
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <MiniStat label="Leads" value={day.leads.length} />
+        <MiniStat label="Customers" value={day.customers.length} />
+        <MiniStat label="Payments" value={day.payments.length} />
+        <MiniStat label="Calls" value={day.calls.length} />
+        <MiniStat label="Tasks" value={day.tasks.length} />
+        <MiniStat label="Notes" value={day.notes.length} />
+      </div>
+
+      {day.leads.length > 0 ? (
+        <DetailSection title="Leads created/updated">
+          {day.leads.map((row) => (
+            <DetailRow key={row.id} title={row.Lead ?? row.id} subtitle={`${row.Source ?? ""} - ${row.Owner ?? ""}`} badge={row.Status} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      {day.customers.length > 0 ? (
+        <DetailSection title="Customers created/updated">
+          {day.customers.map((row) => (
+            <DetailRow key={row.id} title={row.Customer ?? row.id} subtitle={row["Last Interaction"] ?? row.Owner ?? ""} badge={row.Status} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      {day.payments.length > 0 ? (
+        <DetailSection title="Payment records">
+          {day.payments.map((row) => (
+            <DetailRow key={row.id} title={row.Customer ?? row.id} subtitle={`Paid ${row.Paid ?? "-"} of ${row.Amount ?? "-"}`} badge={parseCurrency(row.Balance) > 0 ? "Partial" : "Paid"} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      {day.communication.length > 0 ? (
+        <DetailSection title="Calls, WhatsApp & email history">
+          {day.communication.map((row) => (
+            <DetailRow key={row.id} title={`${row.Channel ?? "Message"} - ${row.Contact ?? row.id}`} subtitle={row["Last Message"] ?? ""} badge={row.Outcome} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      {day.tasks.length > 0 ? (
+        <DetailSection title="Tasks & meetings">
+          {day.tasks.map((row) => (
+            <DetailRow key={row.id} title={row.Task ?? row.id} subtitle={row["Assigned To"] ?? ""} badge={row.Status} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      {role === "superadmin" && day.audit.length > 0 ? (
+        <DetailSection title="Audit logs">
+          {day.audit.map((row) => (
+            <DetailRow key={row.id} title={row.Action ?? row.id} subtitle={`${row.Actor ?? ""} - ${row.Module ?? ""}`} badge={row.Time} />
+          ))}
+        </DetailSection>
+      ) : null}
+
+      <ReminderSection
+        role={role}
+        identity={identity}
+        dateKey={dateKey}
+        reminders={day.reminders}
+        onAdd={onAddReminder}
+        onUpdate={onUpdateReminder}
+        onDelete={onDeleteReminder}
+        onToggleComplete={onToggleReminderComplete}
+        onSnooze={onSnoozeReminder}
+      />
+
+      <NoteSection
+        role={role}
+        identity={identity}
+        dateKey={dateKey}
+        notes={day.notes}
+        onAdd={onAddNote}
+        onDelete={onDeleteNote}
+        onTogglePin={onToggleNotePin}
+      />
+
+      {timeline.length > 0 ? (
+        <DetailSection title="Activity timeline">
+          {timeline.map((item, index) => (
+            <div key={index} className="flex items-start gap-3 border-b py-2 text-sm last:border-b-0">
+              <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-teal-600" />
+              <div className="min-w-0">
+                <p className="font-semibold">{item.label}</p>
+                {item.sub ? <p className="text-xs text-muted-foreground">{item.sub}</p> : null}
+              </div>
+            </div>
+          ))}
+        </DetailSection>
+      ) : null}
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border bg-background p-2.5 text-center">
+      <p className="text-lg font-bold">{value}</p>
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h4 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{title}</h4>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function DetailRow({ title, subtitle, badge }: { title: string; subtitle?: string; badge?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border bg-background px-3 py-2">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold">{title}</p>
+        {subtitle ? <p className="truncate text-xs text-muted-foreground">{subtitle}</p> : null}
+      </div>
+      {badge ? <span className={cn("shrink-0 rounded-full px-2 py-1 text-xs font-bold ring-1", statusClass(badge))}>{badge}</span> : null}
+    </div>
+  );
+}
+
+function ReminderSection({
+  role,
+  identity,
+  dateKey,
+  reminders,
+  onAdd,
+  onUpdate,
+  onDelete,
+  onToggleComplete,
+  onSnooze
+}: {
+  role: Role;
+  identity: string;
+  dateKey: string;
+  reminders: Reminder[];
+  onAdd: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
+  onUpdate: (id: string, patch: Partial<Reminder>) => void;
+  onDelete: (id: string) => void;
+  onToggleComplete: (id: string) => void;
+  onSnooze: (id: string, days?: number) => void;
+}) {
+  const assigneeOptions = assigneeOptionsForRole(role);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [time, setTime] = useState("09:00");
+  const [priority, setPriority] = useState<ReminderPriority>("Medium");
+  const [repeat, setRepeat] = useState<ReminderRepeat>("None");
+  const [kind, setKind] = useState<ReminderKind>("Reminder");
+  const [assignedTo, setAssignedTo] = useState(assigneeOptions[0]);
+
+  function resetForm() {
+    setEditingId(null);
+    setTitle("");
+    setTime("09:00");
+    setPriority("Medium");
+    setRepeat("None");
+    setKind("Reminder");
+    setAssignedTo(assigneeOptions[0]);
+  }
+
+  function startEdit(reminder: Reminder) {
+    setEditingId(reminder.id);
+    setTitle(reminder.title);
+    setTime(reminder.time);
+    setPriority(reminder.priority);
+    setRepeat(reminder.repeat);
+    setKind(reminder.kind);
+    setAssignedTo(reminder.assignedTo);
+  }
+
+  function handleSubmit() {
+    if (!title.trim()) return;
+    if (editingId) {
+      onUpdate(editingId, { title: title.trim(), time, priority, repeat, kind, assignedTo });
+    } else {
+      onAdd({ title: title.trim(), date: dateKey, time, priority, repeat, kind, assignedTo });
+    }
+    resetForm();
+  }
+
+  return (
+    <DetailSection title="Reminders">
+      {reminders.length === 0 ? <p className="text-sm text-muted-foreground">No reminders for this date.</p> : null}
+      {reminders.map((reminder) => (
+        <div key={reminder.id} className="rounded-lg border bg-background p-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className={cn("truncate text-sm font-semibold", reminder.completed && "line-through text-muted-foreground")}>{reminder.title}</p>
+              <p className="text-xs text-muted-foreground">
+                {reminder.kind} - {reminder.time} - Assigned to {reminder.assignedTo}
+                {reminder.repeat !== "None" ? ` - Repeats ${reminder.repeat}` : ""}
+                {reminder.snoozedUntil ? ` - Snoozed until ${reminder.snoozedUntil}` : ""}
+              </p>
+            </div>
+            <span className={cn("shrink-0 rounded-full px-2 py-1 text-xs font-bold ring-1", REMINDER_PRIORITY_STYLES[reminder.priority])}>
+              {reminder.priority}
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => onToggleComplete(reminder.id)}
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+            >
+              <Check className="size-3" />
+              {reminder.completed ? "Completed" : "Mark Complete"}
+            </button>
+            <button
+              onClick={() => onSnooze(reminder.id)}
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+            >
+              <AlarmClock className="size-3" />
+              Snooze
+            </button>
+            <button
+              onClick={() => startEdit(reminder)}
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+            >
+              <Pencil className="size-3" />
+              Edit
+            </button>
+            <button
+              onClick={() => onDelete(reminder.id)}
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            >
+              <Trash2 className="size-3" />
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div className="space-y-2 rounded-lg border border-dashed p-3">
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">{editingId ? "Edit Reminder" : "Add Reminder"}</p>
+        <input
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="Reminder title"
+          className="h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <input
+            type="time"
+            value={time}
+            onChange={(event) => setTime(event.target.value)}
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          />
+          <select
+            value={kind}
+            onChange={(event) => setKind(event.target.value as ReminderKind)}
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          >
+            {(["Reminder", "Meeting", "Follow-up", "Task"] as ReminderKind[]).map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+          <select
+            value={priority}
+            onChange={(event) => setPriority(event.target.value as ReminderPriority)}
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          >
+            {(["Low", "Medium", "High", "Urgent"] as ReminderPriority[]).map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+          <select
+            value={repeat}
+            onChange={(event) => setRepeat(event.target.value as ReminderRepeat)}
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          >
+            {(["None", "Daily", "Weekly", "Monthly"] as ReminderRepeat[]).map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        </div>
+        {assigneeOptions.length > 1 ? (
+          <select
+            value={assignedTo}
+            onChange={(event) => setAssignedTo(event.target.value)}
+            className="h-9 w-full rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          >
+            {assigneeOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+        ) : (
+          <p className="text-xs text-muted-foreground">Assigned to {identity} (yourself).</p>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={handleSubmit}
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white"
+          >
+            <Plus className="size-4" />
+            {editingId ? "Save Reminder" : "Add Reminder"}
+          </button>
+          {editingId ? (
+            <button onClick={resetForm} className="rounded-lg border px-3 py-2 text-sm font-semibold">
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </DetailSection>
+  );
+}
+
+function NoteSection({
+  role,
+  identity,
+  dateKey,
+  notes,
+  onAdd,
+  onDelete,
+  onTogglePin
+}: {
+  role: Role;
+  identity: string;
+  dateKey: string;
+  notes: CalendarNote[];
+  onAdd: (input: Omit<CalendarNote, "id" | "createdAt" | "pinned">) => void;
+  onDelete: (id: string) => void;
+  onTogglePin: (id: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [visibility, setVisibility] = useState<NoteVisibility>(role === "employee" ? "private" : "team");
+  const [attachments, setAttachments] = useState<string[]>([]);
+  const sortedNotes = [...notes].sort((a, b) => Number(b.pinned) - Number(a.pinned));
+
+  function handleAttach() {
+    setAttachments((current) => [...current, `attachment-${current.length + 1}.pdf`]);
+  }
+
+  function handleSubmit() {
+    if (!text.trim()) return;
+    onAdd({ date: dateKey, text: text.trim(), author: identity, visibility, attachments });
+    setText("");
+    setAttachments([]);
+  }
+
+  return (
+    <DetailSection title="Notes">
+      {sortedNotes.length === 0 ? <p className="text-sm text-muted-foreground">No notes for this date.</p> : null}
+      {sortedNotes.map((note) => (
+        <div key={note.id} className="rounded-lg border bg-background p-3">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm">{note.text}</p>
+            <button onClick={() => onTogglePin(note.id)} aria-label="Pin note" className={cn("shrink-0", note.pinned ? "text-amber-500" : "text-muted-foreground")}>
+              <Pin className="size-4" />
+            </button>
+          </div>
+          {note.attachments.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {note.attachments.map((file) => (
+                <span key={file} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium">
+                  <Paperclip className="size-3" />
+                  {file}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              {note.author} - {new Date(note.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} -{" "}
+              {note.visibility}
+            </p>
+            <button onClick={() => onDelete(note.id)} className="text-xs font-semibold text-red-600 hover:underline">
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div className="space-y-2 rounded-lg border border-dashed p-3">
+        <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted-foreground">Add Note</p>
+        <textarea
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          placeholder="Write a note for this date..."
+          rows={3}
+          className="w-full rounded-lg border bg-background p-2.5 text-sm outline-none ring-teal-600/20 focus:ring-4"
+        />
+        {attachments.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {attachments.map((file) => (
+              <span key={file} className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium">
+                <Paperclip className="size-3" />
+                {file}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {role !== "employee" ? (
+            <select
+              value={visibility}
+              onChange={(event) => setVisibility(event.target.value as NoteVisibility)}
+              className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            >
+              <option value="private">Private</option>
+              <option value="team">Shared with team</option>
+              {role === "superadmin" ? <option value="company">Shared company-wide</option> : null}
+            </select>
+          ) : (
+            <span className="text-xs text-muted-foreground">Private note (visible only to you)</span>
+          )}
+          <button onClick={handleAttach} className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-2 text-xs font-semibold">
+            <Paperclip className="size-3.5" />
+            Attach File
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="ml-auto inline-flex items-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white"
+          >
+            <Plus className="size-4" />
+            Add Note
+          </button>
+        </div>
+      </div>
+    </DetailSection>
   );
 }
 
@@ -2584,6 +3832,24 @@ function DataTable({
   onSort: (column: string) => void;
 }) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const MENU_WIDTH = 160;
+  const MENU_HEIGHT = 84;
+
+  function toggleMenu(rowId: string, event: React.MouseEvent<HTMLButtonElement>) {
+    if (openMenuId === rowId) {
+      setOpenMenuId(null);
+      return;
+    }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const left = Math.min(Math.max(rect.right - MENU_WIDTH, 8), window.innerWidth - MENU_WIDTH - 8);
+    const top =
+      rect.bottom + MENU_HEIGHT <= window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - MENU_HEIGHT - 4);
+    setMenuPos({ top, left });
+    setOpenMenuId(rowId);
+  }
+
+  const openMenuRow = rows.find((row) => row.id === openMenuId) ?? null;
 
   if (rows.length === 0) {
     return (
@@ -2658,43 +3924,49 @@ function DataTable({
                   <button
                     className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
                     aria-label="More actions"
-                    onClick={() => setOpenMenuId((current) => (current === row.id ? null : row.id))}
+                    onClick={(event) => toggleMenu(row.id, event)}
                   >
                     <MoreHorizontal className="size-4" />
                   </button>
-                  {openMenuId === row.id ? (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setOpenMenuId(null)} />
-                      <div className="absolute right-0 top-10 z-20 w-40 overflow-hidden rounded-lg border bg-card shadow-soft">
-                        <button
-                          onClick={() => {
-                            onDuplicate(row);
-                            setOpenMenuId(null);
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted"
-                        >
-                          <Copy className="size-4" />
-                          Duplicate
-                        </button>
-                        <button
-                          onClick={() => {
-                            onDelete(row);
-                            setOpenMenuId(null);
-                          }}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
-                        >
-                          <Trash2 className="size-4" />
-                          Delete
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
                 </div>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {openMenuRow && menuPos
+        ? createPortal(
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
+              <div
+                className="fixed z-50 w-40 overflow-hidden rounded-lg border bg-card shadow-soft"
+                style={{ top: menuPos.top, left: menuPos.left }}
+              >
+                <button
+                  onClick={() => {
+                    onDuplicate(openMenuRow);
+                    setOpenMenuId(null);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted"
+                >
+                  <Copy className="size-4" />
+                  Duplicate
+                </button>
+                <button
+                  onClick={() => {
+                    onDelete(openMenuRow);
+                    setOpenMenuId(null);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </button>
+              </div>
+            </>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
