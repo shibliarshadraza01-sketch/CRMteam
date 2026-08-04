@@ -83,10 +83,23 @@ THIRD_PARTY_APPS = [
 ]
 
 # Local (project) apps are added here as they are introduced in later
-# checkpoints (accounts, leads, customers, ...). CP1 has none yet.
-LOCAL_APPS = []
+# checkpoints (accounts, leads, customers, ...).
+LOCAL_APPS = [
+    "apps.accounts",
+]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+# ---------------------------------------------------------------------------
+# Custom user model (CP2)
+# ---------------------------------------------------------------------------
+# Must be configured BEFORE the project's first `migrate`. Django hard-codes
+# the user table's identity into every built-in auth migration the first time
+# they run; changing AUTH_USER_MODEL afterward is not a simple settings edit.
+# See BACKEND_LEARNING_GUIDE.md CP2 section for the full explanation. This is
+# a project-wide identity choice, so it lives in base.py (shared by every
+# environment) rather than being duplicated in development.py/production.py.
+AUTH_USER_MODEL = "accounts.User"
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",  # must precede CommonMiddleware
