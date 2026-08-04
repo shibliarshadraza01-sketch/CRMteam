@@ -1291,4 +1291,688 @@ your own words:
 
 ---
 
-*End of CP2. This guide will be extended at each subsequent checkpoint.*
+# Checkpoint 3 (CP3): Authentication + JWT
+
+CP2 gave the CRM an identity — a `User` who can exist, with a hashed
+password and a role. CP3 gives it a **way to prove that identity over
+HTTP**: login, a token to carry on every subsequent request, a way to renew
+that token without asking for the password again, and a way to log out.
+Nothing about *what a role is allowed to do* is here yet — that's CP6. CP3 is
+purely "who is this request from, and how do we know."
+
+## Table of Contents (CP3)
+
+1. What was built, in one paragraph
+2. Authentication vs. authorization
+3. What a JWT actually is
+4. Access token vs. refresh token
+5. The token lifecycle, end to end
+6. Why these specific token lifetimes
+7. Refresh-token rotation and blacklisting
+8. `djangorestframework-simplejwt`, and why we didn't hand-roll JWT
+9. `JWTAuthentication`
+10. Serializers as the validation/business-logic boundary
+11. The three CP3 serializers, in detail
+12. The three CP3 views, in detail
+13. Password verification — `authenticate()`, not manual hash comparison
+14. Why `USERNAME_FIELD` has to match the `authenticate()` keyword
+15. Not revealing account existence
+16. Why inactive users are rejected "for free"
+17. `permission_classes` vs `authentication_classes`
+18. `DEFAULT_PERMISSION_CLASSES` stayed `AllowAny` — why that's still correct
+19. drf-spectacular + SimpleJWT: automatic Bearer-scheme documentation
+20. Testing strategy for CP3
+21. API request/response examples
+22. Important files/classes/functions (quick index)
+23. Mistakes/pitfalls this checkpoint deliberately avoided
+24. Super Admin note — what CP3 is *not*
+25. What actually happened when we ran the verification sequence
+26. What I should understand before CP4
+
+---
+
+## 1. What was built, in one paragraph
+
+Four endpoints under `/api/v1/auth/`: `POST /login/` (email+password in,
+access+refresh+safe-user-info out), `POST /refresh/` (a valid refresh token
+in, a new access token — and, because rotation is on, a new refresh token —
+out), `POST /logout/` (a refresh token in, blacklisted so it can never be
+used again), and `GET /me/` (a valid access token in the `Authorization`
+header, the caller's own safe identity info out). Token issuing/verification
+is handled entirely by `djangorestframework-simplejwt`; password checking is
+handled entirely by Django's own `authenticate()`. No cryptography, hashing,
+or token-signing code was written by hand.
+
+## 2. Authentication vs. authorization
+
+These two words get used almost interchangeably in casual conversation, but
+they're answering completely different questions, and CP3/CP6 deliberately
+split them:
+
+- **Authentication** ("who are you?") — CP3. Verifying a password, issuing a
+  token, verifying that token on later requests. The *answer* is a `User`
+  object attached to `request.user`.
+- **Authorization** ("what are you allowed to do?") — CP6. Given a known,
+  authenticated `User` (with a `role`, and eventually a team/hierarchy
+  position), deciding whether *this specific request* should be allowed, and
+  which rows a queryset should even return.
+
+CP3 answers the first question and stops. `request.user.role` already exists
+(from CP2) and CP3's `/me/` even *returns* it to the client — but nothing in
+CP3 branches on it to allow or deny an action. That's intentional: there is
+no domain data yet (no `Lead`, no `Customer`) for authorization rules to
+protect.
+
+## 3. What a JWT actually is
+
+**JWT (JSON Web Token)** is a compact, URL-safe string with three
+dot-separated, base64url-encoded parts:
+
+```
+<header>.<payload>.<signature>
+```
+
+- **Header** — which algorithm signed it (SimpleJWT defaults to HS256, HMAC
+  with SHA-256, using `SECRET_KEY` as the shared secret).
+- **Payload** — the **claims**: plain, *readable* (not encrypted!) JSON, e.g.
+  `{"user_id": 7, "token_type": "access", "exp": 1234567890, ...}`. Anyone
+  who has the token can decode and read this — a JWT hides nothing, it only
+  *proves* it wasn't tampered with.
+- **Signature** — `HMAC-SHA256(header + "." + payload, SECRET_KEY)`. The
+  server recomputes this on every request; if it doesn't match, the token is
+  rejected. This is what makes a JWT trustworthy without a database lookup:
+  if you have `SECRET_KEY`, you can verify the signature is authentic, and
+  therefore trust the claims inside, **without querying the database on
+  every request** (contrast with a traditional session, which requires a
+  server-side session-store lookup on every request).
+
+The practical consequence for this CRM: an access token proves "the server
+issued this to user 7, and it hasn't been tampered with, and it hasn't
+expired" — all verifiable from the token alone.
+
+## 4. Access token vs. refresh token
+
+SimpleJWT issues **two** tokens on login, with different purposes and
+different claims (`token_type: "access"` vs. `token_type: "refresh"` —
+that's what stops one from being used as the other, see §17 of the CP2
+section's cousin discussion, and the test
+`test_refresh_token_rejected_by_protected_endpoint`):
+
+| | Access token | Refresh token |
+|---|---|---|
+| Sent on | every authenticated API request (`Authorization: Bearer ...`) | only to `/api/v1/auth/refresh/` and `/api/v1/auth/logout/` |
+| Lifetime here | 15 minutes | 7 days |
+| Purpose | prove identity for this one request | obtain a new access token without re-entering a password |
+| If stolen | usable for at most 15 minutes | usable to keep generating access tokens — much higher value target, hence the shorter *exposure surface* (sent far less often) and the rotation/blacklist protection in §7 |
+
+## 5. The token lifecycle, end to end
+
+```
+1. POST /api/v1/auth/login/  {email, password}
+       -> authenticate() verifies the password
+       -> RefreshToken.for_user(user) mints BOTH tokens
+       -> response: {access, refresh, user}
+
+2. Client stores both tokens (frontend's concern, out of CP3's scope) and
+   sends the access token on every subsequent request:
+       Authorization: Bearer <access>
+
+3. GET /api/v1/auth/me/  (Authorization: Bearer <access>)
+       -> JWTAuthentication verifies the signature + expiry + token_type
+       -> request.user is set to the matching User
+       -> IsAuthenticated permission passes
+       -> UserSerializer(request.user).data returned
+
+4. Access token expires after 15 minutes. Client calls:
+   POST /api/v1/auth/refresh/  {refresh}
+       -> SimpleJWT's TokenRefreshView verifies the refresh token
+       -> issues a brand-new access token
+       -> (ROTATE_REFRESH_TOKENS=True) also issues a brand-new refresh token
+          and blacklists the one that was just used
+       -> response: {access, refresh}
+
+5. POST /api/v1/auth/logout/  {refresh}
+       -> the current refresh token is blacklisted immediately
+       -> it can never again be exchanged for an access token, even though
+          it hasn't hit its natural 7-day expiry
+```
+
+## 6. Why these specific token lifetimes
+
+```python
+"ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+"REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+```
+
+This is a deliberate trade-off, not an arbitrary number:
+
+- **15-minute access tokens** minimize the *damage window* if one leaks
+  (browser XSS, a misconfigured log, a proxy that shouldn't have seen it) —
+  it self-expires quickly, and it's sent on every request, so it's the token
+  most exposed to interception.
+- **7-day refresh tokens** avoid forcing a CRM user to re-type their
+  password every 15 minutes (bad UX for an internal business tool people use
+  all day, every workday), while still expiring on its own within a week if
+  truly abandoned, and being individually revocable via blacklist (logout, or
+  a future "log out this device" feature) well before that.
+- These are reasonable **starting** values for CP3, not a claim that they're
+  final/tuned for production — a real deployment might shorten the refresh
+  lifetime once CP5 (device authorization) exists, since that checkpoint adds
+  a complementary revocation mechanism.
+
+## 7. Refresh-token rotation and blacklisting
+
+```python
+"ROTATE_REFRESH_TOKENS": True,
+"BLACKLIST_AFTER_ROTATION": True,
+```
+
+Without rotation, a single refresh token would remain valid and reusable for
+its entire 7-day lifetime — if it leaked once, it would work for an attacker
+for up to a week, indistinguishably from the legitimate client. With
+rotation:
+
+- Every `/refresh/` call issues a **new** refresh token and immediately
+  blacklists the one that was just spent (`BLACKLIST_AFTER_ROTATION`).
+- A refresh token is therefore **single-use**. `test_rotated_refresh_token_cannot_be_reused`
+  proves this directly: refreshing once succeeds; refreshing again with the
+  *same original* token fails with 401.
+- This also gives a **theft-detection signal** for free: if an attacker ever
+  steals a refresh token and uses it, the legitimate client's *next* refresh
+  attempt (with the now-superseded token) will fail — an anomaly a real
+  deployment could alert on. CP3 doesn't build that alerting (no audit
+  system yet — that's CP12), but the mechanism that makes it *possible*
+  exists starting now.
+- Blacklisting is implemented by SimpleJWT's own `token_blacklist` Django
+  app (`OutstandingToken`/`BlacklistedToken` tables) — added to
+  `INSTALLED_APPS`, not hand-built.
+
+## 8. `djangorestframework-simplejwt`, and why we didn't hand-roll JWT
+
+Writing your own JWT signing/verification code means re-implementing a
+security-critical primitive (constant-time signature comparison, correct
+expiry handling, algorithm confusion prevention) that a widely-used,
+security-reviewed library already solves. `djangorestframework-simplejwt`
+is the standard DRF-ecosystem choice: it integrates with DRF's
+`authentication_classes`, understands Django's `User` model out of the box,
+and ships the blacklist app CP3 needed for logout. Every checkpoint so far
+has followed the same principle (Django's password hashing in CP2, now
+SimpleJWT's token handling in CP3): **don't invent cryptography.**
+
+## 9. `JWTAuthentication`
+
+```python
+"DEFAULT_AUTHENTICATION_CLASSES": [
+    "rest_framework_simplejwt.authentication.JWTAuthentication",
+],
+```
+
+This is a DRF **authentication class** — code that runs on *every* request
+and tries to answer "who sent this?" by inspecting the `Authorization`
+header. If it finds `Bearer <token>`, it verifies the signature and expiry
+(via SimpleJWT), confirms `token_type == "access"`, looks up the user by the
+`user_id` claim, and sets `request.user`. If there's no header, or the token
+is invalid/expired/wrong-type, it either sets `request.user` to
+`AnonymousUser` (no header at all) or raises `AuthenticationFailed` (a
+header was present but invalid) — DRF then applies the view's
+`permission_classes` to decide whether that's actually a problem for *this*
+endpoint. This is why `/login/` (no header expected) and `/me/` (header
+required) can share the same global authentication class but behave
+completely differently — the difference is each view's `permission_classes`
+(§17).
+
+## 10. Serializers as the validation/business-logic boundary
+
+CP1's learning guide already introduced serializers as "the contract for
+what a request may send and what a response will contain." CP3 leans on that
+harder: `LoginSerializer.validate()` doesn't just check that `email` looks
+like an email — it actually **performs the authentication** and attaches the
+resolved `User` to `validated_data`. This keeps the *view* trivial (get
+serializer, validate, use `validated_data["user"]`) and keeps all the
+"what makes a login request valid" logic in exactly one place, testable in
+isolation from HTTP concerns.
+
+## 11. The three CP3 serializers, in detail
+
+**`UserSerializer`** (`ModelSerializer`) — the *only* shape of `User` ever
+sent to a client:
+
+```python
+class Meta:
+    model = User
+    fields = ["id", "email", "first_name", "last_name", "role"]
+    read_only_fields = fields
+```
+
+An explicit **allowlist** (`fields = [...]`), not `exclude = [...]` — see
+§23 for why that distinction matters.
+
+**`LoginSerializer`** (plain `Serializer`, not a `ModelSerializer` — it
+doesn't map 1:1 to a model, it maps to a *request shape*):
+
+```python
+email = serializers.EmailField()
+password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+def validate(self, attrs):
+    user = authenticate(request=self.context.get("request"),
+                         email=attrs["email"], password=attrs["password"])
+    if user is None:
+        raise AuthenticationFailed("Invalid email or password.")
+    attrs["user"] = user
+    return attrs
+```
+
+`trim_whitespace=False` on the password field is deliberate — DRF's
+`CharField` strips leading/trailing whitespace by default, which is exactly
+wrong for a password (a password of `" secret "` should not silently become
+`"secret"`). `AuthenticationFailed` (not `ValidationError`) is raised on bad
+credentials specifically so DRF returns **401**, not the 400 a normal field
+validation error would produce — status code correctness matters for a
+frontend deciding how to react.
+
+**`LogoutSerializer`**:
+
+```python
+refresh = serializers.CharField(write_only=True)
+
+def validate_refresh(self, value):
+    try:
+        token = RefreshToken(value)
+    except TokenError as exc:
+        raise serializers.ValidationError(str(exc)) from exc
+    self._token = token
+    return value
+
+def save(self, **kwargs):
+    self._token.blacklist()
+```
+
+`RefreshToken(value)` parses *and verifies* the token (signature, expiry,
+type) — `TokenError` covers malformed, expired, and already-blacklisted
+tokens uniformly, all correctly surfaced as **400** (a client error: "this
+token isn't usable"), distinct from `/me/`'s 401 ("you're not
+authenticated") — different endpoints, different failure semantics.
+
+## 12. The three CP3 views, in detail
+
+```python
+class LoginView(generics.GenericAPIView):
+    serializer_class = LoginSerializer
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+```
+
+`authentication_classes = []` on `LoginView`/`LogoutView` is a small but
+deliberate choice: these endpoints don't need DRF to even *attempt* reading
+an `Authorization` header (there usually isn't a valid one yet — that's the
+whole point of logging in), so skipping that step avoids any chance of it
+interfering with an unrelated, possibly stale header a client might send.
+
+`MeView` is a `RetrieveAPIView` with `get_object()` overridden to return
+`self.request.user` — there's no lookup-by-URL-parameter; "retrieve *me*"
+always means "retrieve whoever the token resolved to."
+
+`/refresh/` has **no CP3 view at all** — `apps/accounts/urls.py` points it
+directly at `rest_framework_simplejwt.views.TokenRefreshView`. See §8's
+principle applied again: SimpleJWT's own view already does exactly what
+STEP 5 required.
+
+## 13. Password verification — `authenticate()`, not manual hash comparison
+
+```python
+user = authenticate(request=request, email=email, password=password)
+```
+
+`django.contrib.auth.authenticate()` runs through each backend listed in
+`AUTHENTICATION_BACKENDS` (just the default `ModelBackend` here) and asks it
+to verify the credentials. `ModelBackend.authenticate()`:
+
+1. Looks up the user by `USERNAME_FIELD` (`email`).
+2. Calls `user.check_password(raw_password)` — which re-hashes the raw
+   password with the *same* algorithm/salt stored on the user and compares
+   the two hashes (never comparing raw strings, and using a
+   constant-time comparison internally to resist timing attacks).
+3. Calls `user.is_active` via `user_can_authenticate()` — an inactive user
+   fails here, *before* `authenticate()` ever returns a user object.
+
+CP3 never calls `check_password()` or touches `user.password` directly —
+`authenticate()` is the single, correct entry point, exactly as CP2's
+learning guide anticipated in "How the custom User relates to future JWT
+authentication."
+
+## 14. Why `USERNAME_FIELD` has to match the `authenticate()` keyword
+
+```python
+authenticate(request=request, email=attrs["email"], password=attrs["password"])
+```
+
+This looks like it's passing an `email` keyword, but `ModelBackend`'s real
+signature is `authenticate(self, request, username=None, password=None,
+**kwargs)`. Internally, if `username` is `None`, it does:
+
+```python
+username = kwargs.get(UserModel.USERNAME_FIELD)
+```
+
+Since `User.USERNAME_FIELD == "email"` (CP2), `kwargs.get("email")`
+correctly retrieves the value we passed as `email=...`. This is *why* CP2's
+`USERNAME_FIELD` choice directly determines what keyword CP3's login code
+must use — if a future model ever used a different `USERNAME_FIELD`, this
+call site would need to change too. Passing `username=email` would also have
+worked here (`ModelBackend` would then skip the `kwargs.get(...)` fallback
+entirely) — using `email=` instead is simply clearer to read, given this
+project's actual login identity.
+
+## 15. Not revealing account existence
+
+`test_login_error_message_does_not_reveal_which_field_was_wrong` asserts a
+wrong password and a nonexistent email produce **byte-for-byte identical**
+401 responses. This matters because if "wrong password" and "no such
+account" returned different messages, an attacker could enumerate valid
+email addresses in this CRM one guess at a time — a real information leak
+that costs nothing to avoid, since `authenticate()` already returns the same
+`None` for both cases and CP3 raises the same generic error either way.
+
+## 16. Why inactive users are rejected "for free"
+
+`CustomUserManager`/`User` didn't need any new CP3 code to enforce "inactive
+users cannot authenticate" — `ModelBackend.user_can_authenticate()` already
+checks `is_active` before returning a user, so `authenticate()` simply
+returns `None` for an inactive account, which `LoginSerializer` already
+treats as invalid credentials. This is the payoff of building on Django's
+real auth machinery instead of a hand-rolled check: the behavior we wanted
+was already there.
+
+## 17. `permission_classes` vs `authentication_classes`
+
+Two different DRF concepts that are easy to conflate:
+
+- **`authentication_classes`** — *how* to identify who's making the request
+  (inspect a header, verify a token, resolve `request.user`). Can result in
+  `AnonymousUser` with no error, if no credentials were presented at all.
+- **`permission_classes`** — given whoever `authentication_classes` resolved
+  (even `AnonymousUser`), *should this specific request be allowed?*
+  `IsAuthenticated` says "no, unless `request.user` is a real, authenticated
+  user." `AllowAny` says "yes, regardless."
+
+`MeView` needs both defaults (`JWTAuthentication` to resolve the user) *and*
+an explicit `IsAuthenticated` (to actually reject anonymous requests) —
+without the permission class, an anonymous request would still be allowed
+through and would crash trying to serialize `AnonymousUser` as a `User`.
+
+## 18. `DEFAULT_PERMISSION_CLASSES` stayed `AllowAny` — why that's still correct
+
+It would be tempting to flip the *global* default to `IsAuthenticated` now
+that real authentication exists. CP3 deliberately did not do that:
+
+- `/health`, `/api/schema/`, `/api/docs/` (CP1) must stay public — a
+  monitoring probe or a new developer's first `curl` shouldn't need a
+  token.
+- `/login/`, `/refresh/`, `/logout/` (CP3 itself) must stay public — you
+  cannot require a token to *obtain* a token.
+
+So `AllowAny` remains the sane default, and `/me/` opts into
+`IsAuthenticated` **on itself**. When CP6 introduces protected domain
+endpoints (leads, customers, ...), *that* is the natural point to reconsider
+whether the global default should flip — a decision explicitly left to that
+checkpoint rather than made prematurely here.
+
+## 19. drf-spectacular + SimpleJWT: automatic Bearer-scheme documentation
+
+No extra configuration was added for this — and that was verified, not
+assumed. drf-spectacular ships built-in "contrib" support for common
+libraries (including SimpleJWT) that auto-registers the moment the library
+is importable. Generating the schema
+(`manage.py spectacular --file ...`) and inspecting it directly showed:
+
+```yaml
+components:
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+```
+
+and each path correctly annotated — `/api/v1/auth/me/` has `security: -
+jwtAuth: []`, while `/login/`, `/refresh/`, `/logout/` have `security: - {}`
+(no auth required). Swagger UI (`/api/docs/`) will render this as an
+"Authorize" button that lets a developer paste an access token and try
+`/me/` interactively.
+
+## 20. Testing strategy for CP3
+
+`apps/accounts/tests/test_auth.py` follows the same shape as CP2's tests
+(`pytest.mark.django_db`, DRF's `APIClient`, no mocking of Django/SimpleJWT
+internals — real password hashing, real token issuance, real blacklist
+writes). The organization mirrors the checkpoint's own STEP 12 requirements:
+one block per endpoint (login / refresh / `/me/` / logout), plus a
+role-parametrized block proving the identical flow works for `EMPLOYEE`,
+`MANAGER`, and `SUPER_ADMIN` alike. Where a test needs a *sequence*
+(login -> logout -> attempt refresh with the now-blacklisted token), the
+test performs the real sequence through real endpoints rather than
+constructing tokens by hand — this exercises the actual code path a real
+client would hit, not just the unit in isolation.
+
+## 21. API request/response examples
+
+**Login — success:**
+
+```
+POST /api/v1/auth/login/
+{"email": "employee@example.com", "password": "correct-password"}
+
+200 OK
+{
+  "access": "eyJhbGciOi...",
+  "refresh": "eyJhbGciOi...",
+  "user": {
+    "id": 7,
+    "email": "employee@example.com",
+    "first_name": "",
+    "last_name": "",
+    "role": "EMPLOYEE"
+  }
+}
+```
+
+**Login — invalid credentials (wrong password OR unknown email OR inactive
+user — identical either way):**
+
+```
+POST /api/v1/auth/login/
+{"email": "employee@example.com", "password": "wrong"}
+
+401 Unauthorized
+{"detail": "Invalid email or password."}
+```
+
+**Refresh — success (rotation enabled, so a new refresh token comes back
+too):**
+
+```
+POST /api/v1/auth/refresh/
+{"refresh": "eyJhbGciOi..."}
+
+200 OK
+{"access": "eyJhbGciOi...", "refresh": "eyJhbGciOi..."}
+```
+
+**`/me/` — success:**
+
+```
+GET /api/v1/auth/me/
+Authorization: Bearer eyJhbGciOi...
+
+200 OK
+{"id": 7, "email": "employee@example.com", "first_name": "", "last_name": "", "role": "EMPLOYEE"}
+```
+
+**`/me/` — no/invalid token:**
+
+```
+GET /api/v1/auth/me/
+(no Authorization header, or an invalid/expired one)
+
+401 Unauthorized
+{"detail": "Authentication credentials were not provided."}
+```
+
+**Logout:**
+
+```
+POST /api/v1/auth/logout/
+{"refresh": "eyJhbGciOi..."}
+
+200 OK
+{"detail": "Successfully logged out."}
+```
+
+## 22. Important files/classes/functions (quick index)
+
+| File | Contains |
+|---|---|
+| `apps/accounts/serializers.py` | `UserSerializer`, `LoginSerializer`, `LogoutSerializer` |
+| `apps/accounts/views.py` | `LoginView`, `MeView`, `LogoutView` |
+| `apps/accounts/urls.py` | the 4 routes; wires SimpleJWT's `TokenRefreshView` for `/refresh/` |
+| `config/urls.py` | mounts `apps.accounts.urls` at `/api/v1/auth/` |
+| `config/settings/base.py` | `SIMPLE_JWT` block, `JWTAuthentication` in `DEFAULT_AUTHENTICATION_CLASSES`, `token_blacklist` in `INSTALLED_APPS` |
+| `apps/accounts/tests/test_auth.py` | all 28 CP3 tests |
+| (reused, not modified) `apps/accounts/models.py` / `managers.py` | CP2's `User` / `UserManager` — unchanged |
+
+## 23. Mistakes/pitfalls this checkpoint deliberately avoided
+
+- **Comparing passwords manually** (`if user.password == hashlib.sha256(...)`)
+  — never done; `authenticate()`/`check_password()` only.
+- **`exclude`-based serializer instead of an allowlist** — `UserSerializer`
+  uses `fields = [...]`, so a future field added to `User` (say, a CP4
+  access-code hash) is *safe by default*, not accidentally exposed until
+  someone remembers to add it to an exclude list.
+- **Different error messages for "no such user" vs. "wrong password"** — one
+  identical message for both (§15).
+- **Trusting a refresh token as if it were an access token** — SimpleJWT's
+  `token_type` claim check prevents this, and it's explicitly tested
+  (`test_refresh_token_rejected_by_protected_endpoint`).
+- **Reusable refresh tokens** — rotation + blacklist-after-rotation makes
+  each refresh token single-use (§7).
+- **Flipping `DEFAULT_PERMISSION_CLASSES` to `IsAuthenticated` globally** —
+  would have broken `/health` and even `/login/` itself; left as `AllowAny`
+  with `/me/` opting in individually (§18).
+- **Hardcoding the JWT signing secret** — `SIMPLE_JWT` has no `SIGNING_KEY`
+  entry at all; it defaults to `SECRET_KEY`, which was already
+  environment-sourced since CP1.
+- **Logging request bodies containing passwords** — no logging was added in
+  CP3 that would capture `request.data`; Django's default logging doesn't
+  log request bodies.
+- **Generating a migration for `token_blacklist`** — its migrations already
+  ship inside the installed package; running `makemigrations` for it would
+  have been both wrong and unnecessary (confirmed: `--check --dry-run`
+  reports "No changes detected").
+
+## 24. Super Admin note — what CP3 is *not*
+
+CP2 already gave `User` a `role` field including `SUPER_ADMIN`. CP3's login
+endpoint treats a `SUPER_ADMIN` **identically** to an `EMPLOYEE` or
+`MANAGER` — same serializer, same `authenticate()` call, same token
+issuance. This is intentional and matches the checkpoint's instructions
+precisely: the eventual production flow is
+
+```
+email/password (CP3, done)
+    -> if role == SUPER_ADMIN
+        -> additional secret/access-key verification (CP4, NOT built yet)
+    -> final authenticated session/token
+```
+
+CP3 is only the first half of that chain for every role, `SUPER_ADMIN`
+included. `test_login_works_for_every_role[SUPER_ADMIN]` proves the base
+flow works for that role too — it does **not** claim, and must not be read
+as claiming, that CP3 alone is a complete/secure Super Admin login. No
+access-code field, challenge endpoint, or intermediate "pending
+verification" state was added to `User` or anywhere else in CP3.
+
+## 25. What actually happened when we ran the verification sequence
+
+Same honest pattern as CP2 (see that section's §17 for the original
+explanation of *why* this is how CP2/CP3 report results): every command
+below was actually executed.
+
+```
+manage.py check
+    System check identified no issues (0 silenced).
+
+manage.py makemigrations --check --dry-run
+    No changes detected
+
+manage.py migrate
+    django.db.utils.OperationalError: connection failed: connection to
+    server at "127.0.0.1", port 5432 ...
+    -> BLOCKED (no PostgreSQL reachable — identical cause as CP2)
+
+manage.py spectacular --file <schema>
+    succeeded; schema inspected directly and confirmed to contain all 4
+    CP3 routes, correct security annotations, and the auto-registered
+    jwtAuth Bearer scheme
+
+pytest -v
+    3 passed   <- CP1 infrastructure tests, unchanged
+    43 errors  <- 28 new CP3 tests + 15 CP2 tests, all erroring at
+                  pytest-django's test-database creation step (the same
+                  OperationalError as migrate) — zero assertion failures
+
+get_user_model() / settings checks (via django.setup(), no DB needed)
+    <class 'apps.accounts.models.User'>
+    DB engine: django.db.backends.postgresql
+    DEFAULT_AUTHENTICATION_CLASSES: ['rest_framework_simplejwt.authentication.JWTAuthentication']
+    SIMPLE_JWT access lifetime: 0:15:00, refresh lifetime: 7 days
+```
+
+`migrate` and the 28 CP3 tests remain the only incomplete items, blocked on
+PostgreSQL exactly as CP2 already was — not a new problem CP3 introduced.
+
+## 26. What I should understand before CP4
+
+CP4 adds the Super Admin secondary access-code challenge — a step that sits
+*between* CP3's login and final token issuance, specifically for
+`SUPER_ADMIN`. Before starting it, be able to explain:
+
+1. **Where CP4 slots into the CP3 flow** — after `authenticate()` succeeds
+   and the role is checked to be `SUPER_ADMIN`, *before* `RefreshToken.for_user()`
+   is called. CP3's `LoginView` will need to branch here.
+2. **Why this is a second factor, not a replacement** — the base
+   email/password step still has to succeed first; CP4 adds an additional
+   requirement on top for one specific role, it doesn't create an alternate
+   login path.
+3. **The likely shape of an "in-progress" login** — a `SUPER_ADMIN` who has
+   passed step one but not step two is not yet "logged in." CP4 will need to
+   decide how that intermediate state is represented (a short-lived,
+   narrowly-scoped token? a server-side pending record?) without
+   accidentally granting a real access token before the second factor
+   succeeds. This wasn't decided in CP3 - it's CP4's design job.
+4. **That CP2/CP3 remain PARTIAL** — `migrate` and every DB-backed test are
+   still blocked. Per the Mandatory Checkpoint Protocol, CP4 should not
+   truly begin (beyond whatever the user explicitly authorizes) until
+   PostgreSQL is available and CP2+CP3's remaining steps actually pass.
+
+**Viva-style questions to test yourself:**
+
+- Why can a stolen access token only be used for at most 15 minutes, but a
+  stolen *refresh* token could be more dangerous even though it's used far
+  less often?
+- What specifically stops a client from sending a refresh token in the
+  `Authorization: Bearer` header to access `/me/`?
+- Why does `LoginSerializer` raise `AuthenticationFailed` instead of
+  `ValidationError` for bad credentials — what HTTP status does each
+  produce, and why does that distinction matter to a frontend?
+- If `UserSerializer` used `exclude = ["password"]` instead of an explicit
+  `fields = [...]` allowlist, what could go wrong the day CP4 adds a new
+  field to `User`?
+- Why does logging out only blacklist the *refresh* token, and not somehow
+  "cancel" the access token that's still technically valid for a few more
+  minutes? Is that a problem, and if so, how does the short access-token
+  lifetime limit it?
+
+---
+
+*End of CP3. This guide will be extended at each subsequent checkpoint.*

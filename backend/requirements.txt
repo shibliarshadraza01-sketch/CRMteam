@@ -23,6 +23,9 @@ django-filter==24.3
 drf-spectacular==0.28.0
 django-cors-headers==4.6.0
 
+# --- Authentication (CP3) ---
+djangorestframework-simplejwt==5.3.1
+
 # --- Configuration ---
 python-dotenv==1.0.1
 

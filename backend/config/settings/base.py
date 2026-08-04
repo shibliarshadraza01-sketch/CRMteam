@@ -10,6 +10,7 @@ Secrets and environment-specific values are read from environment variables,
 which are loaded from backend/.env in local development via python-dotenv.
 NOTHING secret is hard-coded in this file.
 """
+from datetime import timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -80,6 +81,11 @@ THIRD_PARTY_APPS = [
     "django_filters",
     "corsheaders",
     "drf_spectacular",
+    # CP3: token_blacklist is SimpleJWT's own app — it owns the
+    # OutstandingToken/BlacklistedToken tables that logout (STEP 7) and
+    # refresh-token rotation (see SIMPLE_JWT below) write to. It must be in
+    # INSTALLED_APPS for its migrations to be picked up by `migrate`.
+    "rest_framework_simplejwt.token_blacklist",
 ]
 
 # Local (project) apps are added here as they are introduced in later
@@ -198,12 +204,54 @@ REST_FRAMEWORK = {
     # queryset. Individual views can override the page size later.
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 25,
-    # CP1 ships only public, read-only infrastructure endpoints (health, schema,
-    # docs). Real authentication/permission classes are configured in CP3/CP6.
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    # CP3: JWTAuthentication is now the project-wide default so any future
+    # view can simply declare `permission_classes = [IsAuthenticated]` and
+    # get JWT support for free, without repeating authentication_classes on
+    # every view. DEFAULT_PERMISSION_CLASSES stays AllowAny (unchanged from
+    # CP1/CP2) so existing public endpoints keep working unmodified — CP3's
+    # protected endpoint (/api/v1/auth/me/) opts into IsAuthenticated itself.
+    # Full RBAC-driven permission classes arrive in CP6.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+}
+
+# ---------------------------------------------------------------------------
+# SimpleJWT (CP3 authentication)
+# ---------------------------------------------------------------------------
+# SIGNING_KEY intentionally omitted: SimpleJWT defaults it to SECRET_KEY,
+# which is already sourced from the environment (see "Core security
+# settings" above) and has no hardcoded fallback in production. Reusing
+# SECRET_KEY (rather than inventing a second secret to manage) is SimpleJWT's
+# documented default and is appropriate for this checkpoint.
+SIMPLE_JWT = {
+    # Short-lived: an intercepted/leaked access token self-expires quickly.
+    # This is the token sent on every authenticated API request, so it's the
+    # one most likely to appear in logs, browser memory, or a proxy.
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    # Longer-lived: the refresh token is only sent to /api/v1/auth/refresh/,
+    # not on every request, so it's a smaller attack surface even though it's
+    # longer-lived. A week balances "don't force daily re-login" against
+    # "don't keep a stolen refresh token valid forever".
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # Rotation: every successful refresh issues a brand new refresh token
+    # (not just a new access token). Combined with BLACKLIST_AFTER_ROTATION,
+    # the *previous* refresh token is immediately blacklisted, so a refresh
+    # token can only ever be used once. If a refresh token is ever stolen and
+    # used by an attacker, the legitimate client's next refresh attempt with
+    # the now-superseded token will fail — a detectable signal of token theft
+    # ("refresh token reuse detection").
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    # Every issued access/refresh token updates User.last_login, giving CP12
+    # (audit) a free, correct "last seen" signal with no extra code.
+    "UPDATE_LAST_LOGIN": True,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 # ---------------------------------------------------------------------------
