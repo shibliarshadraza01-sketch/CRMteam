@@ -92,6 +92,17 @@ THIRD_PARTY_APPS = [
 # checkpoints (accounts, leads, customers, ...).
 LOCAL_APPS = [
     "apps.accounts",
+    "apps.core",
+    "apps.organization",
+    "apps.crm",
+    "apps.sales",
+    "apps.catalog",
+    "apps.activities",
+    "apps.communications",
+    "apps.reports",
+    "apps.workflows",
+    "apps.integrations",
+    "apps.system",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -201,9 +212,15 @@ REST_FRAMEWORK = {
         "rest_framework.filters.OrderingFilter",
     ],
     # Default paginate all list endpoints so no view ever returns an unbounded
-    # queryset. Individual views can override the page size later.
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 25,
+    # queryset. CP10: a named class (apps.core.pagination.StandardPagination)
+    # replaces the bare DRF default so page size (20, overridable up to 100
+    # via ?page_size=) is defined in exactly one place — see that module's
+    # docstring. This changes CP5's SessionListView's default page size from
+    # 25 to 20 too (a deliberate, requested project-wide change, not a
+    # regression — SessionListView's own behavior/tests are otherwise
+    # unaffected).
+    "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.StandardPagination",
+    "PAGE_SIZE": 20,
     # CP3: JWTAuthentication is now the project-wide default so any future
     # view can simply declare `permission_classes = [IsAuthenticated]` and
     # get JWT support for free, without repeating authentication_classes on
@@ -217,6 +234,21 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
+    # CP4: a scoped rate applied ONLY to the views that opt in via
+    # `throttle_scope = "super_admin_verify"` (the Super Admin access-code
+    # verify endpoint) — every other endpoint is unaffected. This uses
+    # Django's default cache backend (LocMemCache — in-process, per-worker
+    # memory) for counting, which is NOT a production-grade brute-force
+    # defense: it resets on every process restart and does not share state
+    # across multiple worker processes/machines. It exists as a real, if
+    # modest, speed bump today, and as the seam a later checkpoint (CP17,
+    # deployment hardening) should replace with a shared cache (e.g. Redis)
+    # once one exists — see BACKEND_LEARNING_GUIDE.md CP4, "brute-force
+    # considerations", for the full discussion. Explicitly NOT a distributed
+    # rate limiter, and not claimed to be one.
+    "DEFAULT_THROTTLE_RATES": {
+        "super_admin_verify": "5/min",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -255,6 +287,18 @@ SIMPLE_JWT = {
 }
 
 # ---------------------------------------------------------------------------
+# Super Admin secondary-authentication challenge (CP4)
+# ---------------------------------------------------------------------------
+# Short-lived, signed (django.core.signing — NOT a JWT) token bridging primary
+# email/password login and the secondary access-code verify step for
+# SUPER_ADMIN. 5 minutes is enough time for a human to read a physical/2FA-app
+# access code and type it in, while keeping the window an intercepted
+# challenge would be usable in intentionally small. See
+# BACKEND_LEARNING_GUIDE.md CP4, "challenge token security", for the full
+# rationale and why this is deliberately not a JWT.
+SUPER_ADMIN_CHALLENGE_TTL_SECONDS = 300
+
+# ---------------------------------------------------------------------------
 # drf-spectacular (OpenAPI schema / Swagger docs)
 # ---------------------------------------------------------------------------
 SPECTACULAR_SETTINGS = {
@@ -268,6 +312,38 @@ SPECTACULAR_SETTINGS = {
     # Don't serve the raw schema from the Swagger UI page itself; the UI fetches
     # it from the dedicated /api/schema/ endpoint.
     "SERVE_INCLUDE_SCHEMA": False,
+    # CP10: apps.crm.models.Customer.Status and apps.crm.models.Lead.Status
+    # are two different TextChoices classes that both happen to back a
+    # field named "status" — drf-spectacular's automatic enum-component
+    # naming collides on the field name alone and falls back to an
+    # unstable, hash-suffixed name (e.g. "Status80cEnum") unless told
+    # explicitly which choices class each schema component should be named
+    # after. This is not a bug in either model — both fields are correctly
+    # named "status" for their own domain — it's purely a schema-naming
+    # disambiguation.
+    # CP12: apps.sales.models.Quote.Status and apps.sales.models.Invoice
+    # .Status collide on the same "status" field name, for the identical
+    # reason as the CP10 pair above.
+    # CP17: apps.reports.models.ReportExecution.Status and
+    # apps.workflows.models.WorkflowExecution.Status have IDENTICAL choice
+    # VALUES (PENDING/RUNNING/COMPLETED/FAILED) as well as the same field
+    # name — drf-spectacular treats two same-name, same-value enums as one
+    # shared schema component, but can't pick a stable name for that shared
+    # component without help. A single override (naming the shared
+    # component after ReportExecution's own Status) resolves it for BOTH
+    # models — WorkflowExecution.status ends up correctly documented as
+    # `$ref: ReportExecutionStatusEnum` too, not a naming mismatch. See
+    # BACKEND_LEARNING_GUIDE.md CP17 for the fuller explanation of why this
+    # differs from the CP10/CP12 pairs above (same name, DIFFERENT values)
+    # and from CP16 (no collision at all, since every same-named `status`
+    # field that checkpoint added had different values from every other).
+    "ENUM_NAME_OVERRIDES": {
+        "CustomerStatusEnum": "apps.crm.models.Customer.Status",
+        "LeadStatusEnum": "apps.crm.models.Lead.Status",
+        "QuoteStatusEnum": "apps.sales.models.Quote.Status",
+        "InvoiceStatusEnum": "apps.sales.models.Invoice.Status",
+        "ReportExecutionStatusEnum": "apps.reports.models.ReportExecution.Status",
+    },
 }
 
 # ---------------------------------------------------------------------------

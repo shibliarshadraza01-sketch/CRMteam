@@ -15,6 +15,15 @@ from .models import User
 class UserAdmin(DjangoUserAdmin):
     # DjangoUserAdmin defaults assume a `username` field; every one of these
     # sections must be overridden for an email-login, username-less model.
+    #
+    # CP4: `super_admin_access_code_hash` is deliberately absent from every
+    # fieldset below. Because `fieldsets`/`add_fieldsets` are explicitly set,
+    # any field not listed simply does not appear on the admin form at all —
+    # it cannot be viewed or edited as plaintext through this UI, by omission
+    # rather than by a hidden/read-only widget that might still leak the hash
+    # into rendered HTML. Setting/changing the code is done via
+    # User.set_access_code() (see apps/accounts/models.py), not the admin
+    # site — see BACKEND_LEARNING_GUIDE.md CP4, "setting the access code".
     ordering = ("email",)
     list_display = ("email", "first_name", "last_name", "role", "is_active", "is_staff")
     list_filter = ("role", "is_active", "is_staff", "is_superuser")

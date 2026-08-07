@@ -39,4 +39,13 @@ urlpatterns = [
     ),
     # Domain APIs, versioned under /api/v1/
     path("api/v1/auth/", include("apps.accounts.urls")),
+    path("api/v1/crm/", include("apps.crm.urls")),
+    path("api/v1/sales/", include("apps.sales.urls")),
+    path("api/v1/catalog/", include("apps.catalog.urls")),
+    path("api/v1/activities/", include("apps.activities.urls")),
+    path("api/v1/communications/", include("apps.communications.urls")),
+    path("api/v1/reports/", include("apps.reports.urls")),
+    path("api/v1/workflows/", include("apps.workflows.urls")),
+    path("api/v1/integrations/", include("apps.integrations.urls")),
+    path("api/v1/system/", include("apps.system.urls")),
 ]
