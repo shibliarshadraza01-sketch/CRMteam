@@ -20,12 +20,25 @@ spec, unlike CP11's ("Support: ... notes, activities" bundled under one
 endpoint), never bundles line items under the parent resource, so the
 CP10 precedent (a separate top-level resource) is the better fit here.
 
+    GET/POST          /api/v1/sales/payments/           (list/record a payment)
+    GET               /api/v1/sales/payments/<id>/
+
+``/payments/`` is create+list+retrieve only (see
+``PaymentTransactionViewSet``'s own docstring) — a recorded payment is
+never edited or soft-deleted through this API.
+
 Built entirely from DRF's ``DefaultRouter`` — no hand-written URL
 patterns.
 """
 from rest_framework.routers import DefaultRouter
 
-from .views import InvoiceItemViewSet, InvoiceViewSet, QuoteItemViewSet, QuoteViewSet
+from .views import (
+    InvoiceItemViewSet,
+    InvoiceViewSet,
+    PaymentTransactionViewSet,
+    QuoteItemViewSet,
+    QuoteViewSet,
+)
 
 app_name = "sales"
 
@@ -34,5 +47,6 @@ router.register("quotes", QuoteViewSet, basename="quote")
 router.register("quote-items", QuoteItemViewSet, basename="quote-item")
 router.register("invoices", InvoiceViewSet, basename="invoice")
 router.register("invoice-items", InvoiceItemViewSet, basename="invoice-item")
+router.register("payments", PaymentTransactionViewSet, basename="payment-transaction")
 
 urlpatterns = router.urls

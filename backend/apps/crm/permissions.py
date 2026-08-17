@@ -30,6 +30,7 @@ from apps.accounts.permissions import (
     IsOwnerOrSuperAdmin,
     IsSuperAdmin,
     ReadOnlyOrSuperAdmin,
+    assert_object_accessible,
 )
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "IsOwnerOrSuperAdmin",
     "IsSuperAdmin",
     "ReadOnlyOrSuperAdmin",
+    "assert_object_accessible",
 ]

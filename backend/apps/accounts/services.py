@@ -11,11 +11,54 @@ Every function here is called from exactly one place in views.py — see
 BACKEND_LEARNING_GUIDE.md CP5, "implementation walkthrough", for the full
 call graph.
 """
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 from .models import UserSession
 from .session_utils import build_device_name, get_client_ip, parse_user_agent
+
+User = get_user_model()
+
+
+def create_managed_user(email, password, *, role, first_name="", last_name=""):
+    """Create a user account via the admin-facing Users management API
+    (final-completion-pass — see ``views.py``'s ``UserViewSet``).
+
+    Thin wrapper around ``User.objects.create_user()`` (CP2), kept as a
+    service function per this project's own convention: one place for a
+    future rule (e.g. "a Manager can only create Employees, not other
+    Managers") to live without touching the view. ``role=SUPER_ADMIN`` is
+    permitted — the model's own ``save()`` invariant (see models.py)
+    doesn't require a secondary access code to exist for a SUPER_ADMIN
+    row; it just means that account cannot complete a real login until
+    ``set_access_code()`` is used to configure one (no API surface for
+    that exists yet — a deliberate, documented gap, not an oversight).
+    """
+    return User.objects.create_user(
+        email=email, password=password, role=role, first_name=first_name, last_name=last_name
+    )
+
+
+def deactivate_user(user):
+    """Deactivate ``user`` (``is_active=False``) — the only "removal"
+    action the Users management API exposes. Never a real delete: a
+    User is referenced by FK from too much of the rest of the schema
+    (owned records, audit entries, sessions) for a hard delete to ever
+    be a safe admin action; deactivation is reversible and is what
+    actually blocks login (``ModelBackend.user_can_authenticate()``
+    already excludes inactive users).
+    """
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    return user
+
+
+def activate_user(user):
+    """Reverse of ``deactivate_user()``."""
+    user.is_active = True
+    user.save(update_fields=["is_active"])
+    return user
 
 
 def create_session(user, refresh_token, request):

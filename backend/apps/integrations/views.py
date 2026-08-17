@@ -9,7 +9,9 @@ from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.accounts.permissions import assert_object_accessible
 from apps.core.utils import stamp_audit_fields
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
 from .filters import (
@@ -55,8 +57,9 @@ class IntegrationViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         integration = serializer.instance
-        if integration.owner_id is None:
-            integration.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, integration.owner)
+        if resolved_owner.pk != integration.owner_id:
+            integration.owner = resolved_owner
             integration.save(update_fields=["owner", "updated_at"])
 
 
@@ -104,6 +107,7 @@ class APIKeyViewSet(_CrmModelViewSet):
         input_serializer = _GenerateAPIKeySerializer(data=request.data)
         input_serializer.is_valid(raise_exception=True)
         data = input_serializer.validated_data
+        assert_object_accessible(request, data["integration"])
 
         api_key, raw_key = generate_api_key(
             data["integration"], data["name"], expires_at=data.get("expires_at")
@@ -169,6 +173,7 @@ class WebhookEndpointViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         integration = data.pop("integration")
+        assert_object_accessible(self.request, integration)
         url = data.pop("url")
         event_types = data.pop("event_types", None)
 

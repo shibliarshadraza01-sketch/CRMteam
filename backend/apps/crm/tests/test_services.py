@@ -14,6 +14,8 @@ from apps.crm.services import (
     convert_lead,
     create_customer,
     create_lead,
+    find_duplicate_leads,
+    merge_leads,
 )
 
 
@@ -195,3 +197,138 @@ def test_add_address_allows_multiple_addresses_of_same_type(customer):
     add_address(customer, "SHIPPING", line1="1 Main St", city="Springfield", country="USA")
     add_address(customer, "SHIPPING", line1="2 Elm St", city="Shelbyville", country="USA")
     assert customer.addresses.filter(address_type="SHIPPING").count() == 2
+
+
+# --------------------------------------------------------------------------
+# find_duplicate_leads() / merge_leads()
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_find_duplicate_leads_matches_on_email():
+    lead = create_lead("Acme", "Jane", email="jane@acme.example")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example")
+    create_lead("Unrelated", "Bob", email="bob@example.com")
+
+    assert list(find_duplicate_leads(lead)) == [duplicate]
+
+
+@pytest.mark.django_db
+def test_find_duplicate_leads_matches_on_phone():
+    lead = create_lead("Acme", "Jane", phone="555-0100")
+    duplicate = create_lead("Acme Inc", "Jane D", phone="555-0100")
+
+    assert list(find_duplicate_leads(lead)) == [duplicate]
+
+
+@pytest.mark.django_db
+def test_find_duplicate_leads_excludes_converted_leads(organization):
+    lead = create_lead("Acme", "Jane", email="jane@acme.example")
+    converted = create_lead("Acme Inc", "Jane D", email="jane@acme.example")
+    convert_lead(converted, organization)
+
+    assert list(find_duplicate_leads(lead)) == []
+
+
+@pytest.mark.django_db
+def test_find_duplicate_leads_returns_nothing_without_email_or_phone():
+    lead = create_lead("Acme", "Jane")
+    create_lead("Acme Inc", "Jane D")
+
+    assert list(find_duplicate_leads(lead)) == []
+
+
+@pytest.mark.django_db
+def test_merge_leads_rejects_merging_with_itself():
+    lead = create_lead("Acme", "Jane")
+    with pytest.raises(ValueError):
+        merge_leads(lead, lead)
+
+
+@pytest.mark.django_db
+def test_merge_leads_rejects_converted_lead(organization):
+    primary = create_lead("Acme", "Jane")
+    converted = create_lead("Acme Inc", "Jane D")
+    convert_lead(converted, organization)
+
+    with pytest.raises(ValueError):
+        merge_leads(primary, converted)
+
+
+@pytest.mark.django_db
+def test_merge_leads_soft_deletes_the_duplicate_not_hard_deletes():
+    primary = create_lead("Acme", "Jane", email="jane@acme.example")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example")
+
+    merge_leads(primary, duplicate)
+
+    duplicate.refresh_from_db()
+    assert duplicate.is_deleted is True
+    assert Lead.objects.filter(pk=duplicate.pk).exists()  # still there, just soft-deleted
+
+
+@pytest.mark.django_db
+def test_merge_leads_backfills_empty_fields_on_primary():
+    primary = create_lead("Acme", "Jane", email="jane@acme.example", phone="")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example", phone="555-0100")
+
+    merged = merge_leads(primary, duplicate)
+
+    assert merged.phone == "555-0100"
+
+
+@pytest.mark.django_db
+def test_merge_leads_never_overwrites_a_value_primary_already_has():
+    primary = create_lead("Acme", "Jane", email="jane@acme.example", phone="555-0001")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example", phone="555-9999")
+
+    merged = merge_leads(primary, duplicate)
+
+    assert merged.phone == "555-0001"
+
+
+@pytest.mark.django_db
+def test_merge_leads_concatenates_notes():
+    primary = create_lead("Acme", "Jane", email="jane@acme.example", notes="Called once.")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example", notes="Interested in premium plan.")
+
+    merged = merge_leads(primary, duplicate)
+
+    assert "Called once." in merged.notes
+    assert "Interested in premium plan." in merged.notes
+
+
+@pytest.mark.django_db
+def test_merge_leads_reassigns_related_activity_records_to_primary():
+    """Anything pointing at the duplicate via a generic (content_type +
+    object_id) relation — e.g. a Task — must be repointed at the primary,
+    never left dangling.
+    """
+    from apps.activities.models import Task
+
+    primary = create_lead("Acme", "Jane", email="jane@acme.example")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example")
+    task = Task.objects.create(title="Follow up", content_type=None, object_id=None)
+    from django.contrib.contenttypes.models import ContentType
+
+    task.content_type = ContentType.objects.get_for_model(Lead)
+    task.object_id = duplicate.pk
+    task.save()
+
+    merge_leads(primary, duplicate)
+
+    task.refresh_from_db()
+    assert task.object_id == primary.pk
+
+
+@pytest.mark.django_db
+def test_merge_leads_backfills_missing_owner():
+    from apps.accounts.models import User
+
+    owner = User.objects.create_user(email="lead-owner@example.com", password="x")
+    primary = create_lead("Acme", "Jane", email="jane@acme.example")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example", owner=owner)
+
+    merged = merge_leads(primary, duplicate)
+
+    assert merged.owner_id == owner.id

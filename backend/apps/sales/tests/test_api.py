@@ -21,14 +21,19 @@ def _detail(url, pk):
 # --------------------------------------------------------------------------
 
 
-def test_create_quote(api_client, customer, manager):
-    api_client.force_authenticate(manager)
+def test_create_quote(api_client, customer, super_admin):
+    # super_admin, not an unrelated manager: assert_object_accessible()
+    # (final internet-facing security audit) now requires the requester
+    # to actually be able to access `customer` — the plain `manager`
+    # fixture has no team relationship to `customer`'s owner, so it
+    # would be correctly denied, same as any other unrelated manager.
+    api_client.force_authenticate(super_admin)
 
     response = api_client.post(QUOTES_URL, {"customer": customer.pk, "quote_number": "Q-API-1"})
 
     assert response.status_code == 201
     q = Quote.objects.get(pk=response.data["id"])
-    assert q.owner_id == manager.id
+    assert q.owner_id == super_admin.id
 
 
 def test_list_quotes_returns_only_active_rows(api_client, super_admin, customer):
@@ -190,8 +195,9 @@ def test_stage_transition_requires_ownership(api_client, organization, employee,
 # --------------------------------------------------------------------------
 
 
-def test_create_invoice(api_client, customer, manager):
-    api_client.force_authenticate(manager)
+def test_create_invoice(api_client, customer, super_admin):
+    # super_admin: see test_create_quote()'s own comment above.
+    api_client.force_authenticate(super_admin)
     response = api_client.post(INVOICES_URL, {"customer": customer.pk, "invoice_number": "INV-API-1"})
     assert response.status_code == 201
 

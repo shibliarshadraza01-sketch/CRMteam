@@ -34,6 +34,15 @@ from apps.accounts.permissions import (
     ReadOnlyOrSuperAdmin,
 )
 
+#: Organization: read — any authenticated user; write — Super Admin only.
+#: ``ReadOnlyOrSuperAdmin`` alone already expresses exactly this rule.
+OrganizationWritePermission = ReadOnlyOrSuperAdmin
+
+#: Department / Team: read — any authenticated user; write — Manager or
+#: above. Same composition CP13's ``CatalogWritePermission`` established —
+#: see that module's docstring for the truth table.
+DepartmentTeamWritePermission = ReadOnlyOrSuperAdmin | IsManagerOrSuperAdmin
+
 __all__ = [
     "IsEmployee",
     "IsManager",
@@ -41,4 +50,6 @@ __all__ = [
     "IsOwnerOrSuperAdmin",
     "IsSuperAdmin",
     "ReadOnlyOrSuperAdmin",
+    "OrganizationWritePermission",
+    "DepartmentTeamWritePermission",
 ]

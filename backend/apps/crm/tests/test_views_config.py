@@ -79,11 +79,19 @@ def test_viewsets_use_the_correct_filterset():
 
 
 def test_customer_search_fields_match_spec():
-    assert set(CustomerViewSet.search_fields) == {"name", "email", "phone", "website"}
+    """``search_fields`` is now a request-aware property (see
+    ``apps.core.views.PiiSafeSearchMixin``): the full column list lives in
+    ``full_search_fields``, and the PII subset is dropped for an
+    employee-facing request so ``?search=<an address>`` can't be used as a
+    confirmation oracle.
+    """
+    assert set(CustomerViewSet.full_search_fields) == {"name", "email", "phone", "website"}
+    assert set(CustomerViewSet.pii_search_fields) == {"email", "phone"}
 
 
 def test_lead_search_fields_match_spec():
-    assert set(LeadViewSet.search_fields) == {"company_name", "contact_name", "email", "phone"}
+    assert set(LeadViewSet.full_search_fields) == {"company_name", "contact_name", "email", "phone"}
+    assert set(LeadViewSet.pii_search_fields) == {"email", "phone"}
 
 
 def test_customer_ordering_fields_match_spec():

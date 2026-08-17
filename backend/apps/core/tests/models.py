@@ -29,6 +29,7 @@ class SampleTimeStamped(TimeStampedModel):
 
     class Meta:
         app_label = "core"
+        managed = False
 
 
 class SampleSoftDeleteOnly(SoftDeleteModel):
@@ -40,6 +41,7 @@ class SampleSoftDeleteOnly(SoftDeleteModel):
 
     class Meta:
         app_label = "core"
+        managed = False
 
 
 class SampleRecord(SoftDeleteTimeStampedModel):
@@ -52,6 +54,7 @@ class SampleRecord(SoftDeleteTimeStampedModel):
 
     class Meta:
         app_label = "core"
+        managed = False
 
     def __str__(self):
         return self.name

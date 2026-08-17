@@ -276,3 +276,30 @@ class IsOwnerOrSuperAdmin(permissions.BasePermission):
             return manager_has_access(user, obj)
 
         return False
+
+
+def assert_object_accessible(request, obj):
+    """Raise ``Http404`` unless ``request.user`` can access ``obj`` under
+    the exact same rule ``IsOwnerOrSuperAdmin.has_object_permission()``
+    enforces for retrieve/update/destroy.
+
+    Required for every ``perform_create()`` that attaches a new CHILD
+    record to an EXISTING parent identified by a client-supplied ID in
+    the request body (e.g. ``ContactPersonViewSet`` creating a contact
+    for a given ``customer``, ``InvoiceItemViewSet``/``PaymentTransactionViewSet``
+    for a given ``invoice``): DRF's permission classes only ever run
+    ``has_object_permission()`` against an object ``get_object()`` has
+    already fetched — for a plain ``POST`` to a list endpoint there IS no
+    object yet, so a parent PK referenced inside the create payload is
+    validated only by the serializer field's queryset (which, unscoped,
+    accepts ANY existing parent), never by an ownership check. Without
+    this call, any authenticated user could attach a fabricated child
+    record (a contact, an invoice line item, a payment) to ANY other
+    user's parent object just by guessing or enumerating its ID — call
+    this immediately after popping the parent out of ``validated_data``,
+    before doing anything with it.
+    """
+    from django.http import Http404
+
+    if not IsOwnerOrSuperAdmin().has_object_permission(request, None, obj):
+        raise Http404

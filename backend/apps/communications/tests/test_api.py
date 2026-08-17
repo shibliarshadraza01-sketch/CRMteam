@@ -50,28 +50,98 @@ def test_manager_can_create_email_template(api_client, manager):
 # --------------------------------------------------------------------------
 
 
-def test_employee_can_queue_email_from_explicit_subject_body(api_client, employee):
+def test_employee_can_queue_email_to_a_customer_without_naming_an_address(api_client, employee, customer):
+    """The employee-facing contract: name the CUSTOMER, never the address.
+    The backend resolves ``customer.email`` itself.
+    """
+    customer.email = "resolved-target@example.com"
+    customer.save(update_fields=["email"])
     api_client.force_authenticate(employee)
-    response = api_client.post(EMAIL_MESSAGES_URL, {"to_email": "x@example.com", "subject": "Hi", "body": "There"})
+
+    response = api_client.post(
+        EMAIL_MESSAGES_URL, {"customer": customer.pk, "subject": "Hi", "body": "There"}
+    )
+
     assert response.status_code == 201
     assert response.data["status"] == "QUEUED"
     assert response.data["owner"] == employee.id
+    # ...and the resolved address never comes back to the employee.
+    assert "to_email" not in response.data
+    assert "resolved-target@example.com" not in response.content.decode()
+
+    from apps.communications.models import EmailMessage as EmailMessageModel
+
+    assert EmailMessageModel.objects.get(pk=response.data["id"]).to_email == "resolved-target@example.com"
 
 
-def test_employee_can_queue_email_from_template(api_client, employee, email_template):
+def test_employee_can_queue_email_to_self_by_address(api_client, employee):
+    """The one documented raw-address case: a self-addressed digest."""
     api_client.force_authenticate(employee)
     response = api_client.post(
-        EMAIL_MESSAGES_URL, {"to_email": "x@example.com", "template": email_template.pk, "context": {"name": "Ada"}}
+        EMAIL_MESSAGES_URL, {"to_email": employee.email, "subject": "Hi", "body": "There"}
+    )
+    assert response.status_code == 201
+
+
+def test_employee_cannot_queue_email_to_an_arbitrary_address(api_client, employee):
+    """No open relay: an Employee naming someone else's address is a 400,
+    so this endpoint can neither contact an arbitrary third party nor
+    confirm a guessed customer address.
+    """
+    api_client.force_authenticate(employee)
+    response = api_client.post(
+        EMAIL_MESSAGES_URL, {"to_email": "someone-else@example.com", "subject": "Hi", "body": "There"}
+    )
+    assert response.status_code == 400
+
+
+def test_queue_email_rejects_a_customer_with_no_address(api_client, employee, customer):
+    api_client.force_authenticate(employee)
+    response = api_client.post(
+        EMAIL_MESSAGES_URL, {"customer": customer.pk, "subject": "Hi", "body": "There"}
+    )
+    assert response.status_code == 400
+
+
+def test_employee_cannot_queue_email_to_another_employees_customer(
+    api_client, employee, other_employee, organization
+):
+    """ID-guessing another employee's customer must not make the backend
+    read that customer's address and mail them.
+    """
+    from apps.crm.models import Customer
+
+    foreign = Customer.objects.create(
+        organization=organization, name="Foreign", slug="foreign-cust",
+        owner=other_employee, email="foreign@example.com",
+    )
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(
+        EMAIL_MESSAGES_URL, {"customer": foreign.pk, "subject": "Hi", "body": "There"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_employee_can_queue_email_from_template(api_client, employee, customer, email_template):
+    customer.email = "template-target@example.com"
+    customer.save(update_fields=["email"])
+    api_client.force_authenticate(employee)
+    response = api_client.post(
+        EMAIL_MESSAGES_URL,
+        {"customer": customer.pk, "template": email_template.pk, "context": {"name": "Ada"}},
+        format="json",
     )
     assert response.status_code == 201
     assert response.data["subject"] == "Welcome, Ada!"
 
 
-def test_queue_email_rejects_both_template_and_subject(api_client, employee, email_template):
+def test_queue_email_rejects_both_template_and_subject(api_client, employee, customer, email_template):
     api_client.force_authenticate(employee)
     response = api_client.post(
         EMAIL_MESSAGES_URL,
-        {"to_email": "x@example.com", "template": email_template.pk, "subject": "Hi", "body": "There"},
+        {"customer": customer.pk, "template": email_template.pk, "subject": "Hi", "body": "There"},
     )
     assert response.status_code == 400
 

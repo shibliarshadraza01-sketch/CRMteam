@@ -225,6 +225,13 @@ class Lead(SoftDeleteTimeStampedModel):
         indexes = [
             models.Index(fields=["status"], name="crm_lead_status_idx"),
             models.Index(fields=["owner"], name="crm_lead_owner_idx"),
+            # Backs services.find_duplicate_leads()'s Q(email=...) |
+            # Q(phone=...) lookup — the one place these two fields are
+            # queried directly (never just displayed/filtered elsewhere),
+            # used on every "Merge Duplicates" bulk action and every
+            # GET .../duplicates/ call.
+            models.Index(fields=["email"], name="crm_lead_email_idx"),
+            models.Index(fields=["phone"], name="crm_lead_phone_idx"),
         ]
 
     def __str__(self):

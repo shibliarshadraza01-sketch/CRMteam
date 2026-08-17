@@ -107,6 +107,30 @@ def test_send_queued_email_failure_marks_failed_and_does_not_raise(email_message
 
 
 @pytest.mark.django_db
+def test_send_queued_email_default_send_func_uses_configured_email_backend(email_message):
+    """No ``send_func`` override — exercises the REAL delivery path
+    (``_default_send_func`` -> Django's own ``send_mail()``) rather than
+    an injected fake, proving the SendGrid/EMAIL_BACKEND settings wiring
+    (final-completion-pass: config/settings/{development,production}.py)
+    is actually reachable end-to-end, not just declared. Django's test
+    runner forces ``EMAIL_BACKEND`` to locmem for the duration of any
+    test regardless of the real per-environment setting, capturing every
+    "sent" message in ``django.core.mail.outbox`` — this is what proves
+    the message really flowed through Django's mail system, not just
+    that some function was called.
+    """
+    from django.core import mail
+
+    send_queued_email(email_message)
+
+    email_message.refresh_from_db()
+    assert email_message.status == EmailMessage.Status.SENT
+    assert len(mail.outbox) == 1
+    assert mail.outbox[0].to == [email_message.to_email]
+    assert mail.outbox[0].subject == email_message.subject
+
+
+@pytest.mark.django_db
 def test_send_queued_email_rejects_already_sent(email_message):
     send_queued_email(email_message, send_func=lambda message: None)
     with pytest.raises(ValueError):

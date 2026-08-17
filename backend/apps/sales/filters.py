@@ -1,7 +1,7 @@
 """CP12: django-filter ``FilterSet`` classes for the sales API."""
 import django_filters
 
-from .models import Invoice, Quote
+from .models import Invoice, PaymentTransaction, Quote
 
 
 class QuoteFilterSet(django_filters.FilterSet):
@@ -27,3 +27,12 @@ class InvoiceFilterSet(django_filters.FilterSet):
 
     def filter_paid(self, queryset, name, value):
         return queryset.paid() if value else queryset.exclude(status=Invoice.Status.PAID)
+
+
+class PaymentTransactionFilterSet(django_filters.FilterSet):
+    paid_at_from = django_filters.DateFilter(field_name="paid_at", lookup_expr="gte")
+    paid_at_to = django_filters.DateFilter(field_name="paid_at", lookup_expr="lte")
+
+    class Meta:
+        model = PaymentTransaction
+        fields = ["invoice", "method"]

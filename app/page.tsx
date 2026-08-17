@@ -14,13 +14,14 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
+  Coffee,
   Copy,
-  Download,
   Eye,
   EyeOff,
   FileSpreadsheet,
   Filter,
   History,
+  ListChecks,
   Loader2,
   Lock,
   LockKeyhole,
@@ -33,6 +34,7 @@ import {
   Paperclip,
   Pencil,
   Phone,
+  PhoneCall,
   Pin,
   Plus,
   RefreshCw,
@@ -40,9 +42,9 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Star,
+  StickyNote,
   Sun,
   Trash2,
   Upload,
@@ -53,8 +55,33 @@ import {
   X
 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  accounts,
+  activities,
+  ApiError,
+  attendance,
+  clearTokens,
+  communications,
+  crm,
+  fetchMe,
+  getTokens,
+  login,
+  logout,
+  onSessionExpired,
+  organization,
+  reports as reportsApi,
+  sales,
+  setTokens,
+  system,
+  verifySuperAdmin,
+  type BackendRole,
+  type BackendUser,
+  type CurrentAttendance,
+  type DailyAttendance,
+  type ShiftConfig
+} from "@/lib/api";
 
 type ModuleKey =
   | "users"
@@ -98,39 +125,29 @@ const modules: ModuleConfig[] = [
   {
     key: "reports",
     title: "Reports & Dashboard",
-    subtitle: "Monitor full company performance, revenue, lead conversion rates, and export reports to CSV or Excel.",
+    subtitle: "Monitor full company performance, revenue, and lead conversion rates.",
     icon: FileSpreadsheet,
     accent: "from-teal-700 to-emerald-500",
     features: [
       "Full company dashboard for all team performance",
-      "Revenue reports and lead conversion rates",
-      "Export reports as CSV or Excel"
+      "Revenue reports and lead conversion rates"
     ],
     stats: [
       { label: "Team performance", value: "91%", change: "+6.4%" },
       { label: "Lead conversion", value: "18.7%", change: "+2.1%" },
       { label: "Revenue report", value: "$842K", change: "Company total" },
-      { label: "Exports", value: "38", change: "CSV and Excel" }
+      { label: "Saved reports", value: "12", change: "Active reports" }
     ],
-    columns: ["Report", "Scope", "Metric", "Period", "Export"],
-    rows: [
-      { Report: "Company dashboard", Scope: "All teams", Metric: "Performance 91%", Period: "July", Export: "CSV" },
-      { Report: "Revenue", Scope: "Company", Metric: "$842K", Period: "Q3", Export: "Excel" },
-      { Report: "Lead conversion", Scope: "All owners", Metric: "18.7%", Period: "Monthly", Export: "CSV" },
-      { Report: "Manager scorecard", Scope: "Managers", Metric: "Pipeline health", Period: "Weekly", Export: "Excel" }
-    ],
-    filters: ["All reports", "Revenue", "Conversion", "Team performance", "CSV", "Excel"],
-    actions: [
-      { label: "Export CSV", icon: Download, primary: true },
-      { label: "Export Excel", icon: FileSpreadsheet },
-      { label: "Refresh Report", icon: RefreshCw }
-    ],
-    formTitle: "Generate Report",
+    columns: ["Report", "Type", "Description", "Status"],
+    rows: [],
+    filters: ["All reports", "Productivity", "Lead Conversion", "Sales Pipeline", "Customer Activity", "Custom"],
+    actions: [{ label: "Refresh Report", icon: RefreshCw, primary: true }],
+    formTitle: "Create Saved Report",
     formFields: [
-      { label: "Report type", type: "select", placeholder: "Revenue / Conversion / Performance" },
-      { label: "Date range", type: "select", placeholder: "This month / Quarter / Custom" },
-      { label: "Export format", type: "select", placeholder: "CSV / Excel" },
-      { label: "Recipient email", type: "email", placeholder: "admin@company.com" }
+      { label: "Report", type: "text", placeholder: "Report name" },
+      { label: "Type", type: "select", placeholder: "Productivity / Lead Conversion / Sales Pipeline / Customer Activity / Custom" },
+      { label: "Description", type: "text", placeholder: "What this report covers" },
+      { label: "Status", type: "select", placeholder: "Active / Inactive" }
     ]
   },
   {
@@ -150,15 +167,9 @@ const modules: ModuleConfig[] = [
       { label: "Avg. performance", value: "83.6%", change: "+4.1%" },
       { label: "Top performer", value: "Aarav", change: "92% completion" }
     ],
-    columns: ["Employee", "Role", "Leads Assigned", "Performance", "Status"],
-    rows: [
-      { Employee: "Aarav Mehta", Role: "Employee", "Leads Assigned": "32", Performance: "92%", Status: "Active" },
-      { Employee: "Nisha Rao", Role: "Employee", "Leads Assigned": "27", Performance: "87%", Status: "Active" },
-      { Employee: "Kabir Sethi", Role: "Employee", "Leads Assigned": "19", Performance: "79%", Status: "Active" },
-      { Employee: "Zoya Khan", Role: "Employee", "Leads Assigned": "24", Performance: "84%", Status: "Invited" },
-      { Employee: "Maya Iyer", Role: "Employee", "Leads Assigned": "15", Performance: "76%", Status: "Active" }
-    ],
-    filters: ["All employees", "Active", "Invited", "High performers"],
+    columns: ["Name", "Role", "Status"],
+    rows: [],
+    filters: ["All employees", "Active", "Inactive"],
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
       { label: "Reassign Lead", icon: RefreshCw },
@@ -205,10 +216,7 @@ const modules: ModuleConfig[] = [
       { Item: "Payment follow-up", Type: "Follow-up", Status: "Scheduled", Updated: "Aug 03" }
     ],
     filters: ["All items", "Leads", "Customers", "Tasks", "Follow-ups"],
-    actions: [
-      { label: "Export CSV", icon: Download, primary: true },
-      { label: "Refresh Report", icon: RefreshCw }
-    ],
+    actions: [{ label: "Refresh Report", icon: RefreshCw, primary: true }],
     chart: { title: "My Activity Overview", subtitle: "Status mix across my leads, customers, and tasks", column: "Type", mode: "count" },
     formTitle: "Log Personal Activity",
     formFields: [
@@ -266,26 +274,24 @@ const modules: ModuleConfig[] = [
       { label: "Pending invites", value: "12", change: "4 expiring soon" },
       { label: "Permission sets", value: "17", change: "6 manager views" }
     ],
-    columns: ["Name", "Role", "Email", "Status", "Permissions"],
+    columns: ["Name", "Role", "Email", "Status", "Password"],
     rows: [
-      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Status: "Active", Permissions: "Leads, Customers, Tasks" },
-      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Status: "Invited", Permissions: "Assigned leads only" },
-      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Status: "Inactive", Permissions: "Payments hidden" },
-      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Status: "Active", Permissions: "Calls, WhatsApp, Follow-ups" }
+      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Status: "Active", Password: "••••••••" },
+      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Status: "Active", Password: "••••••••" },
+      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Status: "Inactive", Password: "••••••••" },
+      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Status: "Active", Password: "••••••••" }
     ],
-    filters: ["All roles", "Manager", "Employee", "Active", "Invited", "Inactive"],
+    filters: ["All roles", "Manager", "Employee", "Active", "Inactive"],
     actions: [
-      { label: "Create User", icon: Plus, primary: true },
-      { label: "Send Invite", icon: Send },
-      { label: "Permissions", icon: LockKeyhole }
+      { label: "Create User", icon: Plus, primary: true }
     ],
-    chart: { title: "User Status Breakdown", subtitle: "Active, invited, and inactive accounts", column: "Status", mode: "count" },
-    formTitle: "Create or Invite User",
+    chart: { title: "User Status Breakdown", subtitle: "Active and inactive accounts", column: "Status", mode: "count" },
+    formTitle: "Create User",
     formFields: [
       { label: "Full name", type: "text", placeholder: "Manager or employee name" },
       { label: "Work email", type: "email", placeholder: "name@company.com" },
       { label: "Role", type: "select", placeholder: "Manager / Employee" },
-      { label: "Permission profile", type: "select", placeholder: "Choose what this user can see" }
+      { label: "Password", type: "text", placeholder: "Initial password (min 8 characters)" }
     ]
   },
   {
@@ -319,7 +325,8 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
       { label: "Bulk Import", icon: Upload },
-      { label: "Merge Duplicates", icon: RefreshCw }
+      { label: "Merge Duplicates", icon: RefreshCw },
+      { label: "Export Leads (CSV)", icon: FileSpreadsheet }
     ],
     chart: { title: "Leads by Status", subtitle: "Pipeline distribution across stages", column: "Status", mode: "count" },
     formTitle: "Create or Update Lead",
@@ -347,14 +354,14 @@ const modules: ModuleConfig[] = [
       { label: "Open histories", value: "217", change: "Updated today" },
       { label: "Conversion queue", value: "42", change: "Lead-ready" }
     ],
-    columns: ["Customer", "Plan", "Owner", "Last Interaction", "Status"],
+    columns: ["Customer", "Industry", "Owner", "Status"],
     rows: [
-      { Customer: "Acme Learning", Plan: "Enterprise", Owner: "Aarav Mehta", "Last Interaction": "WhatsApp, today", Status: "Active" },
-      { Customer: "Bright Path", Plan: "Growth", Owner: "Nisha Rao", "Last Interaction": "Email, yesterday", Status: "Onboarding" },
-      { Customer: "Northstar Labs", Plan: "Pro", Owner: "Kabir Sethi", "Last Interaction": "Call, 2 days ago", Status: "Active" },
-      { Customer: "Urban Study", Plan: "Starter", Owner: "Zoya Khan", "Last Interaction": "Timeline note", Status: "At Risk" }
+      { Customer: "Acme Learning", Industry: "Education", Owner: "Aarav Mehta", Status: "Active" },
+      { Customer: "Bright Path", Industry: "Retail", Owner: "Nisha Rao", Status: "Prospect" },
+      { Customer: "Northstar Labs", Industry: "Technology", Owner: "Kabir Sethi", Status: "Active" },
+      { Customer: "Urban Study", Industry: "Education", Owner: "Zoya Khan", Status: "Inactive" }
     ],
-    filters: ["All customers", "Active", "Onboarding", "At Risk", "Recently converted"],
+    filters: ["All customers", "Prospect", "Active", "Inactive", "Churned"],
     actions: [
       { label: "Convert Lead", icon: Check, primary: true },
       { label: "View Profile", icon: Eye },
@@ -388,26 +395,19 @@ const modules: ModuleConfig[] = [
       { label: "Reminders set", value: "144", change: "21 due today" },
       { label: "Paid invoices", value: "1,029", change: "97.4% success" }
     ],
-    columns: ["Customer", "Amount", "Paid", "Balance", "Reminder"],
-    rows: [
-      { Customer: "Acme Learning", Amount: "$24,000", Paid: "$18,000", Balance: "$6,000", Reminder: "Aug 03" },
-      { Customer: "Bright Path", Amount: "$8,500", Paid: "$8,500", Balance: "$0", Reminder: "None" },
-      { Customer: "Northstar Labs", Amount: "$14,200", Paid: "$7,100", Balance: "$7,100", Reminder: "Today" },
-      { Customer: "Urban Study", Amount: "$3,600", Paid: "$1,800", Balance: "$1,800", Reminder: "Aug 10" }
-    ],
-    filters: ["All payments", "Paid", "Partial", "Pending", "Reminder due", "Company revenue"],
+    columns: ["Invoice", "Customer ID", "Total", "Paid", "Balance", "Status"],
+    rows: [],
+    filters: ["All payments", "Draft", "Sent", "Partial", "Paid", "Cancelled"],
     actions: [
-      { label: "Add Payment", icon: Plus, primary: true },
-      { label: "Edit Payment", icon: Pencil },
-      { label: "Set Reminder", icon: Bell }
+      { label: "Add Payment", icon: Plus, primary: true }
     ],
-    chart: { title: "Payments Received", subtitle: "Amount paid per customer", column: "Paid", mode: "sum", labelColumn: "Customer", prefix: "$" },
-    formTitle: "Add or Edit Payment",
+    chart: { title: "Invoices by Status", subtitle: "Draft, sent, partial, paid, and cancelled invoices", column: "Status", mode: "count" },
+    formTitle: "Create Invoice",
     formFields: [
-      { label: "Customer", type: "select", placeholder: "Select customer" },
-      { label: "Payment amount", type: "number", placeholder: "Enter received amount" },
-      { label: "Balance", type: "number", placeholder: "Partial balance" },
-      { label: "Reminder date", type: "date", placeholder: "Choose date" }
+      { label: "Invoice number", type: "text", placeholder: "INV-1001" },
+      { label: "Customer ID", type: "number", placeholder: "Numeric customer ID (see Customers tab)" },
+      { label: "Total", type: "number", placeholder: "Invoice amount" },
+      { label: "Due date", type: "date", placeholder: "Choose due date" }
     ]
   },
   {
@@ -428,24 +428,18 @@ const modules: ModuleConfig[] = [
       { label: "Call logs", value: "1,762", change: "88 today" },
       { label: "Timeline events", value: "8,914", change: "Unified view" }
     ],
-    columns: ["Contact", "Channel", "Owner", "Last Message", "Outcome"],
+    columns: ["Recipient", "Subject", "Message", "Status"],
     rows: [
-      { Contact: "Priya Sharma", Channel: "Email", Owner: "Aarav Mehta", "Last Message": "Proposal sent", Outcome: "Opened" },
-      { Contact: "Acme Learning", Channel: "WhatsApp", Owner: "Nisha Rao", "Last Message": "Payment reminder", Outcome: "Replied" },
-      { Contact: "Rahul Verma", Channel: "Call", Owner: "Kabir Sethi", "Last Message": "Discovery call", Outcome: "Follow-up" },
-      { Contact: "Bright Path", Channel: "Timeline", Owner: "Zoya Khan", "Last Message": "Unified activity", Outcome: "Logged" }
+      { Recipient: "priya@example.com", Subject: "Proposal", Message: "Proposal sent", Status: "Sent" }
     ],
-    filters: ["All channels", "Email", "WhatsApp", "Calls", "Timeline", "Unread"],
+    filters: ["All channels", "Queued", "Sent", "Failed"],
     actions: [
-      { label: "Send Email", icon: Mail, primary: true },
-      { label: "WhatsApp", icon: MessageCircle },
-      { label: "Call Logs", icon: Phone }
+      { label: "Send Email", icon: Mail, primary: true }
     ],
-    chart: { title: "Messages by Channel", subtitle: "Email, WhatsApp, calls, and timeline activity", column: "Channel", mode: "count" },
-    formTitle: "Send Communication",
+    chart: { title: "Messages by Status", subtitle: "Queued, sent, and failed emails", column: "Status", mode: "count" },
+    formTitle: "Send Email",
     formFields: [
-      { label: "Recipient", type: "select", placeholder: "Lead or customer" },
-      { label: "Channel", type: "select", placeholder: "Email / WhatsApp / Call" },
+      { label: "Recipient", type: "email", placeholder: "name@example.com" },
       { label: "Subject", type: "text", placeholder: "Message subject" },
       { label: "Message", type: "text", placeholder: "Write a professional message" }
     ]
@@ -454,7 +448,7 @@ const modules: ModuleConfig[] = [
     key: "tasks",
     title: "Tasks & Follow-ups",
     subtitle: "Assign tasks to any employee or manager, view the full team's follow-up calendar, and set reminders.",
-    icon: CalendarDays,
+    icon: ListChecks,
     accent: "from-teal-700 to-violet-500",
     features: [
       "Assign a task to any employee or manager",
@@ -467,14 +461,14 @@ const modules: ModuleConfig[] = [
       { label: "Follow-ups", value: "219", change: "This week" },
       { label: "Reminders", value: "188", change: "Synced" }
     ],
-    columns: ["Task", "Assigned To", "Due", "Priority", "Status"],
+    columns: ["Task", "Priority", "Status", "Due"],
     rows: [
-      { Task: "Call hot leads", "Assigned To": "Aarav Mehta", Due: "Today", Priority: "High", Status: "Open" },
-      { Task: "Send onboarding plan", "Assigned To": "Nisha Rao", Due: "Tomorrow", Priority: "Medium", Status: "Scheduled" },
-      { Task: "Payment follow-up", "Assigned To": "Kabir Sethi", Due: "Aug 03", Priority: "High", Status: "Open" },
-      { Task: "Manager pipeline review", "Assigned To": "Zoya Khan", Due: "Aug 05", Priority: "Low", Status: "Done" }
+      { Task: "Call hot leads", Priority: "High", Status: "Pending", Due: "" },
+      { Task: "Send onboarding plan", Priority: "Medium", Status: "In Progress", Due: "" },
+      { Task: "Payment follow-up", Priority: "High", Status: "Pending", Due: "" },
+      { Task: "Manager pipeline review", Priority: "Low", Status: "Completed", Due: "" }
     ],
-    filters: ["All tasks", "Employee", "Manager", "Today", "Overdue", "Completed"],
+    filters: ["All tasks", "Pending", "In Progress", "Completed", "Cancelled"],
     actions: [
       { label: "Assign Task", icon: Plus, primary: true },
       { label: "Team Calendar", icon: CalendarDays },
@@ -505,17 +499,12 @@ const modules: ModuleConfig[] = [
       { label: "Sensitive events", value: "37", change: "Role and payment edits" },
       { label: "Access scope", value: "Super Admin", change: "Restricted screen" }
     ],
-    columns: ["Actor", "Action", "Module", "Time", "IP"],
+    columns: ["Actor", "Action", "Description", "Time", "IP"],
     rows: [
-      { Actor: "Super Admin", Action: "Changed user role", Module: "User Management", Time: "10:42 AM", IP: "103.21.48.12" },
-      { Actor: "Super Admin", Action: "Merged duplicate leads", Module: "Leads", Time: "09:58 AM", IP: "103.21.48.12" },
-      { Actor: "Super Admin", Action: "Edited partial payment", Module: "Payments", Time: "Yesterday", IP: "103.21.48.12" },
-      { Actor: "Super Admin", Action: "Updated integration", Module: "Settings", Time: "Jul 30", IP: "103.21.48.12" }
+      { Actor: "—", Action: "Create", Description: "—", Time: "—", IP: "—" }
     ],
-    filters: ["All actions", "Users", "Leads", "Payments", "Settings", "Sensitive"],
+    filters: ["All actions", "Create", "Update", "Delete", "Login", "Other"],
     actions: [
-      { label: "View Log", icon: Eye, primary: true },
-      { label: "Export Trail", icon: Download },
       { label: "Filter Events", icon: Filter }
     ],
     chart: { title: "Audit Events by Module", subtitle: "Where Super Admin activity is concentrated", column: "Module", mode: "count" },
@@ -544,26 +533,21 @@ const modules: ModuleConfig[] = [
       { label: "System rules", value: "24", change: "Company-wide" },
       { label: "Security", value: "On", change: "Super Admin managed" }
     ],
-    columns: ["Setting", "Category", "Status", "Owner", "Last Updated"],
+    columns: ["Setting", "Value", "Description", "Status"],
     rows: [
-      { Setting: "Organization profile", Category: "Organization", Status: "Configured", Owner: "Super Admin", "Last Updated": "Today" },
-      { Setting: "Email integration", Category: "Integration", Status: "Connected", Owner: "Super Admin", "Last Updated": "Jul 30" },
-      { Setting: "WhatsApp integration", Category: "Integration", Status: "Connected", Owner: "Super Admin", "Last Updated": "Jul 29" },
-      { Setting: "Calling integration", Category: "Integration", Status: "Needs review", Owner: "Super Admin", "Last Updated": "Jul 27" }
+      { Setting: "example_setting", Value: "example_value", Description: "Example description", Status: "Active" }
     ],
-    filters: ["All settings", "Organization", "Email", "WhatsApp", "Calling", "System-wide"],
+    filters: ["All settings", "Active", "Inactive"],
     actions: [
-      { label: "Org Settings", icon: Building2, primary: true },
-      { label: "Integrations", icon: SlidersHorizontal },
-      { label: "System Rules", icon: Settings }
+      { label: "Org Settings", icon: Building2, primary: true }
     ],
-    chart: { title: "Integration Status", subtitle: "Connected vs. pending configuration", column: "Status", mode: "count" },
-    formTitle: "Update Configuration",
+    chart: { title: "Setting Status", subtitle: "Active vs. inactive system settings", column: "Status", mode: "count" },
+    formTitle: "Create or Update Setting",
     formFields: [
-      { label: "Organization name", type: "text", placeholder: "Company name" },
-      { label: "Integration type", type: "select", placeholder: "Email / WhatsApp / Calling" },
-      { label: "System rule", type: "text", placeholder: "Company-wide setting" },
-      { label: "Admin email", type: "email", placeholder: "superadmin@company.com" }
+      { label: "Key", type: "text", placeholder: "setting_key" },
+      { label: "Value", type: "text", placeholder: "Setting value" },
+      { label: "Description", type: "text", placeholder: "What this setting controls" },
+      { label: "Status", type: "select", placeholder: "Active / Inactive" }
     ]
   }
 ];
@@ -633,8 +617,22 @@ type CalendarNote = {
   createdAt: string;
 };
 
-const TEAM_ROSTER = ["Aarav Mehta", "Nisha Rao", "Kabir Sethi", "Zoya Khan", "Maya Iyer"];
-const CURRENT_EMPLOYEE_NAME = "Aarav Mehta";
+// ---- Employee-panel contact protection ------------------------------------
+// There is deliberately NO client-side email/phone masking helper here any
+// more. Masking only made sense when the API still handed an Employee the
+// real value and this layer had to hide it; the backend now removes
+// `email`/`phone` from an Employee's response entirely
+// (apps.core.serializers.PiiMaskedSerializerMixin) and sends
+// can_email/can_call/can_whatsapp instead. Every Employee-facing surface
+// therefore renders a name plus a protected-contact label
+// (see contactCapabilityLabel() below), never a masked string built from a
+// value this client no longer holds.
+
+function displayNameFor(user: BackendUser | null): string {
+  if (!user) return "Me";
+  const fullName = `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim();
+  return fullName || user.email;
+}
 
 function toDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -657,6 +655,22 @@ function addMonths(date: Date, amount: number): Date {
   return next;
 }
 
+// Filters rows (leads/customers/payments) to just this calendar month by
+// their hidden `_createdAt` field — used to compute the Employee
+// dashboard's "This Month" figures from the already-server-scoped
+// recordsByModule arrays. Rows without a parseable date are excluded
+// (never counted as "this month" by default).
+function thisMonthRows(rows: RowRecord[]): RowRecord[] {
+  const now = new Date();
+  return rows.filter((row) => {
+    const raw = row._createdAt;
+    if (!raw) return false;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  });
+}
+
 function startOfWeek(date: Date): Date {
   const next = new Date(date);
   next.setDate(next.getDate() - next.getDay());
@@ -664,17 +678,16 @@ function startOfWeek(date: Date): Date {
   return next;
 }
 
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function ownerOf(row: RowRecord): string | undefined {
-  return row.Owner ?? row["Assigned To"] ?? undefined;
-}
-
-function scopeRowsForCalendar(rows: RowRecord[], role: Role): RowRecord[] {
-  if (role !== "employee") return rows;
-  return rows.filter((row) => ownerOf(row) === CURRENT_EMPLOYEE_NAME);
+function scopeRowsForCalendar(rows: RowRecord[]): RowRecord[] {
+  // No client-side owner-name filtering here: every list endpoint this
+  // reads from (leads/customers/payments/tasks/communication) already
+  // scopes to what the authenticated user is allowed to see server-side
+  // (see apps.crm.services.scope_queryset_for_user() and its per-app
+  // reuse) — re-filtering here by a display name would either duplicate
+  // that boundary incorrectly or (since row.Owner is rendered as
+  // "User #<id>", never a name) silently hide everything for every
+  // non-admin user.
+  return rows;
 }
 
 function pseudoDateForRow(id: string): string {
@@ -683,106 +696,35 @@ function pseudoDateForRow(id: string): string {
   return toDateKey(addDays(new Date(), offset));
 }
 
-function canSeeReminder(reminder: Reminder, role: Role): boolean {
+function canSeeReminder(reminder: Reminder, role: Role, currentUserName: string, teamNames: string[]): boolean {
   if (role === "superadmin") return true;
-  if (role === "manager") return reminder.assignedTo === "Manager" || TEAM_ROSTER.includes(reminder.assignedTo);
-  return reminder.assignedTo === CURRENT_EMPLOYEE_NAME;
+  if (role === "manager") return reminder.assignedTo === "Manager" || teamNames.includes(reminder.assignedTo);
+  return reminder.assignedTo === currentUserName;
 }
 
-function canSeeNote(note: CalendarNote, role: Role): boolean {
+function canSeeNote(note: CalendarNote, role: Role, currentUserName: string): boolean {
   if (role === "superadmin") return true;
   if (role === "manager") return !(note.visibility === "private" && note.author === "Super Admin");
-  return note.author === CURRENT_EMPLOYEE_NAME;
+  return note.author === currentUserName;
 }
 
-function assigneeOptionsForRole(role: Role): string[] {
-  if (role === "superadmin") return ["Super Admin", "Manager", ...TEAM_ROSTER];
-  if (role === "manager") return ["Manager", ...TEAM_ROSTER];
-  return [CURRENT_EMPLOYEE_NAME];
+function assigneeOptionsForRole(role: Role, currentUserName: string, teamNames: string[]): string[] {
+  if (role === "superadmin") return ["Super Admin", "Manager", ...teamNames];
+  if (role === "manager") return ["Manager", ...teamNames];
+  return [currentUserName];
 }
 
 function createInitialReminders(): Reminder[] {
-  const today = new Date();
-  return [
-    {
-      id: "reminder-seed-1",
-      title: "Follow up with Priya Sharma",
-      date: toDateKey(today),
-      time: "10:30",
-      priority: "High",
-      repeat: "None",
-      kind: "Follow-up",
-      assignedTo: CURRENT_EMPLOYEE_NAME,
-      createdByRole: "manager",
-      completed: false,
-      snoozedUntil: null
-    },
-    {
-      id: "reminder-seed-2",
-      title: "Team pipeline review",
-      date: toDateKey(addDays(today, 1)),
-      time: "15:00",
-      priority: "Medium",
-      repeat: "Weekly",
-      kind: "Meeting",
-      assignedTo: "Manager",
-      createdByRole: "superadmin",
-      completed: false,
-      snoozedUntil: null
-    },
-    {
-      id: "reminder-seed-3",
-      title: "Send payment reminder to Northstar Labs",
-      date: toDateKey(addDays(today, -1)),
-      time: "09:00",
-      priority: "Urgent",
-      repeat: "None",
-      kind: "Reminder",
-      assignedTo: "Nisha Rao",
-      createdByRole: "manager",
-      completed: false,
-      snoozedUntil: null
-    },
-    {
-      id: "reminder-seed-4",
-      title: "Quarterly audit prep",
-      date: toDateKey(addDays(today, 3)),
-      time: "11:00",
-      priority: "Low",
-      repeat: "Monthly",
-      kind: "Task",
-      assignedTo: "Super Admin",
-      createdByRole: "superadmin",
-      completed: false,
-      snoozedUntil: null
-    }
-  ];
+  // Reminders/notes are a local-only, browser-session feature by design
+  // (no backend model backs them — see BACKEND_PROGRESS.md's final
+  // report). They start empty for a real user/company, same as every
+  // other module now that this project is backend-driven — no seeded
+  // demo names or fictional companies.
+  return [];
 }
 
 function createInitialNotes(): CalendarNote[] {
-  const today = new Date();
-  return [
-    {
-      id: "note-seed-1",
-      date: toDateKey(today),
-      text: "Discussed onboarding checklist with Acme Learning.",
-      author: "Aarav Mehta",
-      pinned: true,
-      visibility: "team",
-      attachments: [],
-      createdAt: new Date().toISOString()
-    },
-    {
-      id: "note-seed-2",
-      date: toDateKey(addDays(today, -2)),
-      text: "Personal reminder: prep call script for hot leads.",
-      author: CURRENT_EMPLOYEE_NAME,
-      pinned: false,
-      visibility: "private",
-      attachments: [],
-      createdAt: new Date().toISOString()
-    }
-  ];
+  return [];
 }
 
 const badgeStyles: Record<string, string> = {
@@ -816,55 +758,6 @@ const CALENDAR_ITEM_DOTS: Array<{ key: "leads" | "customers" | "calls" | "tasks"
   { key: "tasks", label: "Tasks", color: "bg-violet-500" },
   { key: "reminders", label: "Reminders", color: "bg-red-500" },
   { key: "notes", label: "Notes", color: "bg-amber-500" }
-];
-
-const revenueData = [
-  { label: "Jan", value: 48 },
-  { label: "Feb", value: 56 },
-  { label: "Mar", value: 52 },
-  { label: "Apr", value: 69 },
-  { label: "May", value: 74 },
-  { label: "Jun", value: 88 },
-  { label: "Jul", value: 96 }
-];
-
-const conversionData = [
-  { label: "New", value: 680 },
-  { label: "Hot", value: 316 },
-  { label: "Warm", value: 482 },
-  { label: "Cold", value: 224 },
-  { label: "Won", value: 173 }
-];
-
-const sourceData = [
-  { label: "Meta Ads", value: 42, color: "#0F766E" },
-  { label: "Website", value: 24, color: "#F97316" },
-  { label: "Referral", value: 18, color: "#0EA5E9" },
-  { label: "CSV", value: 16, color: "#10B981" }
-];
-
-const monthlyLeadsData = [
-  { label: "Jan", value: 410 },
-  { label: "Feb", value: 468 },
-  { label: "Mar", value: 439 },
-  { label: "Apr", value: 522 },
-  { label: "May", value: 590 },
-  { label: "Jun", value: 641 },
-  { label: "Jul", value: 681 }
-];
-
-const employeePerformanceData = [
-  { label: "Aarav", value: 92 },
-  { label: "Nisha", value: 87 },
-  { label: "Kabir", value: 79 },
-  { label: "Zoya", value: 84 },
-  { label: "Maya", value: 76 }
-];
-
-const paymentStatusData = [
-  { label: "Paid", value: 68, color: "#0F766E" },
-  { label: "Partial", value: 21, color: "#F97316" },
-  { label: "Pending", value: 11, color: "#F59E0B" }
 ];
 
 const recentActivities = [
@@ -920,11 +813,12 @@ function computeKpis(records: RecordsByModule) {
   const users = records.users ?? [];
 
   const totalRevenue = payments.reduce((sum, row) => sum + parseCurrency(row.Paid), 0);
-  const pendingPayments = payments.reduce((sum, row) => sum + parseCurrency(row.Balance), 0);
+  const outstandingPayments = payments.filter((row) => row.Status !== "Cancelled" && parseCurrency(row.Balance) > 0);
+  const pendingPayments = outstandingPayments.reduce((sum, row) => sum + parseCurrency(row.Balance), 0);
   const activeEmployees = users.filter((row) => row.Status === "Active").length;
   const convertedLeads = leads.filter((row) => row.Status === "Converted").length;
   const conversionRate = leads.length ? ((convertedLeads / leads.length) * 100).toFixed(1) : "0.0";
-  const pendingCount = payments.filter((row) => parseCurrency(row.Balance) > 0).length;
+  const pendingCount = outstandingPayments.length;
 
   return [
     { label: "Total Leads", value: leads.length.toLocaleString(), change: `${leads.length} tracked` },
@@ -936,6 +830,220 @@ function computeKpis(records: RecordsByModule) {
   ];
 }
 
+function groupCountsByColumn(rows: RowRecord[], column: string): Array<{ label: string; value: number }> {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    const key = row[column] || "Unknown";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
+}
+
+function groupCountsByColumnWithColor(rows: RowRecord[], column: string): Array<{ label: string; value: number; color: string }> {
+  return groupCountsByColumn(rows, column).map((entry, index) => ({
+    ...entry,
+    color: CHART_PALETTE[index % CHART_PALETTE.length]
+  }));
+}
+
+function last6Months(): Array<{ key: string; label: string }> {
+  const months: Array<{ key: string; label: string }> = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i -= 1) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({ key: `${d.getFullYear()}-${d.getMonth()}`, label: d.toLocaleString(undefined, { month: "short" }) });
+  }
+  return months;
+}
+
+function monthlyCountTrend(rows: RowRecord[], dateField: string): Array<{ label: string; value: number }> {
+  const months = last6Months();
+  const counts = new Map(months.map((m) => [m.key, 0]));
+  rows.forEach((row) => {
+    const raw = row[dateField];
+    if (!raw) return;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return;
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return months.map((m) => ({ label: m.label, value: counts.get(m.key) ?? 0 }));
+}
+
+function monthlySumTrend(rows: RowRecord[], dateField: string, amountField: string): Array<{ label: string; value: number }> {
+  const months = last6Months();
+  const sums = new Map(months.map((m) => [m.key, 0]));
+  rows.forEach((row) => {
+    const raw = row[dateField];
+    if (!raw) return;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return;
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (sums.has(key)) sums.set(key, (sums.get(key) ?? 0) + parseCurrency(row[amountField]));
+  });
+  return months.map((m) => ({ label: m.label, value: Math.round((sums.get(m.key) ?? 0) * 100) / 100 }));
+}
+
+function ownerLeadCounts(leads: RowRecord[], userRows: RowRecord[]): Array<{ label: string; value: number }> {
+  const nameById = new Map(userRows.map((row) => [row.id, row.Name || row.Email || `User #${row.id}`]));
+  const counts = new Map<string, number>();
+  leads.forEach((row) => {
+    const ownerId = row._ownerId;
+    if (!ownerId) return;
+    const name = nameById.get(ownerId) ?? `User #${ownerId}`;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+}
+
+type StatCard = { label: string; value: string; change: string };
+
+function countBy(rows: RowRecord[], column: string, value: string): number {
+  return rows.filter((row) => row[column] === value).length;
+}
+
+// Replaces every module's previously-static 4-card header (fixed
+// numbers like "$842K"/"4,892") with real counts/sums derived from the
+// same `recordsByModule` state the table beneath it renders from — so
+// the header can never say something the table itself disagrees with,
+// and both scale automatically as real records are added.
+function computeModuleStats(
+  key: ModuleKey,
+  records: RecordsByModule,
+  kpis: StatCard[],
+  reminders: Reminder[],
+  notes: CalendarNote[]
+): StatCard[] | null {
+  const todayKey = toDateKey(new Date());
+  const weekFromNow = toDateKey(addDays(new Date(), 7));
+
+  switch (key) {
+    case "reports":
+      return kpis.slice(0, 4);
+    case "dashboard": {
+      // "dashboard" is only ever in MODULE_ACCESS for the Employee role
+      // (see MODULE_ACCESS above), so this branch is Employee-only and
+      // safe to shape however the Employee dashboard spec needs without
+      // touching Manager/Super Admin's "reports" branch above. Every
+      // array read here (records.leads/.customers/.payments) is already
+      // server-scoped to the logged-in employee's own records.
+      const monthLeads = thisMonthRows(records.leads ?? []);
+      const monthCustomers = thisMonthRows(records.customers ?? []);
+      const monthPayments = thisMonthRows(records.payments ?? []);
+      const monthRevenue = monthPayments.reduce((sum, row) => sum + parseCurrency(row.Paid), 0);
+      const monthConverted = countBy(monthLeads, "Status", "Converted");
+      const monthConversionRate = monthLeads.length ? ((monthConverted / monthLeads.length) * 100).toFixed(1) : "0.0";
+      return [
+        { label: "My Leads (This Month)", value: monthLeads.length.toLocaleString(), change: `${monthLeads.length} this month` },
+        { label: "My Customers (This Month)", value: monthCustomers.length.toLocaleString(), change: `${monthCustomers.length} this month` },
+        { label: "My Revenue (This Month)", value: formatCurrencyShort(monthRevenue), change: "Collected this month" },
+        { label: "My Conversion Rate (This Month)", value: `${monthConversionRate}%`, change: `${monthConverted} converted` }
+      ];
+    }
+    case "team": {
+      const team = records.team ?? [];
+      return [
+        { label: "Team members", value: team.length.toLocaleString(), change: "Live count" },
+        { label: "Active", value: countBy(team, "Status", "Active").toLocaleString(), change: `${team.length} total` },
+        { label: "Managers", value: countBy(team, "Role", "Manager").toLocaleString(), change: "On this team" },
+        { label: "Employees", value: countBy(team, "Role", "Employee").toLocaleString(), change: "On this team" }
+      ];
+    }
+    case "users": {
+      const users = records.users ?? [];
+      return [
+        { label: "Total users", value: users.length.toLocaleString(), change: "Live count" },
+        { label: "Active accounts", value: countBy(users, "Status", "Active").toLocaleString(), change: `${users.length} total` },
+        { label: "Managers", value: countBy(users, "Role", "Manager").toLocaleString(), change: "Company-wide" },
+        { label: "Employees", value: countBy(users, "Role", "Employee").toLocaleString(), change: "Company-wide" }
+      ];
+    }
+    case "leads": {
+      const leads = records.leads ?? [];
+      return [
+        { label: "All leads", value: leads.length.toLocaleString(), change: "Live count" },
+        { label: "Hot leads", value: countBy(leads, "Status", "Hot").toLocaleString(), change: `${leads.length} total` },
+        { label: "Converted", value: countBy(leads, "Status", "Converted").toLocaleString(), change: "This view" },
+        { label: "Unassigned", value: countBy(leads, "Owner", "Unassigned").toLocaleString(), change: "Need an owner" }
+      ];
+    }
+    case "customers": {
+      const customers = records.customers ?? [];
+      return [
+        { label: "Customers", value: customers.length.toLocaleString(), change: "Live count" },
+        { label: "Active", value: countBy(customers, "Status", "Active").toLocaleString(), change: `${customers.length} total` },
+        { label: "Prospect", value: countBy(customers, "Status", "Prospect").toLocaleString(), change: "Not yet active" },
+        { label: "Inactive", value: countBy(customers, "Status", "Inactive").toLocaleString(), change: "Churned or paused" }
+      ];
+    }
+    case "payments": {
+      const payments = records.payments ?? [];
+      const revenue = payments.reduce((sum, row) => sum + parseCurrency(row.Paid), 0);
+      const outstanding = payments
+        .filter((row) => row.Status !== "Cancelled")
+        .reduce((sum, row) => sum + parseCurrency(row.Balance), 0);
+      return [
+        { label: "Revenue collected", value: formatCurrencyShort(revenue), change: `${payments.length} invoices` },
+        { label: "Outstanding", value: formatCurrencyShort(outstanding), change: "Sent + partial" },
+        { label: "Partial payments", value: countBy(payments, "Status", "Partial").toLocaleString(), change: "In progress" },
+        { label: "Paid invoices", value: countBy(payments, "Status", "Paid").toLocaleString(), change: `${payments.length} total` }
+      ];
+    }
+    case "communication": {
+      const messages = records.communication ?? [];
+      return [
+        { label: "Total messages", value: messages.length.toLocaleString(), change: "Live count" },
+        { label: "Sent", value: countBy(messages, "Status", "Sent").toLocaleString(), change: `${messages.length} total` },
+        { label: "Queued", value: countBy(messages, "Status", "Queued").toLocaleString(), change: "Awaiting delivery" },
+        { label: "Failed", value: countBy(messages, "Status", "Failed").toLocaleString(), change: "Needs attention" }
+      ];
+    }
+    case "tasks": {
+      const tasks = records.tasks ?? [];
+      return [
+        { label: "Open tasks", value: tasks.length.toLocaleString(), change: "Live count" },
+        { label: "Pending", value: countBy(tasks, "Status", "Pending").toLocaleString(), change: `${tasks.length} total` },
+        { label: "In Progress", value: countBy(tasks, "Status", "In Progress").toLocaleString(), change: "Being worked" },
+        { label: "Completed", value: countBy(tasks, "Status", "Completed").toLocaleString(), change: "Done" }
+      ];
+    }
+    case "audit": {
+      const audit = records.audit ?? [];
+      return [
+        { label: "Logged actions", value: audit.length.toLocaleString(), change: "Currently loaded page" },
+        { label: "Create", value: countBy(audit, "Action", "CREATE").toLocaleString(), change: "This page" },
+        { label: "Update", value: countBy(audit, "Action", "UPDATE").toLocaleString(), change: "This page" },
+        { label: "Delete", value: countBy(audit, "Action", "DELETE").toLocaleString(), change: "This page" }
+      ];
+    }
+    case "settings": {
+      const settings = records.settings ?? [];
+      return [
+        { label: "Total settings", value: settings.length.toLocaleString(), change: "Live count" },
+        { label: "Active", value: countBy(settings, "Status", "Active").toLocaleString(), change: `${settings.length} total` },
+        { label: "Inactive", value: countBy(settings, "Status", "Inactive").toLocaleString(), change: "Disabled" },
+        { label: "Security", value: "On", change: "Super Admin managed" }
+      ];
+    }
+    case "calendar": {
+      const dueToday = reminders.filter((r) => r.date === todayKey && !r.completed).length;
+      const dueThisWeek = reminders.filter((r) => r.date >= todayKey && r.date <= weekFromNow && !r.completed).length;
+      const overdue = reminders.filter((r) => r.date < todayKey && !r.completed).length;
+      const pinned = notes.filter((n) => n.pinned).length;
+      return [
+        { label: "Today's Events", value: dueToday.toLocaleString(), change: "Live" },
+        { label: "This Week", value: dueThisWeek.toLocaleString(), change: "Live" },
+        { label: "Overdue Reminders", value: overdue.toLocaleString(), change: "Live" },
+        { label: "Pinned Notes", value: pinned.toLocaleString(), change: "Live" }
+      ];
+    }
+    default:
+      return null;
+  }
+}
+
 function rowMatchesFilter(row: RowRecord, filterLabel: string): boolean {
   const normalized = filterLabel.trim().toLowerCase();
   if (!normalized || normalized.startsWith("all")) return true;
@@ -943,23 +1051,6 @@ function rowMatchesFilter(row: RowRecord, filterLabel: string): boolean {
   if (values.some((value) => value === normalized)) return true;
   const words = normalized.split(/\s+/).filter((word) => word.length > 2);
   return words.some((word) => values.some((value) => value.includes(word)));
-}
-
-function exportRecordsToCsv(module: ModuleConfig, records: RowRecord[]) {
-  const header = module.columns.join(",");
-  const lines = records.map((row) =>
-    module.columns.map((column) => `"${(row[column] ?? "").replace(/"/g, '""')}"`).join(",")
-  );
-  const csv = [header, ...lines].join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `${module.key}-export-${Date.now()}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 }
 
 function computeModuleChartData(
@@ -981,6 +1072,344 @@ function computeModuleChartData(
   return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
 }
 
+// ---- Leads <-> backend CRM API mapping ------------------------------
+// The Leads module's table columns ("Lead"/"Source"/"Owner"/"Status") are
+// free-text display labels, not backend field names. These helpers convert
+// between apps.crm.Lead's real fields/enums (backend/apps/crm/models.py)
+// and the generic RowRecord shape the rest of this file already renders,
+// sorts, filters, and exports.
+const LEAD_SOURCE_LABELS: Record<string, string> = {
+  WEBSITE: "Website",
+  REFERRAL: "Referral",
+  COLD_CALL: "Cold Call",
+  EVENT: "Event",
+  ADVERTISEMENT: "Advertisement",
+  OTHER: "Other"
+};
+
+const LEAD_STATUS_LABELS: Record<string, string> = {
+  NEW: "New",
+  CONTACTED: "Contacted",
+  QUALIFIED: "Qualified",
+  CONVERTED: "Converted",
+  LOST: "Lost"
+};
+
+function labelToEnum(value: string, labels: Record<string, string>, fallback: string): string {
+  const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  if (normalized in labels) return normalized;
+  const byLabel = Object.entries(labels).find(([, label]) => label.toLowerCase() === value.trim().toLowerCase());
+  return byLabel ? byLabel[0] : fallback;
+}
+
+function leadToRow(lead: Record<string, unknown>): RowRecord {
+  const source = String(lead.source ?? "OTHER");
+  const status = String(lead.status ?? "NEW");
+  const owner = lead.owner;
+  return {
+    id: String(lead.id),
+    Lead: String(lead.contact_name ?? ""),
+    Source: LEAD_SOURCE_LABELS[source] ?? source,
+    Owner: typeof owner === "number" ? `User #${owner}` : "Unassigned",
+    Status: LEAD_STATUS_LABELS[status] ?? status,
+    Duplicate: "—",
+    // Hidden (not in this module's `columns`, so never rendered as a
+    // table cell) — used only by AnalyticsDashboard's real charts to
+    // group/bucket by actual owner and creation month, and by the
+    // Employee-only leads/dashboard views for masked contact display.
+    _ownerId: typeof owner === "number" ? String(owner) : "",
+    _createdAt: typeof lead.created_at === "string" ? lead.created_at : "",
+    _email: String(lead.email ?? ""),
+    _phone: String(lead.phone ?? ""),
+    // Contact CAPABILITY, not contact detail. The backend stopped sending
+    // `email`/`phone` to an Employee entirely (apps.core.serializers'
+    // PiiMaskedSerializerMixin removes the keys) and sends these three
+    // booleans in their place (ContactCapabilityMixin) — so every
+    // Employee-facing "can I email/call/WhatsApp this person?" decision
+    // reads these, never `_email`/`_phone`, which are simply absent for
+    // that role and must not be treated as "no contact on file".
+    _canEmail: lead.can_email ? "1" : "",
+    _canCall: lead.can_call ? "1" : "",
+    _canWhatsapp: lead.can_whatsapp ? "1" : ""
+  };
+}
+
+function rowToLeadPayload(formData: Record<string, string>): Record<string, unknown> {
+  const name = formData.Lead?.trim() ?? "";
+  return {
+    contact_name: name,
+    company_name: name,
+    source: labelToEnum(formData.Source ?? "", LEAD_SOURCE_LABELS, "OTHER"),
+    status: labelToEnum(formData.Status ?? "", LEAD_STATUS_LABELS, "NEW")
+  };
+}
+
+// ---- Customers <-> backend CRM API mapping ---------------------------
+const CUSTOMER_STATUS_LABELS: Record<string, string> = {
+  PROSPECT: "Prospect",
+  ACTIVE: "Active",
+  INACTIVE: "Inactive",
+  CHURNED: "Churned"
+};
+
+function customerToRow(customer: Record<string, unknown>): RowRecord {
+  const status = String(customer.status ?? "PROSPECT");
+  const owner = customer.owner;
+  return {
+    id: String(customer.id),
+    Customer: String(customer.name ?? ""),
+    Industry: String(customer.industry ?? "") || "—",
+    Owner: typeof owner === "number" ? `User #${owner}` : "Unassigned",
+    Status: CUSTOMER_STATUS_LABELS[status] ?? status,
+    // Hidden — used by the Employee-only Customers profile view.
+    _email: String(customer.email ?? ""),
+    _phone: String(customer.phone ?? ""),
+    _createdAt: typeof customer.created_at === "string" ? customer.created_at : "",
+    // See leadToRow() — capability booleans, never contact detail.
+    _canEmail: customer.can_email ? "1" : "",
+    _canCall: customer.can_call ? "1" : "",
+    _canWhatsapp: customer.can_whatsapp ? "1" : ""
+  };
+}
+
+function rowToCustomerPayload(formData: Record<string, string>, organizationId: number | null): Record<string, unknown> {
+  return {
+    name: formData.Customer?.trim() ?? "",
+    industry: formData.Industry?.trim() === "—" ? "" : formData.Industry?.trim() ?? "",
+    status: labelToEnum(formData.Status ?? "", CUSTOMER_STATUS_LABELS, "PROSPECT"),
+    ...(organizationId !== null ? { organization: organizationId } : {})
+  };
+}
+
+// ---- Users <-> backend accounts API mapping ---------------------------
+const USER_ROLE_LABELS: Record<string, string> = {
+  SUPER_ADMIN: "Super Admin",
+  MANAGER: "Manager",
+  EMPLOYEE: "Employee"
+};
+
+function userToRow(user: Record<string, unknown>): RowRecord {
+  const role = String(user.role ?? "EMPLOYEE");
+  const firstName = String(user.first_name ?? "");
+  const lastName = String(user.last_name ?? "");
+  const fullName = `${firstName} ${lastName}`.trim();
+  return {
+    id: String(user.id),
+    Name: fullName || String(user.email ?? ""),
+    Role: USER_ROLE_LABELS[role] ?? role,
+    Email: String(user.email ?? ""),
+    Status: user.is_active === false ? "Inactive" : "Active",
+    Password: "••••••••"
+  };
+}
+
+function rowToUserCreatePayload(formData: Record<string, string>): Record<string, unknown> {
+  const fullName = formData.Name?.trim() ?? "";
+  const [firstName, ...rest] = fullName.split(/\s+/);
+  return {
+    email: formData.Email?.trim() ?? "",
+    password: formData.Password ?? "",
+    first_name: firstName ?? "",
+    last_name: rest.join(" "),
+    role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE")
+  };
+}
+
+function rowToUserUpdatePayload(formData: Record<string, string>): Record<string, unknown> {
+  return {
+    role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE"),
+    is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
+  };
+}
+
+// ---- Audit logs <-> backend system API (read-only) --------------------
+function auditLogToRow(entry: Record<string, unknown>): RowRecord {
+  const actor = entry.actor;
+  const createdAt = typeof entry.created_at === "string" ? entry.created_at : "";
+  return {
+    id: String(entry.id),
+    Actor: typeof actor === "number" ? `User #${actor}` : "System",
+    Action: String(entry.action ?? "OTHER"),
+    Description: String(entry.description ?? ""),
+    Time: createdAt ? new Date(createdAt).toLocaleString() : "",
+    IP: String(entry.ip_address ?? "") || "—"
+  };
+}
+
+// ---- Settings <-> backend system API -----------------------------------
+function settingToRow(setting: Record<string, unknown>): RowRecord {
+  return {
+    id: String(setting.id),
+    Setting: String(setting.key ?? ""),
+    Value: String(setting.value ?? ""),
+    Description: String(setting.description ?? ""),
+    Status: setting.is_active === false ? "Inactive" : "Active"
+  };
+}
+
+function rowToSettingPayload(formData: Record<string, string>): Record<string, unknown> {
+  return {
+    key: formData.Setting?.trim() ?? "",
+    value: formData.Value?.trim() ?? "",
+    description: formData.Description?.trim() ?? "",
+    is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
+  };
+}
+
+// ---- Tasks <-> backend activities API -----------------------------------
+const TASK_PRIORITY_LABELS: Record<string, string> = {
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  URGENT: "Urgent"
+};
+
+const TASK_STATUS_LABELS: Record<string, string> = {
+  PENDING: "Pending",
+  IN_PROGRESS: "In Progress",
+  COMPLETED: "Completed",
+  CANCELLED: "Cancelled"
+};
+
+function taskToRow(task: Record<string, unknown>): RowRecord {
+  const priority = String(task.priority ?? "MEDIUM");
+  const status = String(task.status ?? "PENDING");
+  const dueDate = typeof task.due_date === "string" ? task.due_date : "";
+  return {
+    id: String(task.id),
+    Task: String(task.title ?? ""),
+    Priority: TASK_PRIORITY_LABELS[priority] ?? priority,
+    Status: TASK_STATUS_LABELS[status] ?? status,
+    Due: dueDate ? new Date(dueDate).toLocaleDateString() : ""
+  };
+}
+
+function rowToTaskPayload(formData: Record<string, string>): Record<string, unknown> {
+  const dueRaw = formData.Due?.trim() ?? "";
+  const parsedDue = dueRaw ? new Date(dueRaw) : null;
+  return {
+    title: formData.Task?.trim() ?? "",
+    priority: labelToEnum(formData.Priority ?? "", TASK_PRIORITY_LABELS, "MEDIUM"),
+    status: labelToEnum(formData.Status ?? "", TASK_STATUS_LABELS, "PENDING"),
+    ...(parsedDue && !Number.isNaN(parsedDue.getTime()) ? { due_date: parsedDue.toISOString() } : {})
+  };
+}
+
+// ---- Communication <-> backend communications API ----------------------
+const EMAIL_STATUS_LABELS: Record<string, string> = {
+  QUEUED: "Queued",
+  SENT: "Sent",
+  FAILED: "Failed"
+};
+
+function emailMessageToRow(message: Record<string, unknown>): RowRecord {
+  const status = String(message.status ?? "QUEUED");
+  return {
+    id: String(message.id),
+    // `recipient_label` is the backend's safe "who this went to" field
+    // (the related customer/lead's name). `to_email` is only present for
+    // Manager/Super Admin — an Employee never receives it.
+    Recipient: String(message.recipient_label ?? message.to_email ?? ""),
+    Subject: String(message.subject ?? ""),
+    Message: String(message.body ?? ""),
+    Status: EMAIL_STATUS_LABELS[status] ?? status
+  };
+}
+
+// The backend's queue-email endpoint is entity-addressed: it resolves the
+// customer's real address itself and never returns it (see
+// backend/apps/communications/serializers.py's EmailMessageQueueSerializer).
+// A raw `to_email` is accepted only for self-addressed mail. So the
+// "Recipient" the user typed is matched against the customer/lead records
+// already loaded in this session (by name), and only falls through to
+// `to_email` when it looks like an address the user is sending to
+// themselves.
+function rowToEmailQueuePayload(
+  formData: Record<string, string>,
+  records: Partial<RecordsByModule> = {}
+): Record<string, unknown> {
+  const recipient = formData.Recipient?.trim() ?? "";
+  const subjectBody = {
+    subject: formData.Subject?.trim() ?? "",
+    body: formData.Message?.trim() ?? ""
+  };
+  const needle = recipient.toLowerCase();
+
+  const customer = (records.customers ?? []).find((row) => String(row.Customer ?? "").toLowerCase() === needle);
+  if (customer) {
+    return { customer: Number(customer.id), ...subjectBody };
+  }
+  const lead = (records.leads ?? []).find((row) => String(row.Lead ?? "").toLowerCase() === needle);
+  if (lead) {
+    return { lead: Number(lead.id), ...subjectBody };
+  }
+  return { to_email: recipient, ...subjectBody };
+}
+
+// ---- Payments <-> backend sales (Invoice) API ---------------------------
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  DRAFT: "Draft",
+  SENT: "Sent",
+  PARTIAL: "Partial",
+  PAID: "Paid",
+  CANCELLED: "Cancelled"
+};
+
+function invoiceToRow(invoice: Record<string, unknown>): RowRecord {
+  const status = String(invoice.status ?? "DRAFT");
+  return {
+    id: String(invoice.id),
+    Invoice: String(invoice.invoice_number ?? ""),
+    "Customer ID": String(invoice.customer ?? ""),
+    Total: String(invoice.total ?? "0"),
+    Paid: String(invoice.amount_paid ?? "0"),
+    Balance: String(invoice.balance ?? invoice.total ?? "0"),
+    Status: INVOICE_STATUS_LABELS[status] ?? status,
+    // Hidden — used by AnalyticsDashboard's real revenue-by-month chart,
+    // and by the Employee-only Payments view (overdue detection, reminders).
+    _createdAt: typeof invoice.created_at === "string" ? invoice.created_at : "",
+    _dueDate: typeof invoice.due_date === "string" ? invoice.due_date : ""
+  };
+}
+
+function rowToInvoiceCreatePayload(formData: Record<string, string>): Record<string, unknown> {
+  const customerId = Number(formData["Customer ID"]?.trim());
+  return {
+    invoice_number: formData.Invoice?.trim() ?? "",
+    ...(Number.isFinite(customerId) && customerId > 0 ? { customer: customerId } : {}),
+    tax: "0.00"
+  };
+}
+
+// ---- Reports <-> backend reports (SavedReport) API ----------------------
+const REPORT_TYPE_LABELS: Record<string, string> = {
+  PRODUCTIVITY: "Productivity",
+  LEAD_CONVERSION: "Lead Conversion",
+  SALES_PIPELINE: "Sales Pipeline",
+  CUSTOMER_ACTIVITY: "Customer Activity",
+  CUSTOM: "Custom"
+};
+
+function savedReportToRow(report: Record<string, unknown>): RowRecord {
+  const reportType = String(report.report_type ?? "CUSTOM");
+  return {
+    id: String(report.id),
+    Report: String(report.name ?? ""),
+    Type: REPORT_TYPE_LABELS[reportType] ?? reportType,
+    Description: String(report.description ?? ""),
+    Status: report.is_active === false ? "Inactive" : "Active"
+  };
+}
+
+function rowToSavedReportPayload(formData: Record<string, string>): Record<string, unknown> {
+  return {
+    name: formData.Report?.trim() ?? "",
+    report_type: labelToEnum(formData.Type ?? "", REPORT_TYPE_LABELS, "CUSTOM"),
+    description: formData.Description?.trim() ?? "",
+    is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
+  };
+}
+
 const VIEW_ACTION_LABELS = new Set([
   "View Profile",
   "Interaction History",
@@ -991,37 +1420,289 @@ const VIEW_ACTION_LABELS = new Set([
 ]);
 
 const PAGE_SIZE = 6;
-const AUTH_STORAGE_KEY = "qualify-learn-crm-auth";
-const ROLE_STORAGE_KEY = "qualify-learn-crm-role";
-const VALID_USERNAME = "qualifylearncrm";
-const VALID_PASSWORD = "crmworkingphase";
-const VALID_MANAGER_USERNAME = "qualifylearnmanagercrm";
-const VALID_MANAGER_PASSWORD = "crmworkingphasemanager";
-const VALID_EMPLOYEE_USERNAME = "qualifylearnemployeecrm";
-const VALID_EMPLOYEE_PASSWORD = "crmworkingphaseemployee";
+
+// Employee-safe column set for a given module — reused by every place a
+// modal/form needs to know which fields to show/collect for the current
+// role (the main record table, the global-search "view" jump, etc.) so
+// Owner/Source/Duplicate/etc. can never leak through a code path that
+// forgot to re-derive it locally.
+function employeeSafeColumns(module: ModuleConfig): string[] {
+  if (module.key === "leads") return ["Lead", "Email", "Phone", "Category"];
+  if (module.key === "customers") return ["Customer", "Industry", "Status"];
+  return module.columns;
+}
+
+// Companion to employeeSafeColumns() — derives the extra display fields
+// (Email/Phone/Category) those column sets need, without mutating the
+// original row (which still carries Owner/Source for chart/grouping code
+// elsewhere that isn't employee-reachable).
+//
+// The Email/Phone cells deliberately render a CAPABILITY, not a value:
+// the backend sends an Employee no `email`/`phone` key at all, so there
+// is nothing to mask — a masked-looking string here would be a fiction.
+// "On file (protected)" says exactly what is true: the contact detail
+// exists server-side and this client never receives it.
+const CONTACT_ON_FILE = "On file (protected)";
+const CONTACT_NOT_ON_FILE = "Not on file";
+
+function contactCapabilityLabel(flag: string | undefined): string {
+  return flag ? CONTACT_ON_FILE : CONTACT_NOT_ON_FILE;
+}
+
+function employeeSafeRow(module: ModuleConfig, row: RowRecord): RowRecord {
+  if (module.key === "leads") {
+    return {
+      ...row,
+      Email: contactCapabilityLabel(row._canEmail),
+      Phone: contactCapabilityLabel(row._canCall),
+      Category: row.Status ?? ""
+    };
+  }
+  if (module.key === "customers") {
+    return { ...row, Email: contactCapabilityLabel(row._canEmail), Phone: contactCapabilityLabel(row._canCall) };
+  }
+  return row;
+}
+
+// Employees must never see an export/download affordance, or any action
+// that would let them touch another employee's data (assigning leads/
+// tasks to someone else, bulk import, duplicate merging, adding payments,
+// converting/creating customers, or a team-wide calendar) anywhere in
+// their panel — filter these out of a module's action list before it's
+// rendered, for both the header buttons and the Detail Drawer (both draw
+// from the same ModuleConfig.actions array).
+//
+// "Send Email" is blocked for Employees too, but for a different reason:
+// that generic header action opens the shared RecordModal with a free-text
+// "Recipient" field, which both invites an employee to type a customer
+// address the backend deliberately no longer gives them (and would reject)
+// and duplicates the Communication Center's own entity-addressed compose
+// box. Employees use the Communication Center's Email workspace instead.
+const EMPLOYEE_BLOCKED_ACTION_PATTERN =
+  /export|download|assign (lead|task|employee|team|manager)|bulk import|merge duplicates|convert lead|add payment|team calendar|add customer|create user|send email/i;
+
+// Export (CSV/Excel/reports/data) is Super-Admin-only by default. Manager
+// export is spec'd as "only if explicitly allowed by Manager permissions" —
+// this codebase has no such permission flag today, so Manager is denied
+// export until a real permission concept exists (do not invent one here).
+const EXPORT_ACTION_PATTERN = /export|download/i;
+
+function visibleActionsForRole(actions: ModuleConfig["actions"], role: Role): ModuleConfig["actions"] {
+  if (role === "superadmin") return actions;
+  if (role === "employee") return actions.filter((action) => !EMPLOYEE_BLOCKED_ACTION_PATTERN.test(action.label));
+  return actions.filter((action) => !EXPORT_ACTION_PATTERN.test(action.label));
+}
+
+function backendRoleToRole(role: BackendRole): Role {
+  if (role === "SUPER_ADMIN") return "superadmin";
+  if (role === "MANAGER") return "manager";
+  return "employee";
+}
+
+// ---------------------------------------------------------------------
+// Employee Working Hours / Attendance Time Tracker
+//
+// Server-side heartbeats (see lib/api.ts's `attendance` namespace) are
+// the single source of truth for every payroll-relevant number here —
+// LOGIN TIME != ACTIVE WORKING TIME, so this UI always renders
+// `totals.active_working_seconds` from the backend, never a client-
+// computed logout-minus-login. `liveWorkedSeconds` below only ticks
+// locally between heartbeats for a smooth stopwatch feel; every
+// heartbeat/break/logout response resyncs it from the server.
+// ---------------------------------------------------------------------
+
+const ATTENDANCE_HEARTBEAT_INTERVAL_MS = 25_000;
+const ATTENDANCE_ACTIVITY_THROTTLE_MS = 3_000;
+const ATTENDANCE_DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
+
+const ATTENDANCE_STATUS_META: Record<CurrentAttendance["display_state"], { label: string; dot: string; text: string }> = {
+  WORKING: { label: "Working", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  ON_BREAK: { label: "On Break", dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
+  IDLE: { label: "Idle", dot: "bg-orange-500", text: "text-orange-600 dark:text-orange-400" },
+  OFFLINE: { label: "Offline", dot: "bg-red-500", text: "text-red-600 dark:text-red-400" }
+};
+
+function AttendanceStatusDot({ state }: { state: CurrentAttendance["display_state"] }) {
+  return <span className={cn("inline-block size-2.5 shrink-0 rounded-full", ATTENDANCE_STATUS_META[state].dot)} aria-hidden />;
+}
+
+function formatHMS(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatHM(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+type AttendanceTracking = {
+  current: CurrentAttendance | null;
+  liveWorkedSeconds: number;
+  startBreak: () => Promise<void>;
+  endBreak: () => Promise<void>;
+  fullLogout: () => void | Promise<void>;
+};
+
+const AttendanceContext = createContext<AttendanceTracking | null>(null);
+
+// Tracks EMPLOYEE and MANAGER roles (both clock working hours); Super
+// Admin never clocks in, so `enabled` is false for that role — see
+// callers.
+function useAttendanceTracking(enabled: boolean, onLogout: () => void | Promise<void>): AttendanceTracking {
+  const [current, setCurrent] = useState<CurrentAttendance | null>(null);
+  const [liveWorkedSeconds, setLiveWorkedSeconds] = useState(0);
+  const lastActivityRef = useRef(Date.now());
+  const lastThrottleRef = useRef(0);
+
+  useEffect(() => {
+    if (!enabled) {
+      setCurrent(null);
+      return;
+    }
+    let cancelled = false;
+    attendance
+      .start()
+      .then((result) => {
+        if (cancelled) return;
+        setCurrent(result);
+        setLiveWorkedSeconds(result.totals.active_working_seconds);
+      })
+      .catch(() => {
+        // Non-fatal: the attendance widgets simply stay hidden if the
+        // backend attendance app is unreachable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  // Client-side activity listeners decide WHETHER to send a heartbeat;
+  // the server decides, independently, whether the resulting gap counts
+  // as idle (`record_heartbeat()`'s own gap-detection). This is what
+  // lets one mechanism cover idle detection, sleep/lock, and tab-away
+  // uniformly — no separate client-side sleep/lock detection is needed
+  // or reliable in a browser.
+  useEffect(() => {
+    if (!enabled) return;
+    function markActive() {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      if (now - lastThrottleRef.current < ATTENDANCE_ACTIVITY_THROTTLE_MS) return;
+      lastThrottleRef.current = now;
+    }
+    const events: Array<keyof WindowEventMap> = ["mousemove", "keydown", "scroll", "click", "touchstart"];
+    events.forEach((event) => window.addEventListener(event, markActive, { passive: true }));
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, markActive));
+    };
+  }, [enabled]);
+
+  const idleTimeoutMinutes = current?.shift.idle_timeout_minutes ?? ATTENDANCE_DEFAULT_IDLE_TIMEOUT_MINUTES;
+
+  useEffect(() => {
+    if (!enabled) return;
+    const idleThresholdMs = idleTimeoutMinutes * 60_000;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastActivityRef.current > idleThresholdMs) return;
+      attendance
+        .heartbeat()
+        .then((result) => {
+          setCurrent(result);
+          setLiveWorkedSeconds(result.totals.active_working_seconds);
+        })
+        .catch(() => {
+          // A missed heartbeat self-heals: the server's own gap
+          // detection accounts for any resulting silence as idle time.
+        });
+    }, ATTENDANCE_HEARTBEAT_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [enabled, idleTimeoutMinutes]);
+
+  useEffect(() => {
+    if (!enabled || !current || current.display_state !== "WORKING") return;
+    const interval = window.setInterval(() => setLiveWorkedSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [enabled, current]);
+
+  const startBreak = useCallback(async () => {
+    try {
+      const result = await attendance.breakStart();
+      setCurrent(result);
+      setLiveWorkedSeconds(result.totals.active_working_seconds);
+    } catch {
+      // Already on break / no open session — widget state stays as-is.
+    }
+  }, []);
+
+  const endBreak = useCallback(async () => {
+    try {
+      const result = await attendance.breakEnd();
+      setCurrent(result);
+      setLiveWorkedSeconds(result.totals.active_working_seconds);
+    } catch {
+      // Not currently on break / no open session.
+    }
+  }, []);
+
+  const fullLogout = useCallback(async () => {
+    try {
+      await attendance.end();
+    } catch {
+      // Best-effort — the real app logout must proceed regardless.
+    }
+    await onLogout();
+  }, [onLogout]);
+
+  return { current, liveWorkedSeconds, startBreak, endBreak, fullLogout };
+}
 
 export default function AuthGate() {
   const [role, setRole] = useState<Role | null | undefined>(undefined);
+  const [currentUser, setCurrentUser] = useState<BackendUser | null>(null);
 
   useEffect(() => {
-    const authed =
-      window.localStorage.getItem(AUTH_STORAGE_KEY) === "true" || window.sessionStorage.getItem(AUTH_STORAGE_KEY) === "true";
-    const storedRole = (window.localStorage.getItem(ROLE_STORAGE_KEY) ?? window.sessionStorage.getItem(ROLE_STORAGE_KEY)) as Role | null;
-    setRole(authed && storedRole ? storedRole : null);
+    const { access } = getTokens();
+    if (!access) {
+      setRole(null);
+      return;
+    }
+    fetchMe()
+      .then((user) => {
+        setCurrentUser(user);
+        setRole(backendRoleToRole(user.role));
+      })
+      .catch(() => {
+        clearTokens();
+        setRole(null);
+      });
   }, []);
 
-  function handleLoginSuccess(nextRole: Role, remember: boolean) {
-    const storage = remember ? window.localStorage : window.sessionStorage;
-    storage.setItem(AUTH_STORAGE_KEY, "true");
-    storage.setItem(ROLE_STORAGE_KEY, nextRole);
-    setRole(nextRole);
+  useEffect(() => {
+    // Final production operations pass — Part 8: a refresh-token
+    // rejection anywhere in the app (not just at initial page load)
+    // immediately drops the user back to the login screen, instead of
+    // leaving a stale "logged in" page up until a manual refresh.
+    return onSessionExpired(() => {
+      setCurrentUser(null);
+      setRole(null);
+    });
+  }, []);
+
+  function handleLoginSuccess(user: BackendUser) {
+    setCurrentUser(user);
+    setRole(backendRoleToRole(user.role));
   }
 
-  function handleLogout() {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-    window.localStorage.removeItem(ROLE_STORAGE_KEY);
-    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
-    window.sessionStorage.removeItem(ROLE_STORAGE_KEY);
+  async function handleLogout() {
+    await logout();
+    setCurrentUser(null);
     setRole(null);
   }
 
@@ -1040,35 +1721,118 @@ export default function AuthGate() {
     return <LoginScreen onSuccess={handleLoginSuccess} />;
   }
 
-  return <SuperAdminPage role={role} onLogout={handleLogout} />;
+  return <SuperAdminPage role={role} currentUser={currentUser} onLogout={handleLogout} />;
 }
 
-function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean) => void }) {
+// Username-based login is a frontend-only presentation over the existing
+// email/password JWT backend (apps.accounts) — the backend's identity
+// model, permissions, and session handling are untouched. Each fixed
+// username maps to one of this project's role-seeded accounts; an
+// unrecognized username never reaches the backend at all (no point
+// round-tripping a request the fixed table already knows will fail),
+// and any failure past this point is reported with the same generic
+// "Invalid Username or Password." message so a wrong username and a
+// wrong password are indistinguishable to the caller.
+const USERNAME_TO_EMAIL: Record<string, string> = {
+  qualifylearncrm: "admin@qualifylearn.test",
+  qualifylearnmanagercrm: "manager@qualifylearn.test",
+  qualifylearnemployeecrm: "employee@qualifylearn.test"
+};
+
+function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [accessCode, setAccessCode] = useState("");
 
-  function handleSubmit(event: React.FormEvent) {
+  async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    setError("");
+    const email = USERNAME_TO_EMAIL[username.trim()];
+    if (!email) {
+      setError("Invalid Username or Password.");
+      return;
+    }
     setSubmitting(true);
-    window.setTimeout(() => {
-      if (username === VALID_USERNAME && password === VALID_PASSWORD) {
-        setError("");
-        onSuccess("superadmin", rememberMe);
-      } else if (username === VALID_MANAGER_USERNAME && password === VALID_MANAGER_PASSWORD) {
-        setError("");
-        onSuccess("manager", rememberMe);
-      } else if (username === VALID_EMPLOYEE_USERNAME && password === VALID_EMPLOYEE_PASSWORD) {
-        setError("");
-        onSuccess("employee", rememberMe);
+    try {
+      const result = await login(email, password);
+      if (result.kind === "challenge") {
+        setChallenge(result.challenge);
       } else {
-        setError("Invalid Username or Password.");
+        setTokens(result.access, result.refresh, rememberMe);
+        onSuccess(result.user);
       }
+    } catch {
+      setError("Invalid Username or Password.");
+    } finally {
       setSubmitting(false);
-    }, 320);
+    }
+  }
+
+  async function handleVerifySubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!challenge) return;
+    setError("");
+    setSubmitting(true);
+    try {
+      const result = await verifySuperAdmin(challenge, accessCode);
+      if (result.kind === "tokens") {
+        setTokens(result.access, result.refresh, rememberMe);
+        onSuccess(result.user);
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Incorrect access code.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (challenge) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+        <div className="w-full max-w-md">
+          <div className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-4 flex size-16 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
+              <ShieldCheck className="size-8 text-teal-600" />
+            </div>
+            <h1 className="text-2xl font-bold">Super Admin verification</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Enter your secondary access code to continue</p>
+          </div>
+          <form onSubmit={handleVerifySubmit} className="rounded-2xl border bg-card p-6 shadow-soft sm:p-8">
+            <div className="space-y-4">
+              <label className="block space-y-1.5">
+                <span className="text-sm font-semibold">Access code</span>
+                <div className="relative">
+                  <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={accessCode}
+                    onChange={(event) => setAccessCode(event.target.value)}
+                    placeholder="Enter your access code"
+                    autoComplete="one-time-code"
+                    className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  />
+                </div>
+              </label>
+              {error ? (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 dark:bg-red-950 dark:text-red-200">{error}</p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={submitting}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+                Verify
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1090,9 +1854,10 @@ function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean)
               <div className="relative">
                 <User className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                 <input
+                  type="text"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  placeholder="Enter your username"
+                  placeholder="Enter Username"
                   autoComplete="username"
                   className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
                 />
@@ -1107,7 +1872,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean)
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  placeholder="Enter your password"
+                  placeholder="Enter Password"
                   autoComplete="current-password"
                   className="h-11 w-full rounded-lg border bg-background pl-9 pr-10 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
                 />
@@ -1144,7 +1909,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean)
               className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {submitting ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
-              Sign In
+              Login
             </button>
           </div>
         </form>
@@ -1155,7 +1920,15 @@ function LoginScreen({ onSuccess }: { onSuccess: (role: Role, remember: boolean)
   );
 }
 
-function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }) {
+function SuperAdminPage({
+  role,
+  currentUser,
+  onLogout
+}: {
+  role: Role;
+  currentUser: BackendUser | null;
+  onLogout: () => void | Promise<void>;
+}) {
   const visibleModules = useMemo(() => modules.filter((module) => MODULE_ACCESS[role].includes(module.key)), [role]);
   const [activeKey, setActiveKey] = useState<ModuleKey>(() => HOME_MODULE[role]);
   const [query, setQuery] = useState("");
@@ -1172,19 +1945,190 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     recentActivities.map((message, index) => ({ id: `seed-${index}`, message, moduleKey: "reports", row: null }))
   );
   const [toast, setToast] = useState<ToastState>(null);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(role !== "employee");
   const [dark, setDark] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [reminders, setReminders] = useState<Reminder[]>(() => createInitialReminders());
   const [notes, setNotes] = useState<CalendarNote[]>(() => createInitialNotes());
+  const [defaultOrganizationId, setDefaultOrganizationId] = useState<number | null>(null);
+  // Deep-link request from a lead/customer detail view into one of the
+  // Communication Center's channel workspaces. Holds an entity KIND + ID
+  // and the display name only — never a contact value, and never anything
+  // written to the URL, localStorage, or sessionStorage.
+  const [commFocus, setCommFocus] = useState<CommFocus | null>(null);
+
+  const attendanceTracking = useAttendanceTracking(role !== "superadmin", onLogout);
+
+  const currentUserName = displayNameFor(currentUser);
+  const teamNames = useMemo(
+    () => Array.from(new Set((recordsByModule.team ?? []).map((row) => row.Name).filter(Boolean))),
+    [recordsByModule.team]
+  );
+
+  // All 11 modules (Leads, Customers, Users/Team, Settings, Audit, Tasks,
+  // Communication, Payments, Reports/Dashboard) are wired to their real
+  // backend APIs below — createInitialRecords() only supplies the initial
+  // render shape before the fetches below replace it, and Calendar/
+  // reminders/notes remain a local-only UI feature by design (no backend
+  // model exists for them). See saveRecord()/deleteRecord() below for the
+  // matching create/update/delete branches.
+  useEffect(() => {
+    let cancelled = false;
+    crm
+      .listLeads()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load leads: ${err.message}` : "Could not reach the CRM API."
+        });
+      });
+
+    crm
+      .listCustomers()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, customers: page.results.map(customerToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load customers: ${err.message}` : "Could not reach the CRM API."
+        });
+      });
+
+    // Customer.organization is a required FK server-side, but this UI has
+    // no organization switcher — this app is single-tenant in practice.
+    // Fetch whichever organization the backend returns first and use it
+    // as the only one this UI ever creates customers under.
+    organization
+      .listOrganizations()
+      .then((page) => {
+        if (cancelled) return;
+        const first = page.results[0];
+        if (first) setDefaultOrganizationId(Number(first.id));
+      })
+      .catch(() => {
+        // Non-fatal: customer creation will surface a clear error if
+        // attempted with no organization available.
+      });
+
+    accounts
+      .listUsers()
+      .then((page) => {
+        if (cancelled) return;
+        const rows = page.results.map(userToRow);
+        setRecordsByModule((current) => ({ ...current, users: rows, team: rows }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load users: ${err.message}` : "Could not reach the accounts API."
+        });
+      });
+
+    system
+      .listSettings()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, settings: page.results.map(settingToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load settings: ${err.message}` : "Could not reach the system API."
+        });
+      });
+
+    system
+      .listAuditLogs()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, audit: page.results.map(auditLogToRow) }));
+      })
+      .catch(() => {
+        // Non-fatal and expected for non-Manager roles: AuditLog is
+        // Manager-or-above only (see apps/system/permissions.py) — an
+        // Employee correctly gets 403 here, not a bug.
+      });
+
+    reportsApi
+      .listSavedReports()
+      .then((page) => {
+        if (cancelled) return;
+        const rows = page.results.map(savedReportToRow);
+        setRecordsByModule((current) => ({ ...current, reports: rows, dashboard: rows }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load reports: ${err.message}` : "Could not reach the reports API."
+        });
+      });
+
+    activities
+      .listTasks()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, tasks: page.results.map(taskToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load tasks: ${err.message}` : "Could not reach the activities API."
+        });
+      });
+
+    communications
+      .listEmailMessages()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, communication: page.results.map(emailMessageToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message:
+            err instanceof ApiError ? `Could not load messages: ${err.message}` : "Could not reach the communications API."
+        });
+      });
+
+    sales
+      .listInvoices()
+      .then((page) => {
+        if (cancelled) return;
+        setRecordsByModule((current) => ({ ...current, payments: page.results.map(invoiceToRow) }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? `Could not load invoices: ${err.message}` : "Could not reach the sales API."
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const importInputRef = useRef<HTMLInputElement>(null);
   const importTargetRef = useRef<ModuleKey>("leads");
   const notifiedReminderIds = useRef<Set<string>>(new Set());
 
   const activeModule = modules.find((module) => module.key === activeKey) ?? modules[0];
-  const activeRecords = recordsByModule[activeKey] ?? [];
+  const activeRecords = useMemo(() => recordsByModule[activeKey] ?? [], [recordsByModule, activeKey]);
   const Icon = activeModule.icon;
   const employeeCopy = role === "employee" ? EMPLOYEE_MODULE_COPY[activeModule.key] : undefined;
   const displayModuleTitle = employeeCopy?.title ?? activeModule.title;
@@ -1214,18 +2158,36 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pagedRows = useMemo(() => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [rows, page]);
 
+  // Employee-only table shaping: Leads is reduced to Lead Name / masked
+  // Email / masked Phone / Category (Status) per spec section 5, and
+  // Customers drops the Owner column per section 10 — both derived from
+  // the same already-scoped `pagedRows`, never from a separate fetch.
+  const employeeTableModule = useMemo(() => {
+    if (role !== "employee") return activeModule;
+    return { ...activeModule, columns: employeeSafeColumns(activeModule) };
+  }, [role, activeModule]);
+
+  const employeeTableRows = useMemo(() => {
+    if (role !== "employee") return pagedRows;
+    return pagedRows.map((row) => employeeSafeRow(activeModule, row));
+  }, [role, activeModule, pagedRows]);
+
   const kpis = useMemo(() => computeKpis(recordsByModule), [recordsByModule]);
+  const displayedStats = useMemo(
+    () => computeModuleStats(activeKey, recordsByModule, kpis, reminders, notes) ?? activeModule.stats,
+    [activeKey, recordsByModule, kpis, reminders, notes, activeModule.stats]
+  );
 
   const globalSearchResults = useMemo(() => {
     const lowerQuery = globalQuery.trim().toLowerCase();
     if (!lowerQuery) return [];
     const results: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }> = [];
-    for (const module of visibleModules) {
-      const moduleRows = recordsByModule[module.key] ?? [];
+    for (const mod of visibleModules) {
+      const moduleRows = recordsByModule[mod.key] ?? [];
       for (const row of moduleRows) {
         const matches = Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
         if (matches) {
-          results.push({ moduleKey: module.key, moduleTitle: module.title, row, label: row[module.columns[0]] ?? row.id });
+          results.push({ moduleKey: mod.key, moduleTitle: mod.title, row, label: row[mod.columns[0]] ?? row.id });
           if (results.length >= 8) return results;
         }
       }
@@ -1260,7 +2222,9 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     setFilter(targetModule.filters[0] ?? "All");
     setEditingRecord(row);
     setModalMode("view");
-    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, row[column] ?? ""])));
+    const columns = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
+    const safeRow = role === "employee" ? employeeSafeRow(targetModule, row) : row;
+    setFormData(Object.fromEntries(columns.map((column) => [column, safeRow[column] ?? ""])));
     setModalOpen(true);
     setGlobalQuery("");
   }
@@ -1320,15 +2284,14 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   useEffect(() => {
     const todayKey = toDateKey(new Date());
     reminders
-      .filter((reminder) => canSeeReminder(reminder, role) && !reminder.completed && reminder.date <= todayKey)
+      .filter((reminder) => canSeeReminder(reminder, role, currentUserName, teamNames) && !reminder.completed && reminder.date <= todayKey)
       .forEach((reminder) => {
         if (notifiedReminderIds.current.has(reminder.id)) return;
         notifiedReminderIds.current.add(reminder.id);
         const overdue = reminder.date < todayKey;
         logActivity(`${overdue ? "Overdue" : "Due today"}: ${reminder.kind} "${reminder.title}" (${reminder.priority} priority).`, "calendar", null);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reminders, role]);
+  }, [reminders, role, currentUserName, teamNames]);
 
   function viewActivityRecord(moduleKey: ModuleKey, row: RowRecord) {
     const targetModule = modules.find((module) => module.key === moduleKey);
@@ -1342,7 +2305,9 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     setFilter(targetModule.filters[0] ?? "All");
     setEditingRecord(currentRow);
     setModalMode("view");
-    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, currentRow[column] ?? ""])));
+    const viewCols = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
+    const viewRow = role === "employee" ? employeeSafeRow(targetModule, currentRow) : currentRow;
+    setFormData(Object.fromEntries(viewCols.map((column) => [column, viewRow[column] ?? ""])));
     setModalOpen(true);
   }
 
@@ -1354,11 +2319,19 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
       showToast({ type: "error", message: "This record no longer exists." });
       return;
     }
+    if (role === "employee" && moduleKey !== "tasks") {
+      // Employees may only edit their own Tasks — everything else (Leads,
+      // Customers, Payments, Communication) is view-only per spec.
+      showToast({ type: "error", message: "You don't have permission to edit this record." });
+      return;
+    }
     setActiveKey(moduleKey);
     setFilter(targetModule.filters[0] ?? "All");
     setEditingRecord(currentRow);
     setModalMode("edit");
-    setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, currentRow[column] ?? ""])));
+    const editCols = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
+    const editRow = role === "employee" ? employeeSafeRow(targetModule, currentRow) : currentRow;
+    setFormData(Object.fromEntries(editCols.map((column) => [column, editRow[column] ?? ""])));
     setModalOpen(true);
   }
 
@@ -1406,14 +2379,24 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   function openEditModal(row: RowRecord) {
     setEditingRecord(row);
     setModalMode("edit");
-    setFormData(Object.fromEntries(activeModule.columns.map((column) => [column, row[column] ?? ""])));
+    // Employees only ever reach this for Tasks (DataTable hides the Edit
+    // button everywhere else — see DataTable's isEmployeeViewOnly), so
+    // employeeTableModule.columns is safe here too and keeps this in sync
+    // with what openViewModal below shows.
+    const safeEditRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
+    setFormData(Object.fromEntries(employeeTableModule.columns.map((column) => [column, safeEditRow[column] ?? ""])));
     setModalOpen(true);
   }
 
   function openViewModal(row: RowRecord) {
     setEditingRecord(row);
     setModalMode("view");
-    setFormData(Object.fromEntries(activeModule.columns.map((column) => [column, row[column] ?? ""])));
+    // Employee Leads/Customers must only ever surface the masked, reduced
+    // column set here too — never the full admin column list (Source,
+    // Owner, Duplicate, etc.) that a raw `activeModule.columns` read would
+    // leak through the "View" action.
+    const safeViewRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
+    setFormData(Object.fromEntries(employeeTableModule.columns.map((column) => [column, safeViewRow[column] ?? ""])));
     setModalOpen(true);
   }
 
@@ -1435,6 +2418,163 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     }
 
     if (modalMode === "create") {
+      if (activeKey === "leads") {
+        crm
+          .createLead(rowToLeadPayload(formData))
+          .then((created) => {
+            const newRecord = leadToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, leads: [newRecord, ...(current.leads ?? [])] }));
+            showToast({ type: "success", message: "Lead created." });
+            logActivity("Created a new Lead record.", "leads", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create lead." });
+          });
+        return;
+      }
+
+      if (activeKey === "customers") {
+        if (defaultOrganizationId === null) {
+          showToast({ type: "error", message: "No organization is available yet — cannot create a customer." });
+          return;
+        }
+        crm
+          .createCustomer(rowToCustomerPayload(formData, defaultOrganizationId))
+          .then((created) => {
+            const newRecord = customerToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, customers: [newRecord, ...(current.customers ?? [])] }));
+            showToast({ type: "success", message: "Customer created." });
+            logActivity("Created a new Customer record.", "customers", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create customer." });
+          });
+        return;
+      }
+
+      if (activeKey === "users") {
+        accounts
+          .createUser(rowToUserCreatePayload(formData))
+          .then((created) => {
+            const newRecord = userToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({
+              ...current,
+              users: [newRecord, ...(current.users ?? [])],
+              team: [newRecord, ...(current.team ?? [])]
+            }));
+            showToast({ type: "success", message: "User created." });
+            logActivity("Created a new User record.", "users", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create user." });
+          });
+        return;
+      }
+
+      if (activeKey === "settings") {
+        system
+          .createSetting(rowToSettingPayload(formData))
+          .then((created) => {
+            const newRecord = settingToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, settings: [newRecord, ...(current.settings ?? [])] }));
+            showToast({ type: "success", message: "Setting created." });
+            logActivity("Created a new Setting record.", "settings", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create setting." });
+          });
+        return;
+      }
+
+      if (activeKey === "reports" || activeKey === "dashboard") {
+        reportsApi
+          .createSavedReport(rowToSavedReportPayload(formData))
+          .then((created) => {
+            const newRecord = savedReportToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({
+              ...current,
+              reports: [newRecord, ...(current.reports ?? [])],
+              dashboard: [newRecord, ...(current.dashboard ?? [])]
+            }));
+            showToast({ type: "success", message: "Report created." });
+            logActivity("Created a new Report record.", activeKey, newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create report." });
+          });
+        return;
+      }
+
+      if (activeKey === "tasks") {
+        activities
+          .createTask(rowToTaskPayload(formData))
+          .then((created) => {
+            const newRecord = taskToRow(created as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, tasks: [newRecord, ...(current.tasks ?? [])] }));
+            showToast({ type: "success", message: "Task created." });
+            logActivity("Created a new Task record.", "tasks", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create task." });
+          });
+        return;
+      }
+
+      if (activeKey === "communication") {
+        communications
+          .queueEmail(rowToEmailQueuePayload(formData, recordsByModule))
+          .then((queued) => {
+            const queuedMessage = queued as Record<string, unknown>;
+            return communications.sendEmail(queuedMessage.id as number).catch(() => queuedMessage);
+          })
+          .then((finalMessage) => {
+            const newRecord = emailMessageToRow(finalMessage as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, communication: [newRecord, ...(current.communication ?? [])] }));
+            showToast({
+              type: newRecord.Status === "Failed" ? "error" : "success",
+              message: newRecord.Status === "Failed" ? "Email queued but delivery failed — see status." : "Email sent."
+            });
+            logActivity("Sent a Communication record.", "communication", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not send email." });
+          });
+        return;
+      }
+
+      if (activeKey === "payments") {
+        const totalAmount = Number(formData.Total?.trim());
+        sales
+          .createInvoice(rowToInvoiceCreatePayload(formData))
+          .then((created) => {
+            const invoiceId = (created as Record<string, unknown>).id as number | string;
+            if (Number.isFinite(totalAmount) && totalAmount > 0) {
+              return sales
+                .addInvoiceItem({ invoice: invoiceId, product_name: "Invoice total", quantity: 1, unit_price: totalAmount })
+                .then(() => sales.getInvoice(invoiceId));
+            }
+            return created;
+          })
+          .then((finalInvoice) => {
+            const newRecord = invoiceToRow(finalInvoice as Record<string, unknown>);
+            setRecordsByModule((current) => ({ ...current, payments: [newRecord, ...(current.payments ?? [])] }));
+            showToast({ type: "success", message: "Invoice created." });
+            logActivity("Created a new Payment record.", "payments", newRecord);
+            setModalOpen(false);
+          })
+          .catch((err) => {
+            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create invoice." });
+          });
+        return;
+      }
+
       const newRecord: RowRecord = {
         id: `${activeKey}-${Date.now()}`,
         ...Object.fromEntries(activeModule.columns.map((column) => [column, formData[column]]))
@@ -1450,6 +2590,186 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     }
 
     if (!editingRecord) return;
+
+    if (activeKey === "customers") {
+      crm
+        .updateCustomer(editingRecord.id, rowToCustomerPayload(formData, null))
+        .then((updated) => {
+          const updatedRecord = customerToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            customers: (current.customers ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Customer updated." });
+          logActivity("Updated a Customer record.", "customers", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update customer." });
+        });
+      return;
+    }
+
+    if (activeKey === "users") {
+      accounts
+        .updateUser(editingRecord.id, rowToUserUpdatePayload(formData))
+        .then((updated) => {
+          const updatedRecord = userToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            users: (current.users ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row)),
+            team: (current.team ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "User updated." });
+          logActivity("Updated a User record.", "users", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update user." });
+        });
+      return;
+    }
+
+    if (activeKey === "settings") {
+      system
+        .updateSetting(editingRecord.id, rowToSettingPayload(formData))
+        .then((updated) => {
+          const updatedRecord = settingToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            settings: (current.settings ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Setting updated." });
+          logActivity("Updated a Setting record.", "settings", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update setting." });
+        });
+      return;
+    }
+
+    if (activeKey === "reports" || activeKey === "dashboard") {
+      reportsApi
+        .updateSavedReport(editingRecord.id, rowToSavedReportPayload(formData))
+        .then((updated) => {
+          const updatedRecord = savedReportToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            reports: (current.reports ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row)),
+            dashboard: (current.dashboard ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Report updated." });
+          logActivity("Updated a Report record.", activeKey, updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update report." });
+        });
+      return;
+    }
+
+    if (activeKey === "tasks") {
+      activities
+        .updateTask(editingRecord.id, rowToTaskPayload(formData))
+        .then((updated) => {
+          const updatedRecord = taskToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            tasks: (current.tasks ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Task updated." });
+          logActivity("Updated a Task record.", "tasks", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update task." });
+        });
+      return;
+    }
+
+    if (activeKey === "communication") {
+      // apps.communications.EmailMessageSerializer marks subject/body/
+      // status read-only after creation (see backend/apps/communications/
+      // serializers.py) — an email is queued/sent, not edited. Being
+      // explicit here rather than silently accepting a no-op PATCH.
+      showToast({ type: "error", message: "Sent messages cannot be edited — delete and send a new one instead." });
+      setModalOpen(false);
+      setEditingRecord(null);
+      return;
+    }
+
+    if (activeKey === "payments") {
+      // Invoice.status is read-only (see apps/sales/serializers.py) —
+      // real state transitions go through mark-paid/cancel/record-payment,
+      // not a plain PATCH. The generic modal reuses two of its columns as
+      // action triggers: raising "Paid" above the invoice's current
+      // amount_paid records a new partial payment for the difference;
+      // setting "Status" to "Paid" or "Cancelled" triggers the matching
+      // full-lifecycle action.
+      const targetStatus = (formData.Status ?? "").trim().toLowerCase();
+      const previousPaid = Number(editingRecord.Paid ?? "0");
+      const nextPaid = Number(formData.Paid?.trim());
+      const paymentDelta = Number.isFinite(nextPaid) ? nextPaid - previousPaid : 0;
+
+      let action: Promise<unknown> | null = null;
+      if (paymentDelta > 0) {
+        action = sales.recordPayment(editingRecord.id, paymentDelta.toFixed(2)).then(() => sales.getInvoice(editingRecord.id));
+      } else if (targetStatus === "paid") {
+        action = sales.markInvoicePaid(editingRecord.id);
+      } else if (targetStatus === "cancelled") {
+        action = sales.cancelInvoice(editingRecord.id);
+      }
+
+      if (!action) {
+        showToast({
+          type: "error",
+          message: 'Increase "Paid" to record a payment, or set Status to "Paid"/"Cancelled" to change the invoice state.'
+        });
+        return;
+      }
+      action
+        .then((updated) => {
+          const updatedRecord = invoiceToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            payments: (current.payments ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Invoice updated." });
+          logActivity("Updated a Payment record.", "payments", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update invoice." });
+        });
+      return;
+    }
+
+    if (activeKey === "leads") {
+      crm
+        .updateLead(editingRecord.id, rowToLeadPayload(formData))
+        .then((updated) => {
+          const updatedRecord = leadToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            leads: (current.leads ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
+          }));
+          showToast({ type: "success", message: "Lead updated." });
+          logActivity("Updated a Lead record.", "leads", updatedRecord);
+          setModalOpen(false);
+          setEditingRecord(null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update lead." });
+        });
+      return;
+    }
 
     const updatedRecord: RowRecord = {
       ...editingRecord,
@@ -1467,8 +2787,145 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   }
 
   function deleteRecord(row: RowRecord) {
+    if (activeKey === "users") {
+      const confirmed = window.confirm("Deactivate this user? They will no longer be able to log in. This is reversible.");
+      if (!confirmed) return;
+      accounts
+        .updateUser(row.id, { is_active: false })
+        .then((updated) => {
+          const updatedRecord = userToRow(updated as Record<string, unknown>);
+          setRecordsByModule((current) => ({
+            ...current,
+            users: (current.users ?? []).map((item) => (item.id === row.id ? updatedRecord : item)),
+            team: (current.team ?? []).map((item) => (item.id === row.id ? updatedRecord : item))
+          }));
+          showToast({ type: "success", message: "User deactivated." });
+          logActivity("Deactivated a User record.", "users", updatedRecord);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not deactivate user." });
+        });
+      return;
+    }
+
+    if (activeKey === "settings") {
+      const confirmed = window.confirm("Delete this setting? This cannot be undone.");
+      if (!confirmed) return;
+      system
+        .deleteSetting(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({ ...current, settings: (current.settings ?? []).filter((item) => item.id !== row.id) }));
+          showToast({ type: "success", message: "Setting deleted." });
+          logActivity("Deleted a Setting record.", "settings", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete setting." });
+        });
+      return;
+    }
+
+    if (activeKey === "reports" || activeKey === "dashboard") {
+      const confirmed = window.confirm("Delete this report? This cannot be undone.");
+      if (!confirmed) return;
+      reportsApi
+        .deleteSavedReport(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({
+            ...current,
+            reports: (current.reports ?? []).filter((item) => item.id !== row.id),
+            dashboard: (current.dashboard ?? []).filter((item) => item.id !== row.id)
+          }));
+          showToast({ type: "success", message: "Report deleted." });
+          logActivity("Deleted a Report record.", activeKey, null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete report." });
+        });
+      return;
+    }
+
+    if (activeKey === "tasks") {
+      const confirmed = window.confirm("Delete this task? This cannot be undone.");
+      if (!confirmed) return;
+      activities
+        .deleteTask(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({ ...current, tasks: (current.tasks ?? []).filter((item) => item.id !== row.id) }));
+          showToast({ type: "success", message: "Task deleted." });
+          logActivity("Deleted a Task record.", "tasks", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete task." });
+        });
+      return;
+    }
+
+    if (activeKey === "communication") {
+      const confirmed = window.confirm("Delete this message record? This cannot be undone.");
+      if (!confirmed) return;
+      communications
+        .deleteEmailMessage(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({
+            ...current,
+            communication: (current.communication ?? []).filter((item) => item.id !== row.id)
+          }));
+          showToast({ type: "success", message: "Message deleted." });
+          logActivity("Deleted a Communication record.", "communication", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete message." });
+        });
+      return;
+    }
+
+    if (activeKey === "payments") {
+      const confirmed = window.confirm("Delete this invoice? This cannot be undone.");
+      if (!confirmed) return;
+      sales
+        .deleteInvoice(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({ ...current, payments: (current.payments ?? []).filter((item) => item.id !== row.id) }));
+          showToast({ type: "success", message: "Invoice deleted." });
+          logActivity("Deleted a Payment record.", "payments", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete invoice." });
+        });
+      return;
+    }
+
     const confirmed = window.confirm(`Delete this ${activeModule.title} record? This cannot be undone.`);
     if (!confirmed) return;
+
+    if (activeKey === "customers") {
+      crm
+        .deleteCustomer(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({ ...current, customers: (current.customers ?? []).filter((item) => item.id !== row.id) }));
+          showToast({ type: "success", message: "Customer deleted." });
+          logActivity("Deleted a Customer record.", "customers", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete customer." });
+        });
+      return;
+    }
+
+    if (activeKey === "leads") {
+      crm
+        .deleteLead(row.id)
+        .then(() => {
+          setRecordsByModule((current) => ({ ...current, leads: (current.leads ?? []).filter((item) => item.id !== row.id) }));
+          showToast({ type: "success", message: "Lead deleted." });
+          logActivity("Deleted a Lead record.", "leads", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not delete lead." });
+        });
+      return;
+    }
+
     setRecordsByModule((current) => ({
       ...current,
       [activeKey]: (current[activeKey] ?? []).filter((item) => item.id !== row.id)
@@ -1495,19 +2952,44 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     showToast({ type: "success", message: `Filter set to "${next}".` });
   }
 
-  function mergeDuplicateLeads() {
-    const leadRows = recordsByModule.leads ?? [];
-    const possibleCount = leadRows.filter((row) => row.Duplicate === "Possible").length;
-    if (possibleCount === 0) {
-      showToast({ type: "error", message: "No duplicate leads to merge right now." });
+  async function mergeDuplicateLeads() {
+    const leadRows = (recordsByModule.leads ?? []).slice(0, 50);
+    if (leadRows.length === 0) {
+      showToast({ type: "error", message: "No leads to scan for duplicates." });
       return;
     }
-    setRecordsByModule((current) => ({
-      ...current,
-      leads: (current.leads ?? []).map((row) => (row.Duplicate === "Possible" ? { ...row, Duplicate: "Merged" } : row))
-    }));
-    showToast({ type: "success", message: `${possibleCount} duplicate lead${possibleCount === 1 ? "" : "s"} merged.` });
-    logActivity(`Merged ${possibleCount} duplicate lead${possibleCount === 1 ? "" : "s"}.`, "leads", null);
+    setIsLoading(true);
+    const merged: string[] = [];
+    const alreadyMerged = new Set<string>();
+    try {
+      for (const row of leadRows) {
+        if (alreadyMerged.has(row.id)) continue;
+        try {
+          const duplicates = await crm.findDuplicateLeads(row.id);
+          const duplicate = duplicates[0];
+          if (duplicate && duplicate.id !== undefined) {
+            await crm.mergeLeads(row.id, duplicate.id as number | string);
+            merged.push(row.id);
+            alreadyMerged.add(String(duplicate.id));
+          }
+        } catch {
+          // This lead may have already been merged away by an earlier
+          // iteration of this same loop — not an error, skip it.
+        }
+      }
+      const page = await crm.listLeads();
+      setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+      if (merged.length === 0) {
+        showToast({ type: "success", message: "No duplicate leads found." });
+      } else {
+        showToast({ type: "success", message: `${merged.length} duplicate lead${merged.length === 1 ? "" : "s"} merged.` });
+        logActivity(`Merged ${merged.length} duplicate lead${merged.length === 1 ? "" : "s"}.`, "leads", null);
+      }
+    } catch (err) {
+      showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not merge duplicate leads." });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function triggerImport(moduleKey: ModuleKey = activeKey) {
@@ -1524,50 +3006,37 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     const targetModule = modules.find((module) => module.key === targetKey);
     if (!targetModule) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result ?? "");
-      const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      const dataLines = lines.slice(1);
-      const sourceLines = dataLines.length ? dataLines : [""];
-      const imported: RowRecord[] = sourceLines.slice(0, 15).map((line, index) => {
-        const cells = line.split(",").map((cell) => cell.replace(/^"|"$/g, "").trim());
-        const record: RowRecord = { id: `${targetKey}-import-${Date.now()}-${index}` } as RowRecord;
-        targetModule.columns.forEach((column, columnIndex) => {
-          record[column] = cells[columnIndex] ? cells[columnIndex] : `Imported ${column} ${index + 1}`;
-        });
-        return record;
-      });
+    if (targetKey !== "leads") {
+      showToast({ type: "error", message: `Bulk import is not available for ${targetModule.title}.` });
+      return;
+    }
 
-      setRecordsByModule((current) => ({
-        ...current,
-        [targetKey]: [...imported, ...(current[targetKey] ?? [])]
-      }));
-      setActiveKey(targetKey);
-      setFilter(targetModule.filters[0] ?? "All");
-      setQuery("");
-      showToast({
-        type: "success",
-        message: `${imported.length} record${imported.length === 1 ? "" : "s"} imported into ${targetModule.title}.`
-      });
-      logActivity(
-        `Imported ${imported.length} record${imported.length === 1 ? "" : "s"} into ${targetModule.title}.`,
-        targetKey,
-        imported[0] ?? null
-      );
-    };
-    reader.readAsText(file);
+    setIsLoading(true);
+    crm
+      .importLeads(file)
+      .then((summary) => {
+        return crm.listLeads().then((page) => {
+          setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+          setActiveKey("leads");
+          setFilter(targetModule.filters[0] ?? "All");
+          setQuery("");
+          const created = summary.created ?? 0;
+          const failed = summary.failed ?? 0;
+          showToast({
+            type: failed > 0 && created === 0 ? "error" : "success",
+            message: `${created} lead${created === 1 ? "" : "s"} imported${failed > 0 ? `, ${failed} row${failed === 1 ? "" : "s"} failed` : ""}.`
+          });
+          logActivity(`Imported ${created} lead${created === 1 ? "" : "s"} from ${file.name}.`, "leads", null);
+        });
+      })
+      .catch((err) => {
+        showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not import leads." });
+      })
+      .finally(() => setIsLoading(false));
   }
 
   function handleModuleAction(action: { label: string; icon: React.ElementType; primary?: boolean }) {
     const label = action.label;
-
-    if (label === "Export CSV" || label === "Export Excel" || label === "Export Trail") {
-      exportRecordsToCsv(activeModule, rows);
-      showToast({ type: "success", message: `${rows.length} ${activeModule.title} record${rows.length === 1 ? "" : "s"} exported.` });
-      logActivity(`Exported ${rows.length} ${activeModule.title} record${rows.length === 1 ? "" : "s"}.`, activeKey, null);
-      return;
-    }
 
     if (label === "Bulk Import") {
       triggerImport(activeKey);
@@ -1576,9 +3045,19 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
 
     if (label === "Refresh Report") {
       setIsLoading(true);
-      window.setTimeout(() => setIsLoading(false), 480);
-      showToast({ type: "success", message: "Report refreshed with the latest data." });
-      logActivity("Refreshed the reports dashboard.", activeKey, null);
+      const activeReports = (recordsByModule.reports ?? []).filter((row) => row.Status === "Active");
+      Promise.all(activeReports.map((row) => reportsApi.executeSavedReport(row.id).catch(() => null)))
+        .then(() => reportsApi.listSavedReports())
+        .then((page) => {
+          const updatedRows = page.results.map(savedReportToRow);
+          setRecordsByModule((current) => ({ ...current, reports: updatedRows, dashboard: updatedRows }));
+          showToast({ type: "success", message: `${activeReports.length} report${activeReports.length === 1 ? "" : "s"} re-run with the latest data.` });
+          logActivity("Re-ran active saved reports.", activeKey, null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not refresh reports." });
+        })
+        .finally(() => setIsLoading(false));
       return;
     }
 
@@ -1587,9 +3066,41 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
       return;
     }
 
+    if (label === "Export Leads (CSV)") {
+      if (role !== "superadmin") return;
+      setIsLoading(true);
+      crm
+        .exportLeads("csv")
+        .then(({ blob, filename }) => {
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(url);
+          logActivity("Exported leads to CSV.", "leads", null);
+        })
+        .catch((err) => {
+          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not export leads." });
+        })
+        .finally(() => setIsLoading(false));
+      return;
+    }
+
     if (label === "Set Reminder") {
-      showToast({ type: "success", message: "Reminder scheduled for the selected records." });
-      logActivity("Scheduled a reminder for pending records.", activeKey, null);
+      const target = activeRecords[0];
+      const now = new Date();
+      addReminder({
+        title: target ? `Follow up: ${target[activeModule.columns[0]] ?? target.id}` : `Follow up on ${activeModule.title}`,
+        date: now.toISOString().slice(0, 10),
+        time: "09:00",
+        priority: "Medium",
+        repeat: "None",
+        kind: "Reminder",
+        assignedTo: currentUser?.email ?? "Unassigned"
+      });
       return;
     }
 
@@ -1618,22 +3129,79 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
     triggerImport("leads");
   }
 
-  function quickExportLeads() {
-    const leadRows = recordsByModule.leads ?? [];
-    const leadsModule = modules.find((module) => module.key === "leads");
-    if (!leadsModule) return;
-    exportRecordsToCsv(leadsModule, leadRows);
-    showToast({ type: "success", message: `${leadRows.length} lead record${leadRows.length === 1 ? "" : "s"} exported.` });
-    logActivity(`Exported ${leadRows.length} lead record${leadRows.length === 1 ? "" : "s"}.`, "leads", null);
-  }
-
   function quickSendReminder() {
-    showToast({ type: "success", message: "Payment reminders sent to customers with pending balances." });
-    logActivity("Sent payment reminders to customers with pending balances.", "payments", null);
+    const pending = (recordsByModule.payments ?? []).filter((row) => row.Status !== "Cancelled" && parseCurrency(row.Balance) > 0);
+    if (pending.length === 0) {
+      showToast({ type: "error", message: "No pending payments to remind about." });
+      return;
+    }
+    if (!currentUser?.email) {
+      showToast({ type: "error", message: "No signed-in email address to send the reminder digest to." });
+      return;
+    }
+    const body = `Pending invoices awaiting payment:\n\n${pending
+      .map((row) => `${row.Invoice} - balance $${row.Balance} of $${row.Total} - Customer #${row["Customer ID"]}`)
+      .join("\n")}`;
+    communications
+      .queueEmail({ to_email: currentUser.email, subject: `Payment reminder digest (${pending.length} pending)`, body })
+      .then((queued) => {
+        const id = (queued as Record<string, unknown>).id as number | string;
+        return communications.sendEmail(id);
+      })
+      .then(() => {
+        showToast({ type: "success", message: `Reminder digest emailed for ${pending.length} pending payment${pending.length === 1 ? "" : "s"}.` });
+        logActivity(`Sent a payment reminder digest for ${pending.length} pending payment${pending.length === 1 ? "" : "s"}.`, "payments", null);
+      })
+      .catch((err) => {
+        showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not send the reminder email." });
+      });
   }
 
   function quickAssignTask() {
     openCreateModalFor("tasks");
+  }
+
+  // Lead/customer detail view -> Communication Center. Switches to the
+  // existing `communication` module (already in MODULE_ACCESS for every
+  // role) and asks it to open the requested channel on that entity.
+  function openCommunicationFor(channel: CommChannel, contact: CommContact) {
+    setModalOpen(false);
+    setEditingRecord(null);
+    setActiveKey("communication");
+    setCommFocus({ channel, contactKey: contact.key, nonce: Date.now() });
+  }
+
+  // Employee "Send Reminder" per pending payment (spec section 11) — reuses
+  // the exact same queueEmail -> sendEmail mechanism quickSendReminder()
+  // above already uses for the bulk digest, just scoped to one invoice and
+  // addressed to that invoice's own customer instead of to the employee.
+  function sendPaymentReminderForCustomer(invoiceRow: RowRecord) {
+    const customerRow = (recordsByModule.customers ?? []).find((c) => c.id === invoiceRow["Customer ID"]);
+    // Entity-addressed: name the CUSTOMER and let the backend resolve the
+    // address. The customer's real email address is never in this client.
+    const recipient = customerRow
+      ? { customer: Number(customerRow.id) }
+      : currentUser?.email
+        ? { to_email: currentUser.email }
+        : null;
+    if (!recipient) {
+      showToast({ type: "error", message: "No customer on file to send this reminder to." });
+      return;
+    }
+    const body = `Hi ${customerRow?.Customer ?? "there"},\n\nThis is a reminder that invoice ${invoiceRow.Invoice} has a pending balance of $${invoiceRow.Balance} (of $${invoiceRow.Total}). Please arrange payment at your earliest convenience.`;
+    communications
+      .queueEmail({ ...recipient, subject: `Payment reminder - Invoice ${invoiceRow.Invoice}`, body })
+      .then((queued) => {
+        const id = (queued as Record<string, unknown>).id as number | string;
+        return communications.sendEmail(id);
+      })
+      .then(() => {
+        showToast({ type: "success", message: `Reminder sent for invoice ${invoiceRow.Invoice}.` });
+        logActivity(`Sent a payment reminder for invoice ${invoiceRow.Invoice}.`, "payments", invoiceRow);
+      })
+      .catch((err) => {
+        showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not send the reminder email." });
+      });
   }
 
   function selectModule(key: ModuleKey) {
@@ -1654,6 +3222,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
   }
 
   return (
+    <AttendanceContext.Provider value={attendanceTracking}>
     <main className={cn(dark && "dark")}>
       <div className="min-h-screen bg-background text-foreground transition-colors">
         <TopNavbar
@@ -1667,7 +3236,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
           activityLog={activityLog}
           searchResults={globalSearchResults}
           onSearchResultClick={goToSearchResult}
-          onLogout={onLogout}
+          onLogout={attendanceTracking.fullLogout}
           onViewActivity={viewActivityRecord}
           onEditActivity={editActivityRecord}
           onDeleteActivity={deleteActivityRecord}
@@ -1712,13 +3281,15 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    className="hidden items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm font-medium shadow-sm sm:inline-flex"
-                    onClick={() => setDrawerOpen(true)}
-                  >
-                    <Activity className="size-4 text-teal-600" />
-                    Live Detail
-                  </button>
+                  {role !== "employee" ? (
+                    <button
+                      className="hidden items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm font-medium shadow-sm sm:inline-flex"
+                      onClick={() => setDrawerOpen(true)}
+                    >
+                      <Activity className="size-4 text-teal-600" />
+                      Live Detail
+                    </button>
+                  ) : null}
                   <button
                     className="inline-flex size-10 items-center justify-center rounded-lg border bg-card shadow-sm"
                     onClick={refreshCurrentModule}
@@ -1730,7 +3301,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
               </div>
             </div>
 
-            <div className="grid gap-6 px-4 py-5 xl:grid-cols-[minmax(0,1fr)_360px] xl:px-8">
+            <div className={cn("grid gap-6 px-4 py-5 xl:px-8", role === "employee" ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_360px]")}>
               <div className="min-w-0 space-y-6">
                 <motion.section
                   key={activeModule.key}
@@ -1754,7 +3325,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-white/88">{displayModuleSubtitle}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        {activeModule.actions.map((action) => {
+                        {visibleActionsForRole(activeModule.actions, role).map((action) => {
                           const ActionIcon = action.icon;
                           return (
                             <button
@@ -1775,7 +3346,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                   </div>
 
                   <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {activeModule.stats.map((stat) => (
+                    {displayedStats.map((stat) => (
                       <article key={stat.label} className="rounded-xl border bg-background p-4">
                         <p className="text-sm text-muted-foreground">{stat.label}</p>
                         <div className="mt-2 flex items-end justify-between gap-3">
@@ -1795,6 +3366,8 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                     recordsByModule={recordsByModule}
                     reminders={reminders}
                     notes={notes}
+                    currentUserName={currentUserName}
+                    teamNames={teamNames}
                     onAddReminder={addReminder}
                     onUpdateReminder={updateReminder}
                     onDeleteReminder={deleteReminder}
@@ -1811,12 +3384,15 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                         role={role}
                         kpis={kpis}
                         recentLeads={recordsByModule.leads ?? []}
+                        customerRows={recordsByModule.customers ?? []}
                         paymentRows={recordsByModule.payments ?? []}
+                        userRows={recordsByModule.users ?? []}
                         activityLog={activityLog}
                         reminders={reminders}
+                        currentUserName={currentUserName}
+                        teamNames={teamNames}
                         onQuickAdd={quickAddLead}
                         onImportLeads={quickImportLeads}
-                        onExportLeads={quickExportLeads}
                         onSendReminder={quickSendReminder}
                         onAssignTask={quickAssignTask}
                         onRefresh={refreshCurrentModule}
@@ -1827,12 +3403,36 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                         onCompleteReminder={toggleReminderComplete}
                         onSnoozeReminder={snoozeReminder}
                       />
-                    ) : (
+                    ) : role === "employee" && (activeKey === "payments" || activeKey === "communication") ? null : (
                       <ModuleChartSection module={activeModule} records={activeRecords} />
                     )}
 
-                    <FeatureCards module={activeModule} />
+                    {activeKey === "settings" && role === "superadmin" ? <ShiftConfigCard /> : null}
 
+                    {/* The generic AuditLog table below this stays exactly as
+                        it was (model changes, logins, ...); this adds the
+                        communications-specific audit trail as a second
+                        section within the same Super-Admin-only module. */}
+                    {activeKey === "audit" && role === "superadmin" ? (
+                      <SuperAdminCommunicationAuditSection users={recordsByModule.users ?? []} />
+                    ) : null}
+
+                    {role === "employee" ? null : <FeatureCards module={activeModule} />}
+
+                    {role === "employee" && activeKey === "payments" ? (
+                      <EmployeePaymentsView
+                        rows={activeRecords}
+                        customers={recordsByModule.customers ?? []}
+                        onSendReminder={sendPaymentReminderForCustomer}
+                      />
+                    ) : role === "employee" && activeKey === "communication" ? (
+                      <EmployeeCommunicationCenter
+                        leads={recordsByModule.leads ?? []}
+                        customers={recordsByModule.customers ?? []}
+                        focus={commFocus}
+                        onToast={showToast}
+                      />
+                    ) : (
                     <section className="rounded-2xl border bg-card shadow-sm">
                       <div className="border-b p-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -1866,11 +3466,13 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                       </div>
 
                       {isLoading ? (
-                        <LoadingSkeleton columns={activeModule.columns} />
+                        <LoadingSkeleton columns={employeeTableModule.columns} />
                       ) : (
                         <DataTable
-                          module={activeModule}
-                          rows={pagedRows}
+                          module={employeeTableModule}
+                          rows={employeeTableRows}
+                          role={role}
+                          allowEdit={activeKey === "tasks"}
                           onEdit={openEditModal}
                           onView={openViewModal}
                           onDuplicate={duplicateRecord}
@@ -1905,14 +3507,14 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
                         </div>
                       </div>
                     </section>
+                    )}
 
-                    <WorkflowPanel module={activeModule} />
                   </>
                 )}
               </div>
 
               <AnimatePresence>
-                {drawerOpen ? (
+                {drawerOpen && role !== "employee" ? (
                   <motion.aside
                     initial={{ opacity: 0, x: 26 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -1935,13 +3537,49 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
       </div>
 
       <AnimatePresence>
-        {modalOpen ? (
+        {modalOpen && role === "employee" && activeKey === "customers" && modalMode === "view" && editingRecord ? (
+          <EmployeeCustomerProfileModal
+            customer={editingRecord}
+            payments={recordsByModule.payments ?? []}
+            communicationRows={recordsByModule.communication ?? []}
+            reminders={reminders.filter((reminder) => canSeeReminder(reminder, role, currentUserName, teamNames))}
+            notes={notes.filter((note) => canSeeNote(note, role, currentUserName))}
+            onSendReminder={sendPaymentReminderForCustomer}
+            onOpenChannel={openCommunicationFor}
+            onClose={() => {
+              setModalOpen(false);
+              setEditingRecord(null);
+            }}
+          />
+        ) : modalOpen ? (
           <RecordModal
-            module={activeModule}
+            module={employeeTableModule}
             mode={modalMode}
             formData={formData}
             onChange={updateFormField}
             onSave={saveRecord}
+            extraContent={
+              // Lead-specific communication actions, on the lead's own
+              // detail view (spec: "from a lead's detail view, Email/Call/
+              // WhatsApp open the dedicated workspace for that lead").
+              role === "employee" && activeKey === "leads" && modalMode === "view" && editingRecord ? (
+                <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <CommProtectedNote label="Opens the Communication Center for this lead — contact details stay server-side." />
+                  <CommQuickActions
+                    contact={{
+                      key: commContactKey("lead", editingRecord.id),
+                      kind: "lead",
+                      id: editingRecord.id,
+                      name: editingRecord.Lead || `Lead #${editingRecord.id}`,
+                      canEmail: Boolean(editingRecord._canEmail),
+                      canCall: Boolean(editingRecord._canCall),
+                      canWhatsapp: Boolean(editingRecord._canWhatsapp)
+                    }}
+                    onOpen={openCommunicationFor}
+                  />
+                </div>
+              ) : null
+            }
             onClose={() => {
               setModalOpen(false);
               setEditingRecord(null);
@@ -1952,6 +3590,7 @@ function SuperAdminPage({ role, onLogout }: { role: Role; onLogout: () => void }
       <AnimatePresence>{toast ? <Toast toast={toast} /> : null}</AnimatePresence>
       <input ref={importInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleImportFile} />
     </main>
+    </AttendanceContext.Provider>
   );
 }
 
@@ -2025,13 +3664,15 @@ function TopNavbar({
         <span className="hidden text-sm font-bold sm:block">Qualify Learn CRM</span>
       </div>
 
-      <button
-        onClick={onNewClick}
-        className="hidden shrink-0 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-sm font-semibold shadow-sm transition hover:bg-muted sm:inline-flex"
-      >
-        <Plus className="size-4 text-teal-600" />
-        New
-      </button>
+      {role !== "employee" ? (
+        <button
+          onClick={onNewClick}
+          className="hidden shrink-0 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-sm font-semibold shadow-sm transition hover:bg-muted sm:inline-flex"
+        >
+          <Plus className="size-4 text-teal-600" />
+          New
+        </button>
+      ) : null}
 
       <div className="relative mx-auto hidden w-full max-w-md md:block">
         <label className="relative block">
@@ -2078,6 +3719,8 @@ function TopNavbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {role !== "superadmin" ? <AttendanceNavbarWidget /> : null}
+
         <div className="relative">
           <button
             onClick={() => setNotifOpen((value) => !value)}
@@ -2138,16 +3781,18 @@ function TopNavbar({
                               </button>
                             </>
                           ) : null}
-                          <button
-                            onClick={() => {
-                              onCreateForModule(item.moduleKey);
-                              setNotifOpen(false);
-                            }}
-                            className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
-                          >
-                            <Plus className="size-3" />
-                            New
-                          </button>
+                          {role !== "employee" ? (
+                            <button
+                              onClick={() => {
+                                onCreateForModule(item.moduleKey);
+                                setNotifOpen(false);
+                              }}
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+                            >
+                              <Plus className="size-3" />
+                              New
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     ))
@@ -2199,6 +3844,24 @@ function TopNavbar({
         </div>
       </div>
     </header>
+  );
+}
+
+function AttendanceNavbarWidget() {
+  const attendanceTracking = useContext(AttendanceContext);
+  if (!attendanceTracking?.current) return null;
+  const { current, liveWorkedSeconds } = attendanceTracking;
+  const meta = ATTENDANCE_STATUS_META[current.display_state];
+
+  return (
+    <div
+      className="hidden items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs font-semibold shadow-sm sm:flex"
+      title={meta.label}
+    >
+      <AttendanceStatusDot state={current.display_state} />
+      <span className={meta.text}>{meta.label}</span>
+      <span className="font-mono tabular-nums text-foreground">{formatHMS(liveWorkedSeconds)}</span>
+    </div>
   );
 }
 
@@ -2275,12 +3938,15 @@ function AnalyticsDashboard({
   role,
   kpis,
   recentLeads,
+  customerRows,
   paymentRows,
+  userRows,
   activityLog,
   reminders,
+  currentUserName,
+  teamNames,
   onQuickAdd,
   onImportLeads,
-  onExportLeads,
   onSendReminder,
   onAssignTask,
   onRefresh,
@@ -2294,12 +3960,15 @@ function AnalyticsDashboard({
   role: Role;
   kpis: Array<{ label: string; value: string; change: string }>;
   recentLeads: RowRecord[];
+  customerRows: RowRecord[];
   paymentRows: RowRecord[];
+  userRows: RowRecord[];
   activityLog: ActivityEntry[];
   reminders: Reminder[];
+  currentUserName: string;
+  teamNames: string[];
   onQuickAdd: () => void;
   onImportLeads: () => void;
-  onExportLeads: () => void;
   onSendReminder: () => void;
   onAssignTask: () => void;
   onRefresh: () => void;
@@ -2316,11 +3985,17 @@ function AnalyticsDashboard({
   const conversionKpi = kpis.find((kpi) => kpi.label === "Conversion Rate");
   const conversionValue = conversionKpi ? Number.parseFloat(conversionKpi.value) || 0 : 0;
 
-  const topPerformers = [...employeePerformanceData].sort((a, b) => b.value - a.value).slice(0, 3);
-  const openRequests = paymentRows.filter((row) => parseCurrency(row.Balance) > 0).slice(0, 5);
+  const conversionData = groupCountsByColumn(recentLeads, "Status");
+  const sourceData = groupCountsByColumnWithColor(recentLeads, "Source");
+  const revenueData = monthlySumTrend(paymentRows, "_createdAt", "Paid");
+  const monthlyLeadsData = monthlyCountTrend(recentLeads, "_createdAt");
+  const employeePerformanceData = ownerLeadCounts(recentLeads, userRows);
+  const paymentStatusData = groupCountsByColumnWithColor(paymentRows, "Status");
+  const topPerformers = employeePerformanceData.slice(0, 3);
+  const openRequests = paymentRows.filter((row) => row.Status !== "Cancelled" && parseCurrency(row.Balance) > 0).slice(0, 5);
 
   const upcomingReminders = reminders
-    .filter((reminder) => canSeeReminder(reminder, role) && !reminder.completed)
+    .filter((reminder) => canSeeReminder(reminder, role, currentUserName, teamNames) && !reminder.completed)
     .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
     .slice(0, 5);
 
@@ -2339,29 +4014,41 @@ function AnalyticsDashboard({
 
   return (
     <section className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        {kpis.map((kpi) => {
-          const highlighted = kpi.label === "Total Revenue";
-          return (
-            <article
-              key={kpi.label}
-              className={cn("rounded-xl p-4 shadow-sm", highlighted ? "bg-teal-700 text-white" : "border bg-card")}
-            >
-              <p className={cn("text-sm", highlighted ? "text-white/80" : "text-muted-foreground")}>{kpi.label}</p>
-              <strong className="mt-2 block text-2xl font-bold">{kpi.value}</strong>
-              <span
-                className={cn(
-                  "mt-3 inline-flex rounded-full px-2 py-1 text-xs font-bold",
-                  highlighted ? "bg-white/15 text-white" : "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
-                )}
-              >
-                {kpi.change}
-              </span>
-            </article>
-          );
-        })}
-      </div>
+      {role !== "superadmin" ? <EmployeeAttendanceWidget /> : null}
+      {role === "manager" ? <ManagerTeamAttendanceSection /> : null}
+      {role === "superadmin" ? <SuperAdminAttendanceSection /> : null}
 
+      {role !== "employee" ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          {kpis.map((kpi) => {
+            const highlighted = kpi.label === "Total Revenue";
+            return (
+              <article
+                key={kpi.label}
+                className={cn("rounded-xl p-4 shadow-sm", highlighted ? "bg-teal-700 text-white" : "border bg-card")}
+              >
+                <p className={cn("text-sm", highlighted ? "text-white/80" : "text-muted-foreground")}>{kpi.label}</p>
+                <strong className="mt-2 block text-2xl font-bold">{kpi.value}</strong>
+                <span
+                  className={cn(
+                    "mt-3 inline-flex rounded-full px-2 py-1 text-xs font-bold",
+                    highlighted ? "bg-white/15 text-white" : "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                  )}
+                >
+                  {kpi.change}
+                </span>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {role === "employee" ? (
+        <EmployeeAllTimeStats leads={recentLeads} customers={customerRows} payments={paymentRows} />
+      ) : null}
+
+      {role !== "employee" ? (
+      <>
       <div className="rounded-2xl border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-1 border-b pb-3">
           {["Status", "Marketing", "Sales", "Requests"].map((tab) => (
@@ -2381,7 +4068,7 @@ function AnalyticsDashboard({
         </div>
         <div className="flex items-center gap-2 pt-3">
           <h3 className="text-lg font-bold">
-            {role === "manager" ? "Key figures for your team" : role === "employee" ? "Key figures for you" : "Key figures for the Super Admin team"}
+            {role === "manager" ? "Key figures for your team" : "Key figures for the Super Admin team"}
           </h3>
           <button onClick={() => setFavorited((value) => !value)} aria-label="Toggle favorite">
             <Star className={cn("size-4", favorited ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
@@ -2394,20 +4081,24 @@ function AnalyticsDashboard({
 
       <div className="grid gap-4 xl:grid-cols-4">
         {isVisible("performers") ? (
-          <ChartCard title="Top Performers" subtitle="Against monthly target">
-            <div className="space-y-4 py-1">
-              {topPerformers.map((person) => (
-                <div key={person.label} className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <span className="flex size-9 items-center justify-center rounded-full bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
-                      {person.label.slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="text-sm font-semibold">{person.label}</span>
+          <ChartCard title="Top Performers" subtitle="Leads owned, by team member">
+            {topPerformers.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">No owned leads yet.</p>
+            ) : (
+              <div className="space-y-4 py-1">
+                {topPerformers.map((person) => (
+                  <div key={person.label} className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex size-9 items-center justify-center rounded-full bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                        {person.label.slice(0, 2).toUpperCase()}
+                      </span>
+                      <span className="text-sm font-semibold">{person.label}</span>
+                    </div>
+                    <span className="text-lg font-bold">{person.value}</span>
                   </div>
-                  <span className="text-lg font-bold">{person.value}%</span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </ChartCard>
         ) : null}
         {isVisible("leadConversion") ? (
@@ -2432,10 +4123,10 @@ function AnalyticsDashboard({
                       <CircleDollarSign className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{row.Customer}</p>
-                      <p className="text-xs text-muted-foreground">{row.Reminder}</p>
+                      <p className="truncate text-sm font-semibold">{row.Invoice}</p>
+                      <p className="text-xs text-muted-foreground">Customer #{row["Customer ID"]}</p>
                     </div>
-                    <span className="shrink-0 text-sm font-bold">{row.Balance}</span>
+                    <span className="shrink-0 text-sm font-bold">${row.Balance}</span>
                   </div>
                 ))
               )}
@@ -2461,8 +4152,8 @@ function AnalyticsDashboard({
           </ChartCard>
         ) : null}
         {isVisible("employeePerformance") ? (
-          <ChartCard title="Employee Performance" subtitle="Team completion score">
-            <BarChart data={employeePerformanceData} suffix="%" />
+          <ChartCard title="Employee Performance" subtitle="Leads owned per team member">
+            <BarChart data={employeePerformanceData} />
           </ChartCard>
         ) : null}
         {isVisible("paymentStatus") ? (
@@ -2520,7 +4211,7 @@ function AnalyticsDashboard({
 
         <div className="grid gap-4">
           <article className="rounded-2xl border bg-card p-5 shadow-sm">
-            <h3 className="text-lg font-bold">Today's Statistics</h3>
+            <h3 className="text-lg font-bold">Today&apos;s Statistics</h3>
             <div className="mt-4 grid grid-cols-2 gap-3">
               {todayStats.map((item) => (
                 <div key={item.label} className="rounded-xl border bg-background p-3">
@@ -2537,10 +4228,6 @@ function AnalyticsDashboard({
                 <Upload className="size-4 text-teal-600" />
                 Import Leads
               </button>
-              <button onClick={onExportLeads} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-                <Download className="size-4 text-teal-600" />
-                Export CSV
-              </button>
               <button onClick={onSendReminder} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
                 <Bell className="size-4 text-teal-600" />
                 Send Reminder
@@ -2553,6 +4240,8 @@ function AnalyticsDashboard({
           </article>
         </div>
       </div>
+      </>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <TimelineCard
@@ -2563,6 +4252,7 @@ function AnalyticsDashboard({
           onDelete={onDeleteActivity}
           onCreate={onCreateForModule}
         />
+        {role !== "employee" ? (
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
           <h3 className="text-lg font-bold">Upcoming Follow-ups</h3>
           <div className="mt-4 space-y-3">
@@ -2577,6 +4267,7 @@ function AnalyticsDashboard({
             ))}
           </div>
         </article>
+        ) : null}
       </div>
 
       <div className="grid gap-4">
@@ -2642,6 +4333,2776 @@ function AnalyticsDashboard({
   );
 }
 
+// Employee dashboard "All Time" figures — the counterpart to the "This
+// Month" cards computed in computeModuleStats()'s "dashboard" case (both
+// read only from the already-server-scoped recordsByModule arrays for
+// the logged-in employee, never from any org-wide source).
+function EmployeeAllTimeStats({
+  leads,
+  customers,
+  payments
+}: {
+  leads: RowRecord[];
+  customers: RowRecord[];
+  payments: RowRecord[];
+}) {
+  const revenue = payments.reduce((sum, row) => sum + parseCurrency(row.Paid), 0);
+  const converted = countBy(leads, "Status", "Converted");
+  const conversionRate = leads.length ? ((converted / leads.length) * 100).toFixed(1) : "0.0";
+  const cards = [
+    { label: "My Leads (All Time)", value: leads.length.toLocaleString(), change: "All time" },
+    { label: "My Customers (All Time)", value: customers.length.toLocaleString(), change: "All time" },
+    { label: "My Revenue (All Time)", value: formatCurrencyShort(revenue), change: "Collected to date" },
+    { label: "My Conversion Rate (All Time)", value: `${conversionRate}%`, change: `${converted} converted` }
+  ];
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {cards.map((card) => (
+        <article key={card.label} className="rounded-xl border bg-card p-4 shadow-sm">
+          <p className="text-sm text-muted-foreground">{card.label}</p>
+          <strong className="mt-2 block text-2xl font-bold">{card.value}</strong>
+          <span className="mt-3 inline-flex rounded-full bg-teal-50 px-2 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+            {card.change}
+          </span>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+// Employee-only Payments view (spec section 11): no chart/KPI cards, just
+// pending/overdue payments up top with a functional per-row reminder, then
+// everything else below. `rows` is the already-server-scoped invoice list
+// for this employee's own customers (recordsByModule.payments).
+function EmployeePaymentsView({
+  rows,
+  customers,
+  onSendReminder
+}: {
+  rows: RowRecord[];
+  customers: RowRecord[];
+  onSendReminder: (row: RowRecord) => void;
+}) {
+  const customerNameById = new Map(customers.map((c) => [c.id, c.Customer]));
+  const todayKey = toDateKey(new Date());
+  const withMeta = rows.map((row) => ({
+    row,
+    customerName: customerNameById.get(row["Customer ID"]) ?? `Customer #${row["Customer ID"]}`,
+    overdue: !!row._dueDate && row._dueDate < todayKey && row.Status !== "Paid" && row.Status !== "Cancelled",
+    pending: row.Status !== "Cancelled" && row.Status !== "Paid" && parseCurrency(row.Balance) > 0
+  }));
+  const pending = withMeta
+    .filter((item) => item.pending)
+    .sort((a, b) => (a.row._dueDate || "9999").localeCompare(b.row._dueDate || "9999"));
+  const settled = withMeta.filter((item) => !item.pending);
+
+  return (
+    <section className="space-y-4">
+      <article className="rounded-2xl border bg-card shadow-sm">
+        <div className="border-b p-4">
+          <h3 className="text-lg font-bold">Pending Payments</h3>
+          <p className="text-sm text-muted-foreground">Your customers&apos; payments still awaiting collection, most urgent first.</p>
+        </div>
+        {pending.length === 0 ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">No pending payments right now.</p>
+        ) : (
+          <div className="divide-y">
+            {pending.map(({ row, customerName, overdue }) => (
+              <div key={row.id} className="flex flex-wrap items-center gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{customerName}</p>
+                  <p className="text-xs text-muted-foreground">Invoice {row.Invoice} - Due: {row._dueDate || "—"}</p>
+                </div>
+                <span className="text-sm font-bold">${row.Balance}</span>
+                <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", statusClass(row.Status))}>{row.Status}</span>
+                {overdue ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700 ring-1 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900">
+                    OVERDUE
+                  </span>
+                ) : null}
+                <button
+                  onClick={() => onSendReminder(row)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                >
+                  <Bell className="size-3.5" />
+                  Send Reminder
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </article>
+
+      <article className="rounded-2xl border bg-card shadow-sm">
+        <div className="border-b p-4">
+          <h3 className="text-lg font-bold">Other Payments</h3>
+          <p className="text-sm text-muted-foreground">Paid or cancelled invoices for your customers.</p>
+        </div>
+        {settled.length === 0 ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">Nothing here yet.</p>
+        ) : (
+          <div className="divide-y">
+            {settled.map(({ row, customerName }) => (
+              <div key={row.id} className="flex flex-wrap items-center gap-3 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{customerName}</p>
+                  <p className="text-xs text-muted-foreground">Invoice {row.Invoice}</p>
+                </div>
+                <span className="text-sm font-bold">${row.Total}</span>
+                <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", statusClass(row.Status))}>{row.Status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </article>
+    </section>
+  );
+}
+
+// ===========================================================================
+// Employee Communication Center — Email / Calling / WhatsApp
+// ===========================================================================
+//
+// Replaces the old EmployeeCommunicationView, which was built before the
+// backend's PII rework and read `_email`/`_phone` off each customer row.
+// Those keys are no longer in an Employee's API response at all (see
+// leadToRow/customerToRow and apps.core.serializers), so that view rendered
+// an empty, non-functional contact list. Nothing here reads a contact
+// value: every action names the ENTITY (`{ lead: id }` / `{ customer: id }`)
+// and the backend resolves the address/number server-side.
+//
+// Rendered only for `role === "employee" && activeKey === "communication"`
+// (same one-branch-per-role convention as SuperAdminCommunicationAuditSection
+// in the `audit` module). Manager/Super Admin keep the generic module view.
+//
+// Three channels, three genuinely separate full-width workspaces behind one
+// channel switcher — never mixed into a single list. There is no backend
+// "conversation" resource, so conversation grouping is done ONCE here,
+// client-side, from the flat list endpoints: email/calls group on
+// `related_object` (content_type+object_id), WhatsApp on `customer`.
+
+type CommChannel = "email" | "call" | "whatsapp";
+type CommEntityKind = "lead" | "customer" | "contact";
+
+type CommContact = {
+  key: string;
+  kind: CommEntityKind;
+  id: string;
+  name: string;
+  canEmail: boolean;
+  canCall: boolean;
+  canWhatsapp: boolean;
+};
+
+type CommFocus = { channel: CommChannel; contactKey: string; nonce: number };
+
+const COMM_CHANNEL_META: Array<{ key: CommChannel; label: string; icon: React.ElementType; blurb: string }> = [
+  { key: "email", label: "Email", icon: Mail, blurb: "Threaded email conversations with your leads and customers." },
+  { key: "call", label: "Calling", icon: Phone, blurb: "Place calls and review every call you have made." },
+  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, blurb: "Chat with your customers without leaving the CRM." }
+];
+
+const COMM_STATUS_LABELS: Record<string, string> = {
+  QUEUED: "Queued",
+  RINGING: "Ringing",
+  IN_PROGRESS: "In Progress",
+  COMPLETED: "Completed",
+  FAILED: "Failed",
+  NO_ANSWER: "No Answer",
+  BUSY: "Busy",
+  SENT: "Sent",
+  DELIVERED: "Delivered",
+  READ: "Read"
+};
+
+// The only call states the backend reports (apps/communications/models.py's
+// Call.Status). Nothing else is ever displayed — no invented "Connecting".
+const CALL_IN_FLIGHT_STATUSES = new Set(["QUEUED", "RINGING", "IN_PROGRESS"]);
+
+function commStatusLabel(value: string): string {
+  return COMM_STATUS_LABELS[value] ?? value.replace(/_/g, " ");
+}
+
+function commTimestampLabel(value: string): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+}
+
+function commDurationLabel(seconds: unknown): string {
+  if (seconds == null || seconds === "") return "—";
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total < 0) return "—";
+  const m = Math.floor(total / 60);
+  const s = Math.floor(total % 60);
+  return `${m}m ${String(s).padStart(2, "0")}s`;
+}
+
+// `related_object` is the backend's safe {type, id, label} summary — the
+// label is the entity's own display name (Customer.name / "Company (Contact)"
+// for a lead), never an address or a number.
+function commEntityFromRelated(value: unknown): { kind: CommEntityKind; id: string; label: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const id = record.id == null ? "" : String(record.id);
+  if (!id) return null;
+  const type = String(record.type ?? "");
+  const kind: CommEntityKind = type === "crm.lead" ? "lead" : type === "crm.customer" ? "customer" : "contact";
+  return { kind, id, label: String(record.label ?? "") };
+}
+
+function commContactKey(kind: CommEntityKind, id: string): string {
+  return `${kind}:${id}`;
+}
+
+function commTargetFromKey(key: string): { kind: CommEntityKind; id: number } | null {
+  const [kind, id] = key.split(":");
+  if (!id || (kind !== "lead" && kind !== "customer" && kind !== "contact")) return null;
+  const numericId = Number(id);
+  return Number.isFinite(numericId) ? { kind, id: numericId } : null;
+}
+
+// The employee's own leads + customers, reduced to what a communication UI
+// needs: a name to show and three capability booleans to gate the buttons.
+// No contact value is carried, because the API never sent one.
+function buildCommContacts(leads: RowRecord[], customers: RowRecord[]): CommContact[] {
+  const fromLeads = leads.map<CommContact>((row) => ({
+    key: commContactKey("lead", row.id),
+    kind: "lead",
+    id: row.id,
+    name: row.Lead || `Lead #${row.id}`,
+    canEmail: Boolean(row._canEmail),
+    canCall: Boolean(row._canCall),
+    canWhatsapp: Boolean(row._canWhatsapp)
+  }));
+  const fromCustomers = customers.map<CommContact>((row) => ({
+    key: commContactKey("customer", row.id),
+    kind: "customer",
+    id: row.id,
+    name: row.Customer || `Customer #${row.id}`,
+    canEmail: Boolean(row._canEmail),
+    canCall: Boolean(row._canCall),
+    canWhatsapp: Boolean(row._canWhatsapp)
+  }));
+  return [...fromCustomers, ...fromLeads].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// A row's stored `error_message` is provider/infrastructure diagnostics
+// ("<PROVIDER>_API_KEY is not configured", a gateway's own wording): real
+// data, but not something an employee can act on, and not worth putting on
+// a customer-facing demo screen. The failure itself is never hidden — the
+// status badge still says Failed — only the raw text is replaced.
+function commFailureNote(status: string, errorMessage: string): string {
+  if (!errorMessage && status !== "FAILED") return "";
+  return "Not delivered — the provider rejected this attempt. Try again or contact your administrator.";
+}
+
+function commApiErrorMessage(err: unknown, fallback: string): string {
+  // ApiError.message is the generic "<METHOD> <path> failed (<status>)"
+  // string built in lib/api.ts — never the raw response body, which could
+  // echo a contact value back into the UI.
+  return err instanceof ApiError ? `${fallback} (${err.status})` : fallback;
+}
+
+function CommStatusBadge({ status }: { status: string }) {
+  if (!status) return null;
+  return (
+    <span className={cn("inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1", commAuditStatusClass(status))}>
+      {commStatusLabel(status)}
+    </span>
+  );
+}
+
+function CommProtectedNote({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      <LockKeyhole className="size-3.5 shrink-0" />
+      {label}
+    </span>
+  );
+}
+
+function CommPanelSkeleton() {
+  return (
+    <div className="space-y-3 p-4">
+      {Array.from({ length: 5 }).map((_, index) => (
+        <div key={index} className="h-14 animate-pulse rounded-lg bg-muted/80" />
+      ))}
+    </div>
+  );
+}
+
+function CommEmptyState({ icon: Icon, title, description }: { icon: React.ElementType; title: string; description: string }) {
+  return (
+    <div className="flex min-h-56 flex-col items-center justify-center gap-2 p-8 text-center">
+      <div className="mb-1 flex size-12 items-center justify-center rounded-xl bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
+        <Icon className="size-5" />
+      </div>
+      <h4 className="text-base font-bold">{title}</h4>
+      <p className="max-w-sm text-sm text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
+// Shared contact chooser for "start a new conversation / place a call".
+// Only contacts the backend says are reachable on this channel are listed —
+// capability comes from can_email/can_call/can_whatsapp, never from the
+// presence of a contact field this client no longer receives.
+function CommContactPicker({
+  title,
+  contacts,
+  onSelect,
+  onClose
+}: {
+  title: string;
+  contacts: CommContact[];
+  onSelect: (contact: CommContact) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return needle ? contacts.filter((contact) => contact.name.toLowerCase().includes(needle)) : contacts;
+  }, [contacts, search]);
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <h3 className="text-lg font-bold">{title}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Only your own leads and customers who are reachable on this channel.</p>
+          </div>
+          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="border-b p-4">
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search by name..."
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+            />
+          </label>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {contacts.length === 0 ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">
+              None of your leads or customers is reachable on this channel yet — the backend reports no contact detail on file for
+              them.
+            </p>
+          ) : visible.length === 0 ? (
+            <p className="p-8 text-center text-sm text-muted-foreground">No reachable contacts match that search.</p>
+          ) : (
+            <div className="divide-y">
+              {visible.map((contact) => (
+                <button
+                  key={contact.key}
+                  onClick={() => onSelect(contact)}
+                  className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-muted/60"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                    {contact.name.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">{contact.name}</span>
+                    <span className="block text-xs text-muted-foreground">{contact.kind === "lead" ? "Lead" : "Customer"}</span>
+                  </span>
+                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function EmployeeCommunicationCenter({
+  leads,
+  customers,
+  focus,
+  onToast
+}: {
+  leads: RowRecord[];
+  customers: RowRecord[];
+  focus: CommFocus | null;
+  onToast: (toast: { type: "success" | "error"; message: string }) => void;
+}) {
+  const [channel, setChannel] = useState<CommChannel>("email");
+  const [focusContactKey, setFocusContactKey] = useState<string | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
+  const contacts = useMemo(() => buildCommContacts(leads, customers), [leads, customers]);
+
+  // A lead/customer detail view asked for a specific channel + contact.
+  // The contact is addressed by ID only — no contact detail travels here,
+  // and nothing is written to the URL or to storage.
+  useEffect(() => {
+    if (!focus) return;
+    setChannel(focus.channel);
+    setFocusContactKey(focus.contactKey);
+    setFocusNonce(focus.nonce);
+  }, [focus]);
+
+  const activeMeta = COMM_CHANNEL_META.find((item) => item.key === channel) ?? COMM_CHANNEL_META[0];
+
+  return (
+    <section className="space-y-4">
+      <div className="rounded-2xl border bg-card p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-lg font-bold">Communication Center</h3>
+            <p className="text-sm text-muted-foreground">{activeMeta.blurb}</p>
+          </div>
+          <CommProtectedNote label="Contact details stay on the server — you reach people by name." />
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3" role="tablist" aria-label="Communication channel">
+          {COMM_CHANNEL_META.map((item) => {
+            const ChannelIcon = item.icon;
+            const active = item.key === channel;
+            return (
+              <button
+                key={item.key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setChannel(item.key)}
+                className={cn(
+                  "inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition",
+                  active
+                    ? "border-teal-600 bg-teal-600 text-white shadow-sm"
+                    : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-muted"
+                )}
+              >
+                <ChannelIcon className="size-4" />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {channel === "email" ? (
+        <CommEmailWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
+      ) : channel === "call" ? (
+        <CommCallWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
+      ) : (
+        <CommWhatsAppWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
+      )}
+    </section>
+  );
+}
+
+// ---- Email workspace ------------------------------------------------------
+
+type CommEmailMessage = {
+  id: string;
+  conversationKey: string;
+  conversationLabel: string;
+  target: { kind: CommEntityKind; id: string } | null;
+  subject: string;
+  body: string;
+  status: string;
+  direction: string;
+  timestamp: string;
+  error: string;
+};
+
+type CommConversation<T> = { key: string; label: string; target: { kind: CommEntityKind; id: string } | null; messages: T[] };
+
+function groupCommConversations<T extends { conversationKey: string; conversationLabel: string; target: { kind: CommEntityKind; id: string } | null; timestamp: string }>(
+  items: T[]
+): Array<CommConversation<T>> {
+  const map = new Map<string, CommConversation<T>>();
+  items.forEach((item) => {
+    const existing = map.get(item.conversationKey);
+    if (existing) {
+      existing.messages.push(item);
+      if (!existing.label && item.conversationLabel) existing.label = item.conversationLabel;
+    } else {
+      map.set(item.conversationKey, {
+        key: item.conversationKey,
+        label: item.conversationLabel,
+        target: item.target,
+        messages: [item]
+      });
+    }
+  });
+  const conversations = Array.from(map.values());
+  conversations.forEach((conversation) => conversation.messages.sort((a, b) => a.timestamp.localeCompare(b.timestamp)));
+  return conversations.sort((a, b) => {
+    const aLast = a.messages[a.messages.length - 1]?.timestamp ?? "";
+    const bLast = b.messages[b.messages.length - 1]?.timestamp ?? "";
+    return bLast.localeCompare(aLast);
+  });
+}
+
+const COMM_EMAIL_FILTERS = ["All", "Sent", "Received", "Queued", "Failed"] as const;
+type CommEmailFilter = (typeof COMM_EMAIL_FILTERS)[number];
+
+function CommEmailWorkspace({
+  contacts,
+  focusContactKey,
+  focusNonce,
+  onToast
+}: {
+  contacts: CommContact[];
+  focusContactKey: string | null;
+  focusNonce: number;
+  onToast: (toast: { type: "success" | "error"; message: string }) => void;
+}) {
+  const [messages, setMessages] = useState<CommEmailMessage[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<CommEmailFilter>("All");
+  const [search, setSearch] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [sending, setSending] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const emailable = useMemo(() => contacts.filter((contact) => contact.canEmail), [contacts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    setMessages(null);
+    // One flat, already-server-scoped page; the conversation grouping and
+    // the All/Sent/Received/Queued/Failed filter are computed client-side
+    // over it, matching how every other list view in this file filters.
+    communications
+      .listEmailMessages("?page_size=200&ordering=-created_at")
+      .then((page) => {
+        if (cancelled) return;
+        setMessages(
+          page.results.map((row) => {
+            const entity = commEntityFromRelated(row.related_object);
+            const label = entity?.label || String(row.recipient_label ?? "") || "Unlinked recipient";
+            return {
+              id: String(row.id),
+              conversationKey: entity ? commContactKey(entity.kind, entity.id) : `unlinked:${label}`,
+              conversationLabel: label,
+              target: entity ? { kind: entity.kind, id: entity.id } : null,
+              subject: String(row.subject ?? ""),
+              body: String(row.body ?? ""),
+              status: String(row.status ?? ""),
+              direction: String(row.direction ?? "OUTBOUND"),
+              timestamp: String(row.sent_at ?? row.created_at ?? ""),
+              error: String(row.error_message ?? "")
+            };
+          })
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(commApiErrorMessage(err, "Could not load your email history"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  useEffect(() => {
+    if (focusNonce > 0 && focusContactKey) setSelectedKey(focusContactKey);
+  }, [focusContactKey, focusNonce]);
+
+  const filtered = useMemo(() => {
+    const list = messages ?? [];
+    return list.filter((message) => {
+      if (filter === "Sent") return message.direction === "OUTBOUND" && message.status === "SENT";
+      if (filter === "Received") return message.direction === "INBOUND";
+      if (filter === "Queued") return message.status === "QUEUED";
+      if (filter === "Failed") return message.status === "FAILED";
+      return true;
+    });
+  }, [messages, filter]);
+
+  const conversations = useMemo(() => groupCommConversations(filtered), [filtered]);
+
+  const visibleConversations = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return conversations;
+    return conversations.filter((conversation) => conversation.label.toLowerCase().includes(needle));
+  }, [conversations, search]);
+
+  const selectedContact = selectedKey ? contacts.find((contact) => contact.key === selectedKey) ?? null : null;
+  const selectedConversation =
+    (selectedKey ? conversations.find((conversation) => conversation.key === selectedKey) : undefined) ??
+    (selectedContact
+      ? { key: selectedContact.key, label: selectedContact.name, target: { kind: selectedContact.kind, id: selectedContact.id }, messages: [] }
+      : null);
+
+  const canCompose = Boolean(selectedConversation?.target) && (selectedContact ? selectedContact.canEmail : true);
+
+  function handleSend() {
+    const target = selectedConversation?.target;
+    if (!target || !subject.trim() || !body.trim()) return;
+    const payloadTarget = commTargetFromKey(commContactKey(target.kind, target.id));
+    if (!payloadTarget) return;
+    setSending(true);
+    // Exactly the queue-then-send two-step sendPaymentReminderForCustomer()
+    // already uses — the entity is named, never an address.
+    communications
+      .queueEmail({ [payloadTarget.kind]: payloadTarget.id, subject: subject.trim(), body: body.trim() })
+      .then((queued) => communications.sendEmail(String((queued as Record<string, unknown>).id)))
+      .then(() => {
+        onToast({ type: "success", message: `Email sent to ${selectedConversation?.label ?? "this contact"}.` });
+        setSubject("");
+        setBody("");
+        setReloadToken((value) => value + 1);
+      })
+      .catch((err) => {
+        onToast({ type: "error", message: commApiErrorMessage(err, "Could not send that email") });
+      })
+      .finally(() => setSending(false));
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <section className="flex max-h-[640px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        <div className="space-y-3 border-b p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Conversations</h4>
+            <button
+              onClick={() => setPickerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
+            >
+              <Plus className="size-3.5" />
+              New
+            </button>
+          </div>
+          <label className="relative block">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search conversations..."
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+            />
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {COMM_EMAIL_FILTERS.map((item) => (
+              <button
+                key={item}
+                onClick={() => setFilter(item)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
+                  filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
+                )}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {messages === null ? (
+            <CommPanelSkeleton />
+          ) : error ? (
+            <p className="p-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+          ) : visibleConversations.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              No email conversations yet. Use <span className="font-semibold">New</span> to start one.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {visibleConversations.map((conversation) => {
+                const last = conversation.messages[conversation.messages.length - 1];
+                const active = conversation.key === selectedKey;
+                return (
+                  <button
+                    key={conversation.key}
+                    onClick={() => setSelectedKey(conversation.key)}
+                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold">{conversation.label}</span>
+                      <CommStatusBadge status={last?.status ?? ""} />
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{last?.subject || "(no subject)"}</p>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {conversation.messages.length} message{conversation.messages.length === 1 ? "" : "s"} · {commTimestampLabel(last?.timestamp ?? "")}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        {!selectedConversation ? (
+          <CommEmptyState
+            icon={Mail}
+            title="No conversation selected"
+            description="Pick a conversation on the left, or start a new one with any lead or customer who has an email address on file."
+          />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+              <div className="min-w-0">
+                <h4 className="truncate text-base font-bold">{selectedConversation.label}</h4>
+                <CommProtectedNote label="Protected contact — the address is resolved server-side" />
+              </div>
+              <button
+                onClick={() => setReloadToken((value) => value + 1)}
+                className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition hover:bg-muted"
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+              {selectedConversation.messages.length === 0 ? (
+                <p className="rounded-lg border bg-background p-6 text-center text-sm text-muted-foreground">
+                  No email history with this contact yet — your first message will appear here.
+                </p>
+              ) : (
+                selectedConversation.messages.map((message) => {
+                  const outbound = message.direction !== "INBOUND";
+                  return (
+                    <article
+                      key={message.id}
+                      className={cn(
+                        "rounded-xl border bg-background p-3",
+                        outbound ? "border-l-4 border-l-teal-600" : "border-l-4 border-l-muted-foreground/40"
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-bold">{message.subject || "(no subject)"}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            {outbound ? "Sent by you" : "Received"}
+                          </span>
+                          <CommStatusBadge status={message.status} />
+                        </div>
+                      </div>
+                      <p className="mt-1 text-[11px] text-muted-foreground">{commTimestampLabel(message.timestamp)}</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{message.body || "(no content)"}</p>
+                      {message.error ? (
+                        <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                          {commFailureNote(message.status, message.error)}
+                        </p>
+                      ) : null}
+                      {!outbound ? (
+                        <button
+                          onClick={() => setSubject(message.subject.startsWith("Re:") ? message.subject : `Re: ${message.subject}`)}
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                        >
+                          <Mail className="size-3.5" />
+                          Reply
+                        </button>
+                      ) : null}
+                    </article>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="space-y-2 border-t p-4">
+              {canCompose ? (
+                <>
+                  <input
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    placeholder="Subject"
+                    className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  />
+                  <textarea
+                    value={body}
+                    onChange={(event) => setBody(event.target.value)}
+                    placeholder={`Write your message to ${selectedConversation.label}...`}
+                    rows={3}
+                    className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <CommProtectedNote label="No recipient field — the message goes to this contact only" />
+                    <button
+                      onClick={handleSend}
+                      disabled={sending || !subject.trim() || !body.trim()}
+                      className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                      {sending ? "Sending..." : "Send Email"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="rounded-lg border bg-background p-3 text-center text-xs text-muted-foreground">
+                  This conversation is not linked to one of your leads or customers, so a reply cannot be addressed from here.
+                </p>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      <AnimatePresence>
+        {pickerOpen ? (
+          <CommContactPicker
+            title="New email"
+            contacts={emailable}
+            onSelect={(contact) => {
+              setSelectedKey(contact.key);
+              setPickerOpen(false);
+            }}
+            onClose={() => setPickerOpen(false)}
+          />
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ---- Calling workspace ----------------------------------------------------
+
+type CommCall = {
+  id: string;
+  conversationKey: string;
+  conversationLabel: string;
+  target: { kind: CommEntityKind; id: string } | null;
+  status: string;
+  direction: string;
+  timestamp: string;
+  endedAt: string;
+  durationSeconds: unknown;
+  error: string;
+};
+
+const COMM_CALL_FILTERS = ["All", "Completed", "Missed or failed"] as const;
+type CommCallFilter = (typeof COMM_CALL_FILTERS)[number];
+
+function CommCallWorkspace({
+  contacts,
+  focusContactKey,
+  focusNonce,
+  onToast
+}: {
+  contacts: CommContact[];
+  focusContactKey: string | null;
+  focusNonce: number;
+  onToast: (toast: { type: "success" | "error"; message: string }) => void;
+}) {
+  const [calls, setCalls] = useState<CommCall[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<CommCallFilter>("All");
+  const [placing, setPlacing] = useState(false);
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const callable = useMemo(() => contacts.filter((contact) => contact.canCall), [contacts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    communications
+      .listCalls("?page_size=200&ordering=-created_at")
+      .then((page) => {
+        if (cancelled) return;
+        setCalls(
+          page.results.map((row) => {
+            const entity = commEntityFromRelated(row.related_object);
+            const label = entity?.label || "Unlinked contact";
+            return {
+              id: String(row.id),
+              conversationKey: entity ? commContactKey(entity.kind, entity.id) : `unlinked:${label}`,
+              conversationLabel: label,
+              target: entity ? { kind: entity.kind, id: entity.id } : null,
+              status: String(row.status ?? ""),
+              direction: String(row.direction ?? "OUTBOUND"),
+              timestamp: String(row.started_at ?? row.created_at ?? ""),
+              endedAt: String(row.ended_at ?? ""),
+              durationSeconds: row.duration_seconds,
+              error: String(row.error_message ?? "")
+            };
+          })
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCalls([]);
+        setError(commApiErrorMessage(err, "Could not load your call history"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  useEffect(() => {
+    if (focusNonce > 0 && focusContactKey) setSelectedKey(focusContactKey);
+  }, [focusContactKey, focusNonce]);
+
+  const activeCall = activeCallId ? (calls ?? []).find((call) => call.id === activeCallId) ?? null : null;
+
+  // A call's status is advanced by the provider webhook server-side, so the
+  // only honest way to show progress is to re-read it. Polling stops as soon
+  // as the backend reports a terminal status — no client-side state machine
+  // and no invented intermediate states.
+  useEffect(() => {
+    if (!activeCall || !CALL_IN_FLIGHT_STATUSES.has(activeCall.status)) return;
+    const timer = window.setTimeout(() => setReloadToken((value) => value + 1), 5000);
+    return () => window.clearTimeout(timer);
+  }, [activeCall]);
+
+  const selectedContact = selectedKey ? contacts.find((contact) => contact.key === selectedKey) ?? null : null;
+
+  const recentByContact = useMemo(() => {
+    const map = new Map<string, CommCall>();
+    (calls ?? []).forEach((call) => {
+      const existing = map.get(call.conversationKey);
+      if (!existing || call.timestamp > existing.timestamp) map.set(call.conversationKey, call);
+    });
+    return Array.from(map.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [calls]);
+
+  const historyForSelected = useMemo(() => {
+    const list = (calls ?? []).filter((call) => (selectedKey ? call.conversationKey === selectedKey : true));
+    return list
+      .filter((call) => {
+        if (filter === "Completed") return call.status === "COMPLETED";
+        if (filter === "Missed or failed") return call.status === "FAILED" || call.status === "NO_ANSWER" || call.status === "BUSY";
+        return true;
+      })
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  }, [calls, selectedKey, filter]);
+
+  function handlePlaceCall() {
+    if (!selectedContact) return;
+    const target = commTargetFromKey(selectedContact.key);
+    if (!target) return;
+    setPlacing(true);
+    communications
+      .initiateCall({ [target.kind]: target.id })
+      .then((created) => {
+        const id = String((created as Record<string, unknown>).id ?? "");
+        setActiveCallId(id);
+        setReloadToken((value) => value + 1);
+        onToast({ type: "success", message: `Call placed to ${selectedContact.name}.` });
+      })
+      .catch((err) => {
+        onToast({ type: "error", message: commApiErrorMessage(err, "Could not place that call") });
+      })
+      .finally(() => setPlacing(false));
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <section className="flex max-h-[640px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        <div className="flex items-center justify-between gap-2 border-b p-4">
+          <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Recent calls</h4>
+          <button
+            onClick={() => setPickerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
+          >
+            <PhoneCall className="size-3.5" />
+            New call
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {calls === null ? (
+            <CommPanelSkeleton />
+          ) : recentByContact.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              No calls yet. Use <span className="font-semibold">New call</span> to reach a lead or customer.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {recentByContact.map((call) => {
+                const active = call.conversationKey === selectedKey;
+                return (
+                  <button
+                    key={call.conversationKey}
+                    onClick={() => setSelectedKey(call.conversationKey)}
+                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold">{call.conversationLabel}</span>
+                      <CommStatusBadge status={call.status} />
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {commTimestampLabel(call.timestamp)} · {commDurationLabel(call.durationSeconds)}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="flex min-h-[420px] flex-col gap-4">
+        <div className="rounded-2xl border bg-card p-5 shadow-sm">
+          {!selectedContact && !selectedKey ? (
+            <CommEmptyState
+              icon={Phone}
+              title="No one selected"
+              description="Choose a recent call on the left, or start a new call with any lead or customer who has a phone number on file."
+            />
+          ) : (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Call panel</p>
+                  <h4 className="truncate text-xl font-bold">
+                    {selectedContact?.name ?? recentByContact.find((call) => call.conversationKey === selectedKey)?.conversationLabel ?? "Contact"}
+                  </h4>
+                  <CommProtectedNote label="Protected contact — the number is dialled server-side" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setReloadToken((value) => value + 1)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition hover:bg-muted"
+                  >
+                    <RefreshCw className="size-3.5" />
+                    Refresh
+                  </button>
+                  <button
+                    onClick={handlePlaceCall}
+                    disabled={placing || !selectedContact?.canCall}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {placing ? <Loader2 className="size-4 animate-spin" /> : <PhoneCall className="size-4" />}
+                    {placing ? "Placing call..." : "Start Call"}
+                  </button>
+                </div>
+              </div>
+
+              {!selectedContact ? (
+                <p className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                  This call is not linked to one of your current leads or customers, so a new call cannot be started from here.
+                </p>
+              ) : !selectedContact.canCall ? (
+                <p className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                  No phone number is on file for this contact, so calling is unavailable.
+                </p>
+              ) : null}
+
+              {activeCall ? (
+                <div className="grid gap-3 rounded-xl border bg-background p-4 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      {CALL_IN_FLIGHT_STATUSES.has(activeCall.status) ? <Loader2 className="size-4 animate-spin text-teal-600" /> : null}
+                      <CommStatusBadge status={activeCall.status} />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Duration</p>
+                    <p className="mt-1 font-mono text-sm font-bold tabular-nums">{commDurationLabel(activeCall.durationSeconds)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Started</p>
+                    <p className="mt-1 text-sm font-semibold">{commTimestampLabel(activeCall.timestamp)}</p>
+                  </div>
+                  {activeCall.error ? (
+                    <p className="text-xs font-semibold text-red-600 dark:text-red-400 sm:col-span-3">
+                      {commFailureNote(activeCall.status, activeCall.error)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+            <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">
+              {selectedKey ? "Call history for this contact" : "Call history"}
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+              {COMM_CALL_FILTERS.map((item) => (
+                <button
+                  key={item}
+                  onClick={() => setFilter(item)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
+                    filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
+                  )}
+                >
+                  {item}
+                </button>
+              ))}
+              {selectedKey ? (
+                <button
+                  onClick={() => setSelectedKey(null)}
+                  className="rounded-full border bg-background px-2.5 py-1 text-xs font-semibold transition hover:bg-muted"
+                >
+                  Show all
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {calls === null ? (
+            <CommPanelSkeleton />
+          ) : error ? (
+            <p className="p-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+          ) : historyForSelected.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">No calls match this filter yet.</p>
+          ) : (
+            <div className="max-h-72 divide-y overflow-y-auto">
+              {historyForSelected.map((call) => (
+                <div key={call.id} className="flex flex-wrap items-center gap-3 p-3">
+                  <Phone className="size-4 shrink-0 text-teal-700 dark:text-teal-300" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{call.conversationLabel}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {call.direction === "INBOUND" ? "Inbound" : "Outbound"} · {commTimestampLabel(call.timestamp)}
+                    </p>
+                    {call.error ? (
+                      <p className="text-[11px] font-semibold text-red-600 dark:text-red-400">
+                        {commFailureNote(call.status, call.error)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <span className="text-xs font-semibold tabular-nums">{commDurationLabel(call.durationSeconds)}</span>
+                  <CommStatusBadge status={call.status} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <AnimatePresence>
+        {pickerOpen ? (
+          <CommContactPicker
+            title="New call"
+            contacts={callable}
+            onSelect={(contact) => {
+              setSelectedKey(contact.key);
+              setPickerOpen(false);
+            }}
+            onClose={() => setPickerOpen(false)}
+          />
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ---- WhatsApp workspace ---------------------------------------------------
+
+type CommWhatsAppMessage = {
+  id: string;
+  conversationKey: string;
+  conversationLabel: string;
+  target: { kind: CommEntityKind; id: string } | null;
+  message: string;
+  status: string;
+  direction: string;
+  timestamp: string;
+  error: string;
+};
+
+const COMM_WHATSAPP_FILTERS = ["All", "Unread", "Sent", "Received"] as const;
+type CommWhatsAppFilter = (typeof COMM_WHATSAPP_FILTERS)[number];
+
+function CommWhatsAppWorkspace({
+  contacts,
+  focusContactKey,
+  focusNonce,
+  onToast
+}: {
+  contacts: CommContact[];
+  focusContactKey: string | null;
+  focusNonce: number;
+  onToast: (toast: { type: "success" | "error"; message: string }) => void;
+}) {
+  const [messages, setMessages] = useState<CommWhatsAppMessage[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<CommWhatsAppFilter>("All");
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const reachable = useMemo(() => contacts.filter((contact) => contact.canWhatsapp), [contacts]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    communications
+      .listWhatsAppMessages("?page_size=200&ordering=-created_at")
+      .then((page) => {
+        if (cancelled) return;
+        setMessages(
+          page.results.map((row) => {
+            // WhatsAppMessage models a `customer` relation only (see
+            // apps/communications/models.py) — a message sent to a LEAD is
+            // delivered but not back-linked, so it groups under a clearly
+            // labelled unlinked thread rather than being silently dropped.
+            const customerId = row.customer == null ? "" : String(row.customer);
+            const label = String(row.customer_name ?? "") || "Unlinked recipients";
+            return {
+              id: String(row.id),
+              conversationKey: customerId ? commContactKey("customer", customerId) : "unlinked:whatsapp",
+              conversationLabel: label,
+              target: customerId ? { kind: "customer" as CommEntityKind, id: customerId } : null,
+              message: String(row.message ?? ""),
+              status: String(row.status ?? ""),
+              direction: String(row.direction ?? "OUTBOUND"),
+              timestamp: String(row.created_at ?? ""),
+              error: String(row.error_message ?? "")
+            };
+          })
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setMessages([]);
+        setError(commApiErrorMessage(err, "Could not load your WhatsApp history"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  useEffect(() => {
+    if (focusNonce > 0 && focusContactKey) setSelectedKey(focusContactKey);
+  }, [focusContactKey, focusNonce]);
+
+  const filtered = useMemo(() => {
+    const list = messages ?? [];
+    return list.filter((message) => {
+      if (filter === "Sent") return message.direction === "OUTBOUND";
+      if (filter === "Received") return message.direction === "INBOUND";
+      if (filter === "Unread") return message.direction === "INBOUND" && message.status !== "READ";
+      return true;
+    });
+  }, [messages, filter]);
+
+  const conversations = useMemo(() => groupCommConversations(filtered), [filtered]);
+
+  const selectedContact = selectedKey ? contacts.find((contact) => contact.key === selectedKey) ?? null : null;
+  const selectedConversation =
+    (selectedKey ? conversations.find((conversation) => conversation.key === selectedKey) : undefined) ??
+    (selectedContact
+      ? { key: selectedContact.key, label: selectedContact.name, target: { kind: selectedContact.kind, id: selectedContact.id }, messages: [] }
+      : null);
+
+  const canSend = Boolean(selectedConversation?.target) && (selectedContact ? selectedContact.canWhatsapp : true);
+
+  function handleSend() {
+    const target = selectedConversation?.target;
+    if (!target || !draft.trim()) return;
+    const payloadTarget = commTargetFromKey(commContactKey(target.kind, target.id));
+    if (!payloadTarget) return;
+    setSending(true);
+    communications
+      .sendWhatsAppMessage({ [payloadTarget.kind]: payloadTarget.id, message: draft.trim() })
+      .then(() => {
+        onToast({ type: "success", message: `WhatsApp message sent to ${selectedConversation?.label ?? "this contact"}.` });
+        setDraft("");
+        setReloadToken((value) => value + 1);
+      })
+      .catch((err) => {
+        onToast({ type: "error", message: commApiErrorMessage(err, "Could not send that WhatsApp message") });
+      })
+      .finally(() => setSending(false));
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <section className="flex max-h-[640px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        <div className="space-y-3 border-b p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Chats</h4>
+            <button
+              onClick={() => setPickerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
+            >
+              <Plus className="size-3.5" />
+              New chat
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {COMM_WHATSAPP_FILTERS.map((item) => (
+              <button
+                key={item}
+                onClick={() => setFilter(item)}
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
+                  filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
+                )}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {messages === null ? (
+            <CommPanelSkeleton />
+          ) : error ? (
+            <p className="p-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
+          ) : conversations.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">
+              No WhatsApp chats yet. Use <span className="font-semibold">New chat</span> to start one.
+            </p>
+          ) : (
+            <div className="divide-y">
+              {conversations.map((conversation) => {
+                const last = conversation.messages[conversation.messages.length - 1];
+                const active = conversation.key === selectedKey;
+                return (
+                  <button
+                    key={conversation.key}
+                    onClick={() => setSelectedKey(conversation.key)}
+                    className={cn("flex w-full items-center gap-3 p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      {conversation.label.slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-semibold">{conversation.label}</span>
+                        <CommStatusBadge status={last?.status ?? ""} />
+                      </span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{last?.message || "No messages"}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
+        {!selectedConversation ? (
+          <CommEmptyState
+            icon={MessageCircle}
+            title="No chat selected"
+            description="Pick a chat on the left, or start a new one with any customer who has a WhatsApp-capable number on file."
+          />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
+              <div className="min-w-0">
+                <h4 className="truncate text-base font-bold">{selectedConversation.label}</h4>
+                <CommProtectedNote label="Protected contact — the WhatsApp number never reaches this screen" />
+              </div>
+              <button
+                onClick={() => setReloadToken((value) => value + 1)}
+                className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition hover:bg-muted"
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">
+              {selectedConversation.messages.length === 0 ? (
+                <p className="rounded-lg border bg-background p-6 text-center text-sm text-muted-foreground">
+                  No messages in this chat yet — say hello below.
+                </p>
+              ) : (
+                selectedConversation.messages.map((message) => {
+                  const outbound = message.direction !== "INBOUND";
+                  return (
+                    <div key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
+                      <div
+                        className={cn(
+                          "max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[70%]",
+                          outbound
+                            ? "rounded-br-sm bg-teal-600 text-white"
+                            : "rounded-bl-sm border bg-card text-foreground"
+                        )}
+                      >
+                        <p className="whitespace-pre-wrap break-words">{message.message}</p>
+                        <p className={cn("mt-1 flex items-center gap-1.5 text-[10px]", outbound ? "text-white/75" : "text-muted-foreground")}>
+                          {outbound ? "You" : selectedConversation.label} · {commTimestampLabel(message.timestamp)} · {commStatusLabel(message.status)}
+                        </p>
+                        {message.error ? (
+                          <p className={cn("mt-1 text-[10px] font-semibold", outbound ? "text-red-100" : "text-red-600 dark:text-red-400")}>
+                            {commFailureNote(message.status, message.error)}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t p-4">
+              {canSend ? (
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder={`Message ${selectedConversation.label}...`}
+                    rows={2}
+                    className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={sending || !draft.trim()}
+                    className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                    Send
+                  </button>
+                </div>
+              ) : (
+                <p className="rounded-lg border bg-background p-3 text-center text-xs text-muted-foreground">
+                  These messages are not linked to one of your customers, so a reply cannot be addressed from here.
+                </p>
+              )}
+            </div>
+          </>
+        )}
+      </section>
+
+      <AnimatePresence>
+        {pickerOpen ? (
+          <CommContactPicker
+            title="New WhatsApp chat"
+            contacts={reachable}
+            onSelect={(contact) => {
+              setSelectedKey(contact.key);
+              setPickerOpen(false);
+            }}
+            onClose={() => setPickerOpen(false)}
+          />
+        ) : null}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Per-lead / per-customer channel buttons, shown on that record's own
+// detail view. Each one deep-links into the Communication Center's matching
+// workspace for THAT entity, addressed by ID — no contact value is read,
+// passed, or placed in a URL. A channel with no capability is rendered
+// disabled with the reason, never hidden silently.
+function CommQuickActions({
+  contact,
+  onOpen
+}: {
+  contact: CommContact;
+  onOpen: (channel: CommChannel, contact: CommContact) => void;
+}) {
+  const buttons: Array<{ channel: CommChannel; label: string; icon: React.ElementType; enabled: boolean }> = [
+    { channel: "email", label: "Email", icon: Mail, enabled: contact.canEmail },
+    { channel: "call", label: "Call", icon: Phone, enabled: contact.canCall },
+    { channel: "whatsapp", label: "WhatsApp", icon: MessageCircle, enabled: contact.canWhatsapp }
+  ];
+  return (
+    <div className="flex flex-wrap gap-2">
+      {buttons.map((button) => {
+        const ButtonIcon = button.icon;
+        return (
+          <button
+            key={button.channel}
+            onClick={() => onOpen(button.channel, contact)}
+            disabled={!button.enabled}
+            title={button.enabled ? `Open the ${button.label} workspace for ${contact.name}` : `No ${button.label.toLowerCase()} contact on file`}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition",
+              button.enabled
+                ? "text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                : "cursor-not-allowed text-muted-foreground opacity-60"
+            )}
+          >
+            <ButtonIcon className="size-3.5" />
+            {button.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Employee-only Customer-360 profile drawer (spec section 10): a single
+// modal combining Basic Details + Interaction History (communication +
+// notes/reminders that mention this customer) + Payments + Scheduled
+// Activities for one customer, using only data already scoped to this
+// employee (recordsByModule + the reminders/notes already filtered by
+// canSeeReminder/canSeeNote before they reach this component). No Owner
+// field is ever rendered here. Visual language matches RecordModal/
+// DetailDrawer (same backdrop, card chrome, DetailRow list style).
+function EmployeeCustomerProfileModal({
+  customer,
+  payments,
+  communicationRows,
+  reminders,
+  notes,
+  onSendReminder,
+  onOpenChannel,
+  onClose
+}: {
+  customer: RowRecord;
+  payments: RowRecord[];
+  communicationRows: RowRecord[];
+  reminders: Reminder[];
+  notes: CalendarNote[];
+  onSendReminder: (row: RowRecord) => void;
+  onOpenChannel: (channel: CommChannel, contact: CommContact) => void;
+  onClose: () => void;
+}) {
+  // Capability booleans, never contact values — the API sends an Employee
+  // no `email`/`phone` key at all (see customerToRow).
+  const contact: CommContact = {
+    key: commContactKey("customer", customer.id),
+    kind: "customer",
+    id: customer.id,
+    name: customer.Customer || `Customer #${customer.id}`,
+    canEmail: Boolean(customer._canEmail),
+    canCall: Boolean(customer._canCall),
+    canWhatsapp: Boolean(customer._canWhatsapp)
+  };
+  const custPayments = payments.filter((row) => row["Customer ID"] === customer.id);
+  // `Recipient` is the backend's safe `recipient_label` (the related
+  // customer's own display name), so the match is name-to-name — the old
+  // address comparison could never match once addresses stopped arriving.
+  const custComms = communicationRows.filter((row) => row.Recipient && row.Recipient === customer.Customer);
+  const nameNeedle = (customer.Customer ?? "").trim().toLowerCase();
+  const custReminders = nameNeedle
+    ? reminders.filter((reminder) => reminder.title.toLowerCase().includes(nameNeedle))
+    : [];
+  const custNotes = nameNeedle ? notes.filter((note) => note.text.toLowerCase().includes(nameNeedle)) : [];
+  const upcomingActivities = custReminders
+    .filter((reminder) => !reminder.completed)
+    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
+  const pendingBalance = custPayments.reduce((sum, row) => sum + parseCurrency(row.Balance), 0);
+  const todayKey = toDateKey(new Date());
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <h3 className="text-xl font-bold">{customer.Customer || "Customer Profile"}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Basic details, interaction history, payments, and scheduled activities.</p>
+          </div>
+          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="space-y-6 p-5">
+          <section>
+            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Basic Details</h4>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <DetailRow title="Email" subtitle={contactCapabilityLabel(customer._canEmail)} />
+              <DetailRow title="Phone" subtitle={contactCapabilityLabel(customer._canCall)} />
+              <DetailRow title="Industry / Category" subtitle={customer.Industry || "—"} />
+              <DetailRow title="Status" subtitle={customer.Status || "—"} badge={customer.Status || undefined} />
+            </div>
+          </section>
+
+          <section>
+            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Contact This Customer</h4>
+            <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
+              <CommProtectedNote label="Opens the Communication Center for this customer — contact details stay server-side." />
+              <CommQuickActions contact={contact} onOpen={onOpenChannel} />
+            </div>
+          </section>
+
+          <section>
+            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Interaction History</h4>
+            {custComms.length === 0 && custNotes.length === 0 ? (
+              <p className="rounded-lg border bg-background p-4 text-center text-sm text-muted-foreground">
+                No calls, emails, WhatsApp, or notes recorded for this customer yet.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {custComms.map((row) => (
+                  <DetailRow key={`comm-${row.id}`} title={row.Subject || "Message"} subtitle={`${row.Message ?? ""}`.slice(0, 80)} badge={row.Status} />
+                ))}
+                {custNotes.map((note) => (
+                  <DetailRow key={`note-${note.id}`} title={`Note - ${note.date}`} subtitle={note.text} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <div className="mb-2 flex items-center justify-between">
+              <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Payments</h4>
+              {pendingBalance > 0 ? (
+                <span className="text-xs font-bold text-amber-700 dark:text-amber-300">${pendingBalance.toFixed(2)} pending</span>
+              ) : null}
+            </div>
+            {custPayments.length === 0 ? (
+              <p className="rounded-lg border bg-background p-4 text-center text-sm text-muted-foreground">No invoices for this customer yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {custPayments.map((row) => {
+                  const overdue = !!row._dueDate && row._dueDate < todayKey && row.Status !== "Paid" && row.Status !== "Cancelled";
+                  return (
+                    <div key={row.id} className="flex flex-wrap items-center gap-3 rounded-lg border bg-background px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">
+                          Invoice {row.Invoice} {overdue ? <span className="ml-1 text-xs font-bold text-red-600 dark:text-red-400">[OVERDUE]</span> : null}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Paid ${row.Paid} of ${row.Total} - Balance ${row.Balance}</p>
+                      </div>
+                      <span className={cn("shrink-0 rounded-full px-2 py-1 text-xs font-bold ring-1", statusClass(row.Status))}>{row.Status}</span>
+                      {row.Status !== "Paid" && row.Status !== "Cancelled" ? (
+                        <button
+                          onClick={() => onSendReminder(row)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                        >
+                          <Bell className="size-3.5" />
+                          Send Reminder
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Scheduled Activities</h4>
+            {upcomingActivities.length === 0 ? (
+              <p className="rounded-lg border bg-background p-4 text-center text-sm text-muted-foreground">
+                No upcoming calls, meetings, or follow-ups scheduled for this customer.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {upcomingActivities.map((reminder) => (
+                  <DetailRow
+                    key={reminder.id}
+                    title={reminder.title}
+                    subtitle={`${reminder.kind} - ${reminder.date} at ${reminder.time}`}
+                    badge={reminder.priority}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        <div className="flex justify-end border-t p-5">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            Close
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function EmployeeAttendanceWidget() {
+  const attendanceTracking = useContext(AttendanceContext);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  if (!attendanceTracking) return null;
+  const { current, liveWorkedSeconds, startBreak, endBreak, fullLogout } = attendanceTracking;
+
+  if (!current) {
+    return (
+      <ChartCard title="Working Hours" subtitle="Loading your attendance session...">
+        <div className="flex h-32 items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      </ChartCard>
+    );
+  }
+
+  const meta = ATTENDANCE_STATUS_META[current.display_state];
+  const shiftSeconds = current.shift.shift_duration_minutes * 60;
+  const remainingSeconds = Math.max(shiftSeconds - liveWorkedSeconds, 0);
+  const overtimeSeconds = Math.max(liveWorkedSeconds - shiftSeconds, 0);
+  const shiftProgress = shiftSeconds > 0 ? Math.min((liveWorkedSeconds / shiftSeconds) * 100, 100) : 0;
+  const onBreak = current.display_state === "ON_BREAK";
+  const offline = current.display_state === "OFFLINE";
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    await fullLogout();
+    setLoggingOut(false);
+  }
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-4">
+      <article className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="flex items-center gap-2">
+          <AttendanceStatusDot state={current.display_state} />
+          <span className={cn("text-sm font-bold", meta.text)}>{meta.label}</span>
+        </div>
+        <p className="mt-3 font-mono text-3xl font-bold tabular-nums">{formatHMS(liveWorkedSeconds)}</p>
+        <dl className="mt-4 space-y-1.5 text-sm">
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Shift</dt>
+            <dd className="font-semibold">{formatHM(shiftSeconds)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Worked</dt>
+            <dd className="font-semibold">{formatHM(liveWorkedSeconds)}</dd>
+          </div>
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Remaining</dt>
+            <dd className="font-semibold">{formatHM(remainingSeconds)}</dd>
+          </div>
+        </dl>
+        <div className="mt-4 space-y-2">
+          <button
+            onClick={onBreak ? endBreak : startBreak}
+            disabled={offline}
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border bg-background text-sm font-semibold shadow-sm transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Coffee className="size-4 text-amber-500" />
+            {onBreak ? "End Break" : "Start Break"}
+          </button>
+          <button
+            onClick={handleLogout}
+            disabled={offline || loggingOut}
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+            Logout
+          </button>
+        </div>
+      </article>
+
+      <ChartCard title="Today's Hours" subtitle="Active, break, and idle time">
+        <dl className="space-y-3 py-1 text-sm">
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Active Hours</dt>
+            <dd className="font-bold">{formatHM(current.totals.active_working_seconds)}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Break Time</dt>
+            <dd className="font-bold">{formatHM(current.totals.break_seconds)}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Idle Time</dt>
+            <dd className="font-bold">{formatHM(current.totals.idle_seconds)}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">Breaks Taken</dt>
+            <dd className="font-bold">{current.totals.break_count}</dd>
+          </div>
+        </dl>
+      </ChartCard>
+
+      <ChartCard title="Shift Progress" subtitle={`${Math.round(shiftProgress)}% of your shift complete`}>
+        <div className="flex h-32 flex-col items-center justify-center gap-3">
+          <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${shiftProgress}%` }} />
+          </div>
+          {overtimeSeconds > 0 ? (
+            <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">+{formatHM(overtimeSeconds)} overtime</p>
+          ) : (
+            <p className="text-sm text-muted-foreground">{formatHM(remainingSeconds)} remaining</p>
+          )}
+        </div>
+      </ChartCard>
+
+      {current.shift.is_salary_enabled ? (
+        <ChartCard title="Today's Earnings" subtitle={current.shift.currency}>
+          <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
+            <p className="text-3xl font-bold">
+              {current.shift.currency} {current.earnings.total_earnings.toFixed(2)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Regular {current.earnings.regular_earnings.toFixed(2)} + Overtime {current.earnings.overtime_earnings.toFixed(2)}
+            </p>
+          </div>
+        </ChartCard>
+      ) : null}
+    </div>
+  );
+}
+
+function ManagerTeamAttendanceSection() {
+  const [rows, setRows] = useState<DailyAttendance[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      attendance
+        .teamStatus()
+        .then((result) => {
+          if (!cancelled) setRows(result);
+        })
+        .catch(() => {
+          if (!cancelled) setError("Could not load your team's attendance.");
+        });
+    }
+    load();
+    const interval = window.setInterval(load, 45_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  return (
+    <article className="rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-bold">Your Team&apos;s Attendance</h3>
+        <p className="text-sm text-muted-foreground">Live working hours for everyone on your team, today.</p>
+      </div>
+      {error ? (
+        <p className="py-6 text-center text-sm text-red-600">{error}</p>
+      ) : rows === null ? (
+        <div className="flex h-32 items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">No team attendance recorded yet today.</p>
+      ) : (
+        <div className="glass-scrollbar overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead>
+              <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="pb-2 pr-4">Employee</th>
+                <th className="pb-2 pr-4">Status</th>
+                <th className="pb-2 pr-4">Login</th>
+                <th className="pb-2 pr-4">Active</th>
+                <th className="pb-2 pr-4">Break</th>
+                <th className="pb-2 pr-4">Idle</th>
+                <th className="pb-2 pr-4">Shift Progress</th>
+                <th className="pb-2 pr-4">Overtime</th>
+                <th className="pb-2">Short Hours</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const shiftSeconds = row.shift_minutes * 60;
+                const progress = shiftSeconds > 0 ? Math.min((row.active_working_seconds / shiftSeconds) * 100, 100) : 0;
+                return (
+                  <tr key={row.employee_id} className="border-b last:border-b-0">
+                    <td className="py-2.5 pr-4 font-semibold">{row.employee_name}</td>
+                    <td className="py-2.5 pr-4">
+                      <span className="rounded-full bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                        {row.status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-muted-foreground">
+                      {row.login_time ? new Date(row.login_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </td>
+                    <td className="py-2.5 pr-4">{formatHM(row.active_working_seconds)}</td>
+                    <td className="py-2.5 pr-4">{formatHM(row.break_seconds)}</td>
+                    <td className="py-2.5 pr-4">{formatHM(row.idle_seconds)}</td>
+                    <td className="py-2.5 pr-4">{Math.round(progress)}%</td>
+                    <td className="py-2.5 pr-4">{row.overtime_minutes > 0 ? `${Math.round(row.overtime_minutes)}m` : "—"}</td>
+                    <td className="py-2.5">{row.short_minutes > 0 ? `${Math.round(row.short_minutes)}m` : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function SuperAdminAttendanceSection() {
+  const [rows, setRows] = useState<DailyAttendance[] | null>(null);
+  const [weeklyRows, setWeeklyRows] = useState<DailyAttendance[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      attendance
+        .companyReport()
+        .then((result) => {
+          if (!cancelled) setRows(result);
+        })
+        .catch(() => {
+          if (!cancelled) setError("Could not load company-wide attendance.");
+        });
+    }
+    load();
+    const interval = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    attendance
+      .companyReport(from.toISOString().slice(0, 10), today.toISOString().slice(0, 10))
+      .then((result) => {
+        if (!cancelled) setWeeklyRows(result);
+      })
+      .catch(() => {
+        // Non-fatal — the weekly trend charts simply stay empty.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dailyHoursData = useMemo(
+    () =>
+      (rows ?? []).map((row) => ({
+        label: row.employee_name.split(" ")[0] ?? row.employee_name,
+        value: Math.round((row.active_working_seconds / 3600) * 10) / 10
+      })),
+    [rows]
+  );
+  const overtimeData = useMemo(
+    () =>
+      (rows ?? [])
+        .filter((row) => row.overtime_minutes > 0)
+        .map((row) => ({ label: row.employee_name.split(" ")[0] ?? row.employee_name, value: Math.round(row.overtime_minutes) })),
+    [rows]
+  );
+  const breakIdleData = useMemo(() => {
+    const totalBreak = (rows ?? []).reduce((sum, row) => sum + row.break_seconds, 0);
+    const totalIdle = (rows ?? []).reduce((sum, row) => sum + row.idle_seconds, 0);
+    return [
+      { label: "Break", value: Math.round(totalBreak / 60), color: CHART_PALETTE[2] },
+      { label: "Idle", value: Math.round(totalIdle / 60), color: CHART_PALETTE[3] }
+    ];
+  }, [rows]);
+  const averageActiveHours = useMemo(() => {
+    const list = rows ?? [];
+    if (list.length === 0) return 0;
+    return list.reduce((sum, row) => sum + row.active_working_seconds, 0) / list.length / 3600;
+  }, [rows]);
+  const totalPayable = useMemo(() => (rows ?? []).reduce((sum, row) => sum + row.earnings.total_earnings, 0), [rows]);
+
+  const teamWorkingHoursData = useMemo(() => {
+    const byDate = new Map<string, number>();
+    (weeklyRows ?? []).forEach((row) => {
+      byDate.set(row.date, (byDate.get(row.date) ?? 0) + row.active_working_seconds);
+    });
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, seconds]) => ({ label: date.slice(5), value: Math.round((seconds / 3600) * 10) / 10 }));
+  }, [weeklyRows]);
+
+  const averageActiveHoursTrend = useMemo(() => {
+    const byDate = new Map<string, { total: number; count: number }>();
+    (weeklyRows ?? []).forEach((row) => {
+      const entry = byDate.get(row.date) ?? { total: 0, count: 0 };
+      entry.total += row.active_working_seconds;
+      entry.count += 1;
+      byDate.set(row.date, entry);
+    });
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, { total, count }]) => ({ label: date.slice(5), value: count > 0 ? Math.round((total / count / 3600) * 10) / 10 : 0 }));
+  }, [weeklyRows]);
+
+  return (
+    <div className="space-y-4">
+      <article className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-lg font-bold">Company-Wide Attendance</h3>
+            <p className="text-sm text-muted-foreground">Today&apos;s working hours across every employee.</p>
+          </div>
+          <div className="rounded-lg bg-teal-50 px-3 py-2 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+            Avg active hours: {averageActiveHours.toFixed(1)}h
+          </div>
+        </div>
+        {error ? (
+          <p className="py-6 text-center text-sm text-red-600">{error}</p>
+        ) : rows === null ? (
+          <div className="flex h-32 items-center justify-center">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">No attendance recorded yet today.</p>
+        ) : (
+          <div className="glass-scrollbar overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left text-sm">
+              <thead>
+                <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
+                  <th className="pb-2 pr-4">Employee</th>
+                  <th className="pb-2 pr-4">Login</th>
+                  <th className="pb-2 pr-4">Active</th>
+                  <th className="pb-2 pr-4">Break</th>
+                  <th className="pb-2 pr-4">Idle</th>
+                  <th className="pb-2 pr-4">Overtime</th>
+                  <th className="pb-2 pr-4">Short Hours</th>
+                  <th className="pb-2 pr-4">Status</th>
+                  <th className="pb-2">Payable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={`${row.employee_id}-${row.date}`} className="border-b last:border-b-0">
+                    <td className="py-2.5 pr-4 font-semibold">{row.employee_name}</td>
+                    <td className="py-2.5 pr-4 text-muted-foreground">
+                      {row.login_time ? new Date(row.login_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </td>
+                    <td className="py-2.5 pr-4">{formatHM(row.active_working_seconds)}</td>
+                    <td className="py-2.5 pr-4">{formatHM(row.break_seconds)}</td>
+                    <td className="py-2.5 pr-4">{formatHM(row.idle_seconds)}</td>
+                    <td className="py-2.5 pr-4">{row.overtime_minutes > 0 ? `${Math.round(row.overtime_minutes)}m` : "—"}</td>
+                    <td className="py-2.5 pr-4">{row.short_minutes > 0 ? `${Math.round(row.short_minutes)}m` : "—"}</td>
+                    <td className="py-2.5 pr-4">
+                      <span className="rounded-full bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                        {row.status}
+                      </span>
+                    </td>
+                    <td className="py-2.5 font-semibold">
+                      {row.earnings.total_earnings > 0 ? `${row.earnings.currency} ${row.earnings.total_earnings.toFixed(2)}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {totalPayable > 0 ? (
+                <tfoot>
+                  <tr>
+                    <td colSpan={8} className="pt-3 text-right text-sm font-semibold text-muted-foreground">
+                      Total payable today
+                    </td>
+                    <td className="pt-3 font-bold">
+                      {rows[0]?.earnings.currency ?? ""} {totalPayable.toFixed(2)}
+                    </td>
+                  </tr>
+                </tfoot>
+              ) : null}
+            </table>
+          </div>
+        )}
+      </article>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <ChartCard title="Daily Working Hours" subtitle="Active hours per employee, today">
+          {dailyHoursData.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No data yet.</p>
+          ) : (
+            <BarChart data={dailyHoursData} suffix="h" />
+          )}
+        </ChartCard>
+        <ChartCard title="Overtime" subtitle="Minutes of overtime per employee, today">
+          {overtimeData.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No overtime today.</p>
+          ) : (
+            <BarChart data={overtimeData} suffix="m" />
+          )}
+        </ChartCard>
+        <ChartCard title="Break / Idle Analysis" subtitle="Company-wide minutes, today">
+          <PieChart data={breakIdleData} donut />
+        </ChartCard>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ChartCard title="Team Working Hours" subtitle="Total active hours across the company, last 7 days">
+          {teamWorkingHoursData.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No data yet.</p>
+          ) : (
+            <BarChart data={teamWorkingHoursData} suffix="h" />
+          )}
+        </ChartCard>
+        <ChartCard title="Average Active Hours" subtitle="Per-employee average, last 7 days">
+          {averageActiveHoursTrend.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">No data yet.</p>
+          ) : (
+            <LineChart data={averageActiveHoursTrend} suffix="h" />
+          )}
+        </ChartCard>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Super Admin communication audit trail
+// ---------------------------------------------------------------------------
+//
+// Rendered ONLY inside the existing Super-Admin-only `audit` module (see
+// MODULE_ACCESS: "audit" appears for superadmin and for no other role) and
+// gated a second time at the call site on `role === "superadmin"`, matching
+// the `activeKey === "settings" && role === "superadmin"` convention already
+// used for ShiftConfigCard. Neither gate is the real protection: the backend
+// scopes every one of these endpoints to the authenticated user's own role
+// server-side (apps.crm.services.scope_queryset_for_user) and strips contact
+// detail below Manager level (apps.core.serializers.PiiMaskedSerializerMixin),
+// so an Employee who calls the same URLs by hand gets their own rows with the
+// PII removed, not this view's data. The gates here are UI tidiness only.
+//
+// Deliberately NO new backend aggregation endpoint: the per-channel list
+// endpoints are individually filterable (owner / direction / status / date
+// range / entity), so one cross-channel thread is assembled here by merging
+// them on timestamp — the same client-side merge EmployeeCustomerProfileModal's
+// Interaction History already does, and one less privileged surface to secure.
+
+type CommAuditChannel = "Email" | "Call" | "WhatsApp";
+
+type CommAuditEvent = {
+  key: string;
+  channel: CommAuditChannel;
+  direction: string;
+  status: string;
+  timestamp: string;
+  employeeId: string;
+  contact: string;
+  summary: string;
+  detail: string;
+  providerId: string;
+  duration: string;
+};
+
+const COMM_AUDIT_CHANNELS: CommAuditChannel[] = ["Email", "Call", "WhatsApp"];
+
+// Each channel's own status vocabulary (see apps/communications/models.py).
+// A status is only ever sent to the endpoints that accept it — django-filter
+// rejects an out-of-vocabulary choice with a 400, so filtering "COMPLETED"
+// must not be forwarded to the email endpoint.
+const COMM_AUDIT_STATUSES: Record<CommAuditChannel, string[]> = {
+  Email: ["QUEUED", "SENT", "FAILED"],
+  Call: ["QUEUED", "RINGING", "IN_PROGRESS", "COMPLETED", "FAILED", "NO_ANSWER", "BUSY"],
+  WhatsApp: ["QUEUED", "SENT", "DELIVERED", "READ", "FAILED"]
+};
+
+const COMM_AUDIT_ALL_STATUSES = Array.from(
+  new Set(COMM_AUDIT_CHANNELS.flatMap((channel) => COMM_AUDIT_STATUSES[channel]))
+).sort();
+
+const COMM_AUDIT_CHANNEL_ICON: Record<CommAuditChannel, React.ElementType> = {
+  Email: Mail,
+  Call: Phone,
+  WhatsApp: MessageCircle
+};
+
+// Local to this section on purpose: the shared `badgeStyles` map is keyed by
+// the Title-Case status words every other module renders, and the backend's
+// communication statuses are UPPER_SNAKE. Keeping them here avoids widening a
+// map other modules depend on.
+const COMM_AUDIT_STATUS_STYLES: Record<string, string> = {
+  SENT: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200",
+  DELIVERED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
+  READ: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
+  COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
+  FAILED: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200",
+  NO_ANSWER: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
+  BUSY: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
+  QUEUED: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
+  RINGING: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
+  IN_PROGRESS: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200"
+};
+
+function commAuditStatusClass(value: string) {
+  return COMM_AUDIT_STATUS_STYLES[value] ?? statusClass(value);
+}
+
+function relatedObjectLabel(value: unknown): string {
+  if (value && typeof value === "object" && "label" in (value as Record<string, unknown>)) {
+    return String((value as Record<string, unknown>).label ?? "");
+  }
+  return "";
+}
+
+function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) {
+  const [channel, setChannel] = useState<"All" | CommAuditChannel>("All");
+  const [employeeId, setEmployeeId] = useState("");
+  const [direction, setDirection] = useState("");
+  const [status, setStatus] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [events, setEvents] = useState<CommAuditEvent[] | null>(null);
+  const [totals, setTotals] = useState<Record<CommAuditChannel, number>>({ Email: 0, Call: 0, WhatsApp: 0 });
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<CommAuditEvent | null>(null);
+
+  const employeeName = useCallback(
+    (id: string) => (id ? users.find((user) => user.id === id)?.Name ?? `User #${id}` : "System"),
+    [users]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    setEvents(null);
+
+    // Every parameter below is a FILTER, never an authorization hint: the
+    // backend applies role scoping before any of them, so a narrower or
+    // wider value can only ever subset what this user may already read.
+    const shared = new URLSearchParams();
+    shared.set("page_size", "100");
+    shared.set("ordering", "-created_at");
+    if (employeeId) shared.set("owner", employeeId);
+    if (direction) shared.set("direction", direction);
+    if (dateFrom) shared.set("created_from", `${dateFrom}T00:00:00`);
+    if (dateTo) shared.set("created_to", `${dateTo}T23:59:59`);
+
+    function queryFor(target: CommAuditChannel) {
+      const params = new URLSearchParams(shared);
+      if (status && COMM_AUDIT_STATUSES[target].includes(status)) params.set("status", status);
+      return `?${params.toString()}`;
+    }
+
+    // A channel excluded by the filter (or by an incompatible status) is
+    // simply not requested — resolving to an empty page keeps the merge
+    // below uniform.
+    const empty = Promise.resolve({ count: 0, next: null, previous: null, results: [] as Record<string, unknown>[] });
+    const wants = (target: CommAuditChannel) =>
+      (channel === "All" || channel === target) && (!status || COMM_AUDIT_STATUSES[target].includes(status));
+
+    Promise.all([
+      wants("Email") ? communications.listEmailMessages(queryFor("Email")) : empty,
+      wants("Call") ? communications.listCalls(queryFor("Call")) : empty,
+      wants("WhatsApp") ? communications.listWhatsAppMessages(queryFor("WhatsApp")) : empty
+    ])
+      .then(([emailPage, callPage, whatsappPage]) => {
+        if (cancelled) return;
+
+        const emailEvents: CommAuditEvent[] = emailPage.results.map((row) => ({
+          key: `email-${row.id}`,
+          channel: "Email",
+          direction: String(row.direction ?? ""),
+          status: String(row.status ?? ""),
+          timestamp: String(row.sent_at ?? row.created_at ?? ""),
+          employeeId: row.owner == null ? "" : String(row.owner),
+          contact: String(row.recipient_label ?? "") || String(row.to_email ?? "") || "—",
+          summary: String(row.subject ?? ""),
+          detail: String(row.error_message ?? "") || String(row.body ?? ""),
+          providerId: String(row.to_email ?? ""),
+          duration: ""
+        }));
+
+        const callEvents: CommAuditEvent[] = callPage.results.map((row) => ({
+          key: `call-${row.id}`,
+          channel: "Call",
+          direction: String(row.direction ?? ""),
+          status: String(row.status ?? ""),
+          timestamp: String(row.started_at ?? row.created_at ?? ""),
+          employeeId: row.owner == null ? "" : String(row.owner),
+          contact: relatedObjectLabel(row.related_object) || String(row.to_number ?? "") || "—",
+          summary: `${String(row.direction ?? "")} call`,
+          detail: String(row.error_message ?? ""),
+          providerId: String(row.provider_call_id ?? ""),
+          duration: row.duration_seconds == null ? "" : `${row.duration_seconds}s`
+        }));
+
+        const whatsappEvents: CommAuditEvent[] = whatsappPage.results.map((row) => ({
+          key: `whatsapp-${row.id}`,
+          channel: "WhatsApp",
+          direction: String(row.direction ?? ""),
+          status: String(row.status ?? ""),
+          timestamp: String(row.created_at ?? ""),
+          employeeId: row.owner == null ? "" : String(row.owner),
+          contact: String(row.customer_name ?? "") || String(row.receiver ?? "") || "—",
+          summary: String(row.message ?? "").slice(0, 120),
+          detail: String(row.error_message ?? "") || String(row.message ?? ""),
+          providerId: String(row.provider_message_id ?? ""),
+          duration: ""
+        }));
+
+        setTotals({ Email: emailPage.count, Call: callPage.count, WhatsApp: whatsappPage.count });
+        setEvents(
+          [...emailEvents, ...callEvents, ...whatsappEvents].sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError
+            ? `Could not load the communication audit trail: ${err.message}`
+            : "Could not reach the communications API."
+        );
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [channel, employeeId, direction, status, dateFrom, dateTo]);
+
+  const visibleEvents = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return events ?? [];
+    return (events ?? []).filter((event) =>
+      [event.contact, event.summary, event.detail, event.providerId, employeeName(event.employeeId)]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle)
+    );
+  }, [events, search, employeeName]);
+
+  const loadedTotal = totals.Email + totals.Call + totals.WhatsApp;
+  const truncated = (events?.length ?? 0) < loadedTotal;
+
+  return (
+    <section className="rounded-2xl border bg-card shadow-sm">
+      <div className="border-b p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 text-lg font-bold">
+              <ShieldCheck className="size-4 text-teal-700 dark:text-teal-300" />
+              Communication Audit Trail
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Every email, call and WhatsApp message between an employee and a customer or lead, merged into one
+              timeline. Super Admin only — enforced server-side.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs font-semibold">
+            {COMM_AUDIT_CHANNELS.map((item) => (
+              <span key={item} className="rounded-full border bg-background px-3 py-1.5">
+                {item}: {totals[item].toLocaleString()}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <label className="relative min-w-0">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search conversations..."
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+            />
+          </label>
+          <select
+            value={channel}
+            onChange={(event) => setChannel(event.target.value as "All" | CommAuditChannel)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            aria-label="Filter by channel"
+          >
+            <option value="All">All channels</option>
+            {COMM_AUDIT_CHANNELS.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+          <select
+            value={employeeId}
+            onChange={(event) => setEmployeeId(event.target.value)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            aria-label="Filter by employee"
+          >
+            <option value="">All employees</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.Name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={direction}
+            onChange={(event) => setDirection(event.target.value)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            aria-label="Filter by direction"
+          >
+            <option value="">Any direction</option>
+            <option value="OUTBOUND">Outbound</option>
+            <option value="INBOUND">Inbound</option>
+          </select>
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            aria-label="Filter by status"
+          >
+            <option value="">Any status</option>
+            {COMM_AUDIT_ALL_STATUSES.map((item) => (
+              <option key={item} value={item}>
+                {item.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+          <label className="flex h-10 items-center gap-2 rounded-lg border bg-background px-3 text-sm">
+            <span className="shrink-0 text-xs font-semibold text-muted-foreground">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+              className="w-full bg-transparent text-sm outline-none"
+            />
+          </label>
+          <label className="flex h-10 items-center gap-2 rounded-lg border bg-background px-3 text-sm">
+            <span className="shrink-0 text-xs font-semibold text-muted-foreground">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(event) => setDateTo(event.target.value)}
+              className="w-full bg-transparent text-sm outline-none"
+            />
+          </label>
+          <button
+            onClick={() => {
+              setChannel("All");
+              setEmployeeId("");
+              setDirection("");
+              setStatus("");
+              setDateFrom("");
+              setDateTo("");
+              setSearch("");
+            }}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-background px-3 text-sm font-semibold hover:bg-muted"
+          >
+            <Filter className="size-4" />
+            Clear filters
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <p className="py-10 text-center text-sm text-red-600">{error}</p>
+      ) : events === null ? (
+        <div className="flex h-40 items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : visibleEvents.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          No communication events match these filters.
+        </p>
+      ) : (
+        <div className="glass-scrollbar overflow-x-auto">
+          <table className="w-full min-w-[960px] text-left text-sm">
+            <thead>
+              <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-4 pb-2 pt-3">Time</th>
+                <th className="px-4 pb-2 pt-3">Channel</th>
+                <th className="px-4 pb-2 pt-3">Direction</th>
+                <th className="px-4 pb-2 pt-3">Employee</th>
+                <th className="px-4 pb-2 pt-3">Lead / Customer</th>
+                <th className="px-4 pb-2 pt-3">Message</th>
+                <th className="px-4 pb-2 pt-3">Status</th>
+                <th className="px-4 pb-2 pt-3">Provider ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleEvents.map((event) => {
+                const ChannelIcon = COMM_AUDIT_CHANNEL_ICON[event.channel];
+                return (
+                  <tr
+                    key={event.key}
+                    onClick={() => setSelected(event)}
+                    className="cursor-pointer border-b last:border-b-0 hover:bg-muted/50"
+                  >
+                    <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">
+                      {event.timestamp ? new Date(event.timestamp).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1.5 font-semibold">
+                        <ChannelIcon className="size-3.5 text-teal-700 dark:text-teal-300" />
+                        {event.channel}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{event.direction || "—"}</td>
+                    <td className="px-4 py-2.5 font-semibold">{employeeName(event.employeeId)}</td>
+                    <td className="px-4 py-2.5">{event.contact}</td>
+                    <td className="max-w-[280px] truncate px-4 py-2.5 text-muted-foreground">
+                      {event.summary || "—"}
+                      {event.duration ? <span className="ml-2 font-semibold text-foreground">{event.duration}</span> : null}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className={cn("rounded-full px-2 py-1 text-xs font-bold ring-1", commAuditStatusClass(event.status))}>
+                        {event.status.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td className="max-w-[180px] truncate px-4 py-2.5 font-mono text-xs text-muted-foreground">
+                      {event.providerId || "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1 border-t p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <p>
+          Showing <span className="font-semibold text-foreground">{visibleEvents.length}</span> of{" "}
+          {loadedTotal.toLocaleString()} recorded communication events.
+        </p>
+        {truncated ? (
+          <p className="text-xs">Showing the most recent 100 per channel — narrow the filters to see older events.</p>
+        ) : null}
+      </div>
+
+      <AnimatePresence>
+        {selected ? (
+          <CommunicationAuditDetailModal
+            event={selected}
+            employeeName={employeeName(selected.employeeId)}
+            onClose={() => setSelected(null)}
+          />
+        ) : null}
+      </AnimatePresence>
+    </section>
+  );
+}
+
+function CommunicationAuditDetailModal({
+  event,
+  employeeName,
+  onClose
+}: {
+  event: CommAuditEvent;
+  employeeName: string;
+  onClose: () => void;
+}) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(clickEvent) => clickEvent.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <h3 className="text-xl font-bold">{event.channel} — audit record</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Recorded by the backend at the moment it happened. This record cannot be edited or deleted.
+            </p>
+          </div>
+          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="space-y-4 p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DetailRow title="Timestamp" subtitle={event.timestamp ? new Date(event.timestamp).toLocaleString() : "—"} />
+            <DetailRow title="Employee" subtitle={employeeName} />
+            <DetailRow title="Lead / Customer" subtitle={event.contact} />
+            <DetailRow title="Direction" subtitle={event.direction || "—"} />
+            <DetailRow title="Status" subtitle={event.status.replace(/_/g, " ")} badge={event.status} />
+            <DetailRow title="Call duration" subtitle={event.duration || "—"} />
+            <DetailRow title="Provider ID" subtitle={event.providerId || "—"} />
+          </div>
+          <div>
+            <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Content</h4>
+            <p className="whitespace-pre-wrap rounded-lg border bg-background p-4 text-sm">
+              {event.detail || event.summary || "No message content recorded."}
+            </p>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ShiftConfigCard() {
+  const [config, setConfig] = useState<ShiftConfig | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    attendance
+      .getShiftConfig()
+      .then((result) => {
+        if (cancelled) return;
+        setConfig(result);
+        setForm({
+          shift_duration_minutes: String(result.shift_duration_minutes),
+          allowed_break_minutes: String(result.allowed_break_minutes),
+          idle_timeout_minutes: String(result.idle_timeout_minutes),
+          overtime_threshold_minutes: String(result.overtime_threshold_minutes),
+          hourly_rate: String(result.hourly_rate),
+          overtime_multiplier: String(result.overtime_multiplier),
+          currency: result.currency,
+          shift_start_time: result.shift_start_time ?? "",
+          shift_end_time: result.shift_end_time ?? "",
+          is_salary_enabled: String(result.is_salary_enabled)
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setMessage("Could not load shift configuration.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSave() {
+    if (!config) return;
+    setSaving(true);
+    setMessage(null);
+    try {
+      const updated = await attendance.updateShiftConfig(config.id, {
+        shift_duration_minutes: Number(form.shift_duration_minutes),
+        allowed_break_minutes: Number(form.allowed_break_minutes),
+        idle_timeout_minutes: Number(form.idle_timeout_minutes),
+        overtime_threshold_minutes: Number(form.overtime_threshold_minutes),
+        hourly_rate: form.hourly_rate,
+        overtime_multiplier: form.overtime_multiplier,
+        currency: form.currency,
+        shift_start_time: form.shift_start_time || null,
+        shift_end_time: form.shift_end_time || null,
+        is_salary_enabled: form.is_salary_enabled === "true"
+      });
+      setConfig(updated);
+      setMessage("Shift configuration saved.");
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : "Could not save shift configuration.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!config) {
+    return (
+      <article className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="flex h-32 items-center justify-center">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="rounded-2xl border bg-card p-5 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-bold">Shift & Attendance Configuration</h3>
+        <p className="text-sm text-muted-foreground">Company-wide shift length, breaks, idle timeout, and pay rules.</p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Shift duration (minutes)</span>
+          <input
+            type="number"
+            value={form.shift_duration_minutes ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, shift_duration_minutes: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Shift start time</span>
+          <input
+            type="time"
+            value={form.shift_start_time ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, shift_start_time: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Shift end time</span>
+          <input
+            type="time"
+            value={form.shift_end_time ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, shift_end_time: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Allowed break (minutes)</span>
+          <input
+            type="number"
+            value={form.allowed_break_minutes ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, allowed_break_minutes: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Idle timeout (minutes)</span>
+          <input
+            type="number"
+            value={form.idle_timeout_minutes ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, idle_timeout_minutes: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Overtime threshold (minutes)</span>
+          <input
+            type="number"
+            value={form.overtime_threshold_minutes ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, overtime_threshold_minutes: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          <input
+            type="checkbox"
+            checked={form.is_salary_enabled === "true"}
+            onChange={(event) => setForm((value) => ({ ...value, is_salary_enabled: String(event.target.checked) }))}
+            className="size-4 rounded border-input accent-teal-600"
+          />
+          Enable salary calculation
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Hourly rate</span>
+          <input
+            value={form.hourly_rate ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, hourly_rate: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Overtime multiplier</span>
+          <input
+            value={form.overtime_multiplier ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, overtime_multiplier: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-semibold">Currency</span>
+          <input
+            value={form.currency ?? ""}
+            onChange={(event) => setForm((value) => ({ ...value, currency: event.target.value }))}
+            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+          />
+        </label>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+          Save Changes
+        </button>
+        {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
+      </div>
+    </article>
+  );
+}
+
 type CalendarDayData = {
   leads: RowRecord[];
   customers: RowRecord[];
@@ -2663,6 +7124,8 @@ function SmartCalendarModule({
   recordsByModule,
   reminders,
   notes,
+  currentUserName,
+  teamNames,
   onAddReminder,
   onUpdateReminder,
   onDeleteReminder,
@@ -2676,6 +7139,8 @@ function SmartCalendarModule({
   recordsByModule: RecordsByModule;
   reminders: Reminder[];
   notes: CalendarNote[];
+  currentUserName: string;
+  teamNames: string[];
   onAddReminder: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
   onUpdateReminder: (id: string, patch: Partial<Reminder>) => void;
   onDeleteReminder: (id: string) => void;
@@ -2690,11 +7155,14 @@ function SmartCalendarModule({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const identity = role === "employee" ? CURRENT_EMPLOYEE_NAME : role === "manager" ? "Manager" : "Super Admin";
+  const identity = role === "employee" ? currentUserName : role === "manager" ? "Manager" : "Super Admin";
   const todayKey = toDateKey(new Date());
 
-  const visibleReminders = useMemo(() => reminders.filter((reminder) => canSeeReminder(reminder, role)), [reminders, role]);
-  const visibleNotes = useMemo(() => notes.filter((note) => canSeeNote(note, role)), [notes, role]);
+  const visibleReminders = useMemo(
+    () => reminders.filter((reminder) => canSeeReminder(reminder, role, currentUserName, teamNames)),
+    [reminders, role, currentUserName, teamNames]
+  );
+  const visibleNotes = useMemo(() => notes.filter((note) => canSeeNote(note, role, currentUserName)), [notes, role, currentUserName]);
 
   const dayMap = useMemo(() => {
     const map = new Map<string, CalendarDayData>();
@@ -2702,11 +7170,11 @@ function SmartCalendarModule({
       if (!map.has(key)) map.set(key, emptyDayData());
       return map.get(key)!;
     }
-    scopeRowsForCalendar(recordsByModule.leads ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).leads.push(row));
-    scopeRowsForCalendar(recordsByModule.customers ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).customers.push(row));
-    scopeRowsForCalendar(recordsByModule.payments ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).payments.push(row));
-    scopeRowsForCalendar(recordsByModule.tasks ?? [], role).forEach((row) => ensure(pseudoDateForRow(row.id)).tasks.push(row));
-    scopeRowsForCalendar(recordsByModule.communication ?? [], role).forEach((row) => {
+    scopeRowsForCalendar(recordsByModule.leads ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).leads.push(row));
+    scopeRowsForCalendar(recordsByModule.customers ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).customers.push(row));
+    scopeRowsForCalendar(recordsByModule.payments ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).payments.push(row));
+    scopeRowsForCalendar(recordsByModule.tasks ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).tasks.push(row));
+    scopeRowsForCalendar(recordsByModule.communication ?? []).forEach((row) => {
       const bucket = ensure(pseudoDateForRow(row.id));
       bucket.communication.push(row);
       if (row.Channel === "Call") bucket.calls.push(row);
@@ -2787,6 +7255,44 @@ function SmartCalendarModule({
             {counts[item.key]}
           </span>
         ))}
+      </div>
+    );
+  }
+
+  // Employee-only date preview (spec section 9): customer initials chips
+  // for that day's follow-up-linked customers, and a StickyNote icon (with
+  // a count bubble when there's more than one note) instead of the
+  // generic numeric-count dots Manager/Super Admin still see via
+  // DayBadges above — reads from the same already-scoped `dayMap`.
+  function EmployeeDayBadges({ dateKey }: { dateKey: string }) {
+    const day = dayMap.get(dateKey);
+    if (!day) return null;
+    const initials = (name: string) =>
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("") || "?";
+    const customerChips = day.customers.slice(0, 3);
+    const noteCount = day.notes.length;
+    if (customerChips.length === 0 && noteCount === 0) return null;
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {customerChips.map((row) => (
+          <span
+            key={row.id}
+            className="inline-flex min-w-5 items-center justify-center rounded-full bg-pink-500 px-1.5 py-0.5 text-[10px] font-bold text-white"
+          >
+            {initials(row.Customer ?? "")}
+          </span>
+        ))}
+        {noteCount > 0 ? (
+          <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            <StickyNote className="size-3" />
+            {noteCount > 1 ? noteCount : ""}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -2878,7 +7384,7 @@ function SmartCalendarModule({
                   <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs font-bold", isToday && "bg-teal-600 text-white")}>
                     {date.getDate()}
                   </span>
-                  <DayBadges dateKey={key} />
+                  {role === "employee" ? <EmployeeDayBadges dateKey={key} /> : <DayBadges dateKey={key} />}
                 </button>
               );
             })}
@@ -2927,6 +7433,7 @@ function SmartCalendarModule({
           <DayContent
             role={role}
             identity={identity}
+            teamNames={teamNames}
             dateKey={toDateKey(cursor)}
             day={dayMap.get(toDateKey(cursor)) ?? emptyDayData()}
             onAddReminder={onAddReminder}
@@ -2946,6 +7453,7 @@ function SmartCalendarModule({
           <DateDetailsPanel
             role={role}
             identity={identity}
+            teamNames={teamNames}
             dateKey={selectedDate}
             day={dayMap.get(selectedDate) ?? emptyDayData()}
             onClose={() => setSelectedDate(null)}
@@ -2967,6 +7475,7 @@ function SmartCalendarModule({
 function DateDetailsPanel({
   role,
   identity,
+  teamNames,
   dateKey,
   day,
   onClose,
@@ -2981,6 +7490,7 @@ function DateDetailsPanel({
 }: {
   role: Role;
   identity: string;
+  teamNames: string[];
   dateKey: string;
   day: CalendarDayData;
   onClose: () => void;
@@ -3021,6 +7531,7 @@ function DateDetailsPanel({
         <DayContent
           role={role}
           identity={identity}
+          teamNames={teamNames}
           dateKey={dateKey}
           day={day}
           onAddReminder={onAddReminder}
@@ -3041,6 +7552,7 @@ function DateDetailsPanel({
 function DayContent({
   role,
   identity,
+  teamNames,
   dateKey,
   day,
   onAddReminder,
@@ -3054,6 +7566,7 @@ function DayContent({
 }: {
   role: Role;
   identity: string;
+  teamNames: string[];
   dateKey: string;
   day: CalendarDayData;
   onAddReminder: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
@@ -3068,8 +7581,8 @@ function DayContent({
   const timeline = [
     ...day.leads.map((row) => ({ label: `Lead: ${row.Lead ?? row.id}`, sub: row.Status ?? "" })),
     ...day.customers.map((row) => ({ label: `Customer: ${row.Customer ?? row.id}`, sub: row.Status ?? "" })),
-    ...day.payments.map((row) => ({ label: `Payment: ${row.Customer ?? row.id}`, sub: row.Balance ?? "" })),
-    ...day.communication.map((row) => ({ label: `${row.Channel ?? "Message"}: ${row.Contact ?? row.id}`, sub: row.Outcome ?? "" })),
+    ...day.payments.map((row) => ({ label: `Payment: ${row.Invoice ?? row.id}`, sub: row.Status ?? "" })),
+    ...day.communication.map((row) => ({ label: `Email: ${row.Recipient ?? row.id}`, sub: row.Status ?? "" })),
     ...day.tasks.map((row) => ({ label: `Task: ${row.Task ?? row.id}`, sub: row.Status ?? "" }))
   ];
 
@@ -3103,7 +7616,7 @@ function DayContent({
       {day.payments.length > 0 ? (
         <DetailSection title="Payment records">
           {day.payments.map((row) => (
-            <DetailRow key={row.id} title={row.Customer ?? row.id} subtitle={`Paid ${row.Paid ?? "-"} of ${row.Amount ?? "-"}`} badge={parseCurrency(row.Balance) > 0 ? "Partial" : "Paid"} />
+            <DetailRow key={row.id} title={row.Invoice ?? row.id} subtitle={`Customer #${row["Customer ID"] ?? "-"} - $${row.Total ?? "-"}`} badge={row.Status} />
           ))}
         </DetailSection>
       ) : null}
@@ -3111,7 +7624,7 @@ function DayContent({
       {day.communication.length > 0 ? (
         <DetailSection title="Calls, WhatsApp & email history">
           {day.communication.map((row) => (
-            <DetailRow key={row.id} title={`${row.Channel ?? "Message"} - ${row.Contact ?? row.id}`} subtitle={row["Last Message"] ?? ""} badge={row.Outcome} />
+            <DetailRow key={row.id} title={`${row.Recipient ?? row.id}`} subtitle={row.Subject ?? ""} badge={row.Status} />
           ))}
         </DetailSection>
       ) : null}
@@ -3119,7 +7632,7 @@ function DayContent({
       {day.tasks.length > 0 ? (
         <DetailSection title="Tasks & meetings">
           {day.tasks.map((row) => (
-            <DetailRow key={row.id} title={row.Task ?? row.id} subtitle={row["Assigned To"] ?? ""} badge={row.Status} />
+            <DetailRow key={row.id} title={row.Task ?? row.id} subtitle={row.Priority ?? ""} badge={row.Status} />
           ))}
         </DetailSection>
       ) : null}
@@ -3127,7 +7640,7 @@ function DayContent({
       {role === "superadmin" && day.audit.length > 0 ? (
         <DetailSection title="Audit logs">
           {day.audit.map((row) => (
-            <DetailRow key={row.id} title={row.Action ?? row.id} subtitle={`${row.Actor ?? ""} - ${row.Module ?? ""}`} badge={row.Time} />
+            <DetailRow key={row.id} title={row.Action ?? row.id} subtitle={`${row.Actor ?? ""} - ${row.Description ?? ""}`} badge={row.Time} />
           ))}
         </DetailSection>
       ) : null}
@@ -3135,6 +7648,7 @@ function DayContent({
       <ReminderSection
         role={role}
         identity={identity}
+        teamNames={teamNames}
         dateKey={dateKey}
         reminders={day.reminders}
         onAdd={onAddReminder}
@@ -3204,6 +7718,7 @@ function DetailRow({ title, subtitle, badge }: { title: string; subtitle?: strin
 function ReminderSection({
   role,
   identity,
+  teamNames,
   dateKey,
   reminders,
   onAdd,
@@ -3214,6 +7729,7 @@ function ReminderSection({
 }: {
   role: Role;
   identity: string;
+  teamNames: string[];
   dateKey: string;
   reminders: Reminder[];
   onAdd: (input: Omit<Reminder, "id" | "completed" | "snoozedUntil" | "createdByRole">) => void;
@@ -3222,7 +7738,7 @@ function ReminderSection({
   onToggleComplete: (id: string) => void;
   onSnooze: (id: string, days?: number) => void;
 }) {
-  const assigneeOptions = assigneeOptionsForRole(role);
+  const assigneeOptions = assigneeOptionsForRole(role, identity, teamNames);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [time, setTime] = useState("09:00");
@@ -3820,7 +8336,9 @@ function DataTable({
   onDuplicate,
   onDelete,
   sort,
-  onSort
+  onSort,
+  role,
+  allowEdit = false
 }: {
   module: ModuleConfig;
   rows: RowRecord[];
@@ -3830,7 +8348,13 @@ function DataTable({
   onDelete: (row: RowRecord) => void;
   sort: { column: string; direction: "asc" | "desc" } | null;
   onSort: (column: string) => void;
+  role?: Role;
+  // Employees are view-only everywhere except Tasks (where they may
+  // update their own task's status/completion) — see the Tasks &
+  // Follow-ups render branch, the only caller that passes allowEdit.
+  allowEdit?: boolean;
 }) {
+  const isEmployeeViewOnly = role === "employee";
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const MENU_WIDTH = 160;
@@ -3914,20 +8438,24 @@ function DataTable({
                   >
                     <Eye className="size-4" />
                   </button>
-                  <button
-                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
-                    aria-label="Edit record"
-                    onClick={() => onEdit(row)}
-                  >
-                    <Pencil className="size-4" />
-                  </button>
-                  <button
-                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
-                    aria-label="More actions"
-                    onClick={(event) => toggleMenu(row.id, event)}
-                  >
-                    <MoreHorizontal className="size-4" />
-                  </button>
+                  {!isEmployeeViewOnly || allowEdit ? (
+                    <button
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      aria-label="Edit record"
+                      onClick={() => onEdit(row)}
+                    >
+                      <Pencil className="size-4" />
+                    </button>
+                  ) : null}
+                  {!isEmployeeViewOnly ? (
+                    <button
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      aria-label="More actions"
+                      onClick={(event) => toggleMenu(row.id, event)}
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </button>
+                  ) : null}
                 </div>
               </td>
             </tr>
@@ -3990,61 +8518,6 @@ function LoadingSkeleton({ columns }: { columns: string[] }) {
   );
 }
 
-function WorkflowPanel({ module }: { module: ModuleConfig }) {
-  return (
-    <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-      <article className="rounded-2xl border bg-card p-5 shadow-sm">
-        <div className="mb-5 flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-bold">Form & Validation</h3>
-            <p className="text-sm text-muted-foreground">{module.formTitle} with required field checks.</p>
-          </div>
-          <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-700 dark:bg-red-950 dark:text-red-200">Required</span>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {module.formFields.map((field, index) => (
-            <label key={field.label} className="space-y-1.5">
-              <span className="text-sm font-semibold">{field.label}</span>
-              {field.type === "select" ? (
-                <select className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4">
-                  <option>{field.placeholder}</option>
-                </select>
-              ) : (
-                <input
-                  type={field.type}
-                  placeholder={field.placeholder}
-                  className={cn(
-                    "h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4",
-                    index === 1 && "border-red-300"
-                  )}
-                />
-              )}
-              {index === 1 ? <span className="text-xs font-medium text-red-600">This field is required.</span> : null}
-            </label>
-          ))}
-        </div>
-      </article>
-
-      <article className="rounded-2xl border bg-card p-5 shadow-sm">
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold">Empty & Loading States</h3>
-            <p className="text-sm text-muted-foreground">Production states for slow or missing records.</p>
-          </div>
-          <Loader2 className="size-5 animate-spin text-teal-600" />
-        </div>
-        <div className="rounded-xl border border-dashed p-5 text-center">
-          <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-xl bg-muted">
-            <Filter className="size-5 text-muted-foreground" />
-          </div>
-          <h4 className="font-bold">No filtered data yet</h4>
-          <p className="mt-1 text-sm text-muted-foreground">Clear filters or create a new record from the module actions.</p>
-        </div>
-      </article>
-    </section>
-  );
-}
-
 function Toast({ toast }: { toast: { type: "success" | "error"; message: string } }) {
   const isSuccess = toast.type === "success";
   return (
@@ -4097,14 +8570,14 @@ function DetailDrawer({
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Permissions</p>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {role === "manager"
-              ? "Manager can view, create, update, assign, and export this module for their own team only. Audit Logs and other teams' data stay hidden."
+              ? "Manager can view, create, update, and assign this module for their own team only. Audit Logs and other teams' data stay hidden."
               : role === "employee"
               ? "Employee can view, create, and update records assigned to them only. Other employees' data, reports, audit logs, and settings stay hidden."
-              : "Super Admin can view, create, update, assign, configure, export, and audit this module with no restrictions."}
+              : "Super Admin can view, create, update, assign, configure, and audit this module with no restrictions."}
           </p>
         </div>
         <div className="space-y-2">
-          {module.actions.map((action) => {
+          {visibleActionsForRole(module.actions, role).map((action) => {
             const ActionIcon = action.icon;
             return (
               <button
@@ -4143,7 +8616,8 @@ function RecordModal({
   formData,
   onChange,
   onSave,
-  onClose
+  onClose,
+  extraContent
 }: {
   module: ModuleConfig;
   mode: "create" | "edit" | "view";
@@ -4151,6 +8625,9 @@ function RecordModal({
   onChange: (field: string, value: string) => void;
   onSave: () => void;
   onClose: () => void;
+  // Optional per-record actions rendered under the field grid (used by the
+  // Employee lead detail view for its Email/Call/WhatsApp quick actions).
+  extraContent?: React.ReactNode;
 }) {
   const isView = mode === "view";
   const title = mode === "edit" ? `Edit ${module.title}` : mode === "view" ? `View ${module.title}` : module.formTitle;
@@ -4205,6 +8682,7 @@ function RecordModal({
             </label>
           ))}
         </div>
+        {extraContent ? <div className="px-5 pb-5">{extraContent}</div> : null}
         <div className="flex flex-col-reverse gap-2 border-t p-5 sm:flex-row sm:justify-end">
           <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
             {isView ? "Close" : "Cancel"}

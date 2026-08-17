@@ -22,6 +22,10 @@ def test_customer_serializer_fields():
     assert {
         "id", "organization", "name", "slug", "owner", "status", "industry", "website",
         "email", "phone", "notes", "is_active",
+        # The privacy pass added three read-only capability booleans that
+        # REPLACE email/phone in an employee-facing response — see
+        # apps.core.serializers.ContactCapabilityMixin.
+        "can_email", "can_call", "can_whatsapp",
         "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
     } == set(fields.keys())
 
@@ -84,11 +88,38 @@ def test_address_serializer_fields():
 
 
 @pytest.mark.django_db
-def test_contactperson_serializer_rejects_second_primary_contact(customer):
+def test_contactperson_serializer_allows_second_primary_contact_on_create(customer):
+    """CREATE with a second is_primary=True is valid at the serializer
+    level — ContactPersonViewSet.perform_create() routes every create
+    through apps.crm.services.add_contact(), which demotes the existing
+    primary contact before creating the new one (see
+    test_create_contact_via_service_layer in test_api_crud.py for the
+    full end-to-end behavior). Rejecting it here, in validate(), would
+    make that demote step unreachable, since DRF calls validate() before
+    perform_create() ever runs — see ContactPersonSerializer.validate()'s
+    own docstring.
+    """
     ContactPerson.objects.create(customer=customer, first_name="Jane", last_name="Doe", is_primary=True)
 
     serializer = ContactPersonSerializer(
         data={"customer": customer.pk, "first_name": "John", "last_name": "Smith", "is_primary": True}
+    )
+
+    assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.django_db
+def test_contactperson_serializer_rejects_update_that_steals_primary_from_another_contact(customer):
+    """UPDATE, unlike create, has no auto-demote wrapper — validate()
+    still rejects promoting a DIFFERENT contact to primary via PATCH
+    while an existing primary contact remains untouched.
+    """
+    ContactPerson.objects.create(customer=customer, first_name="Jane", last_name="Doe", is_primary=True)
+    john = ContactPerson.objects.create(customer=customer, first_name="John", last_name="Smith", is_primary=False)
+
+    serializer = ContactPersonSerializer(
+        instance=john,
+        data={"customer": customer.pk, "first_name": "John", "last_name": "Smith", "is_primary": True},
     )
 
     assert serializer.is_valid() is False

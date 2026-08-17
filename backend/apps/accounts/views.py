@@ -39,11 +39,12 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView
 
 from .challenge import issue_super_admin_challenge
 from .models import UserSession
+from .permissions import ReadOnlyOrSuperAdmin
 from .serializers import (
     LoginSerializer,
     LoginSuccessSerializer,
@@ -51,11 +52,16 @@ from .serializers import (
     RevokeAllResponseSerializer,
     SuperAdminChallengeSerializer,
     SuperAdminVerifySerializer,
+    UserCreateSerializer,
+    UserManagementSerializer,
     UserSerializer,
     UserSessionSerializer,
 )
 from .services import (
+    activate_user,
+    create_managed_user,
     create_session,
+    deactivate_user,
     revoke_all_sessions_except,
     revoke_session,
     touch_session_on_refresh,
@@ -85,17 +91,54 @@ def _issue_token_pair_response(user, request):
     created to track the new refresh token.
     """
     refresh = RefreshToken.for_user(user)
-    refresh.access_token[SESSION_JTI_CLAIM] = refresh["jti"]
+    # ``refresh.access_token`` is a @property — every access mints a BRAND
+    # NEW AccessToken instance (see SimpleJWT's tokens.py), never a cached
+    # one. Setting the claim via `refresh.access_token[...] = ...` was
+    # mutating a throwaway instance that the very next `.access_token`
+    # access (below) would discard, so the token actually returned to the
+    # client never carried this claim — silently breaking
+    # `_current_session_jti()` for every login. Setting it on the REFRESH
+    # token's own payload instead means every AccessToken minted from it
+    # (here, and after every future rotation — see
+    # SessionAwareTokenRefreshView below) inherits it via the property's
+    # claim-copy loop, since "session_jti" isn't in SimpleJWT's
+    # `no_copy_claims`.
+    refresh[SESSION_JTI_CLAIM] = refresh["jti"]
+    access_token = refresh.access_token
     create_session(user=user, refresh_token=refresh, request=request)
 
     return Response(
         {
-            "access": str(refresh.access_token),
+            "access": str(access_token),
             "refresh": str(refresh),
             "user": UserSerializer(user).data,
         },
         status=status.HTTP_200_OK,
     )
+
+
+class _CredentialsInBodyAuthHeaderMixin:
+    """For views that set ``authentication_classes = []`` (the credential
+    being validated lives in the request BODY — password, refresh token,
+    challenge — not in an ``Authorization`` header, and a client's stale
+    Bearer token must never block the request from reaching that body
+    validation at all).
+
+    That emptiness has a surprising side effect: DRF's exception handler
+    only returns 401 for an ``AuthenticationFailed`` if
+    ``get_authenticate_header()`` finds a non-empty ``WWW-Authenticate``
+    value to attach (``rest_framework/views.py``'s
+    ``exception_handler()``) — with no authenticators registered, it
+    silently coerces the response to 403 instead. Every one of these
+    views' serializers legitimately raises ``AuthenticationFailed`` for
+    wrong credentials (wrong password, invalid/expired challenge, wrong
+    access code) and expects a real 401, per CP3/CP4's own tests. This
+    mixin restores a normal ``WWW-Authenticate`` value without
+    reintroducing actual token authentication on these endpoints.
+    """
+
+    def get_authenticate_header(self, request):
+        return "Bearer"
 
 
 def _current_session_jti(request):
@@ -116,7 +159,7 @@ def _current_session_jti(request):
         resource_type_field_name=None,
     )
 )
-class LoginView(generics.GenericAPIView):
+class LoginView(_CredentialsInBodyAuthHeaderMixin, generics.GenericAPIView):
     """POST /api/v1/auth/login/ — email + password -> two possible outcomes.
 
     EMPLOYEE / MANAGER: access + refresh + user (unchanged from CP3), and a
@@ -133,6 +176,8 @@ class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
     permission_classes = [permissions.AllowAny]
     authentication_classes = []  # logging in does not require being already authenticated
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={"request": request})
@@ -164,7 +209,7 @@ class MeView(generics.RetrieveAPIView):
         return self.request.user
 
 
-class LogoutView(generics.GenericAPIView):
+class LogoutView(_CredentialsInBodyAuthHeaderMixin, generics.GenericAPIView):
     """POST /api/v1/auth/logout/ — blacklist a refresh token.
 
     Takes the refresh token (not the access token) in the body. Blacklisting
@@ -188,7 +233,7 @@ class LogoutView(generics.GenericAPIView):
 
 
 @extend_schema(responses={200: LoginSuccessSerializer})
-class SuperAdminVerifyView(generics.GenericAPIView):
+class SuperAdminVerifyView(_CredentialsInBodyAuthHeaderMixin, generics.GenericAPIView):
     """POST /api/v1/auth/super-admin/verify/ — CP4 secondary verification.
 
     Exchanges a valid (unexpired, correctly-signed) challenge token plus the
@@ -235,6 +280,9 @@ class SessionAwareTokenRefreshView(TokenRefreshView):
     request for its own reasons.
     """
 
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "token_refresh"
+
     def post(self, request, *args, **kwargs):
         old_jti = self._jti_from_token_string(request.data.get("refresh"))
 
@@ -244,6 +292,20 @@ class SessionAwareTokenRefreshView(TokenRefreshView):
             new_refresh_str = response.data.get("refresh")
             new_jti = self._jti_from_token_string(new_refresh_str) if new_refresh_str else None
             touch_session_on_refresh(old_jti=old_jti, new_jti=new_jti)
+
+            # Rotation is enabled, so `new_jti` (the new refresh token's own
+            # jti) is what UserSession.refresh_token_jti now holds (see
+            # touch_session_on_refresh() above). The access token SimpleJWT
+            # just minted still carries whatever `session_jti` claim was on
+            # the OLD refresh token's payload (STALE — the jti from before
+            # this rotation), since ROTATE_REFRESH_TOKENS reuses the same
+            # RefreshToken object and only mutates its jti in place. Without
+            # re-stamping it here, `_current_session_jti()` would stop
+            # matching this session after the very first refresh.
+            if new_jti and response.data.get("access"):
+                access = AccessToken(response.data["access"])
+                access[SESSION_JTI_CLAIM] = new_jti
+                response.data["access"] = str(access)
 
         return response
 
@@ -321,3 +383,68 @@ class LogoutAllView(APIView):
     def post(self, request, *args, **kwargs):
         revoked = revoke_all_sessions_except(request.user, _current_session_jti(request))
         return Response({"revoked": revoked}, status=status.HTTP_200_OK)
+
+
+class UserListCreateView(generics.ListCreateAPIView):
+    """Final-completion-pass: the admin-facing Users management API.
+
+    Read (list): any authenticated user — matches the same "org chart is
+    visible to everyone" rule ``apps.organization``'s Department/Team
+    endpoints already use. Write (create): Super Admin only — creating an
+    account is not a Manager-level decision, the same rule
+    ``apps.organization``'s ``OrganizationWritePermission`` applies to
+    creating an Organization itself.
+    """
+
+    queryset = User.objects.all().order_by("email")
+    permission_classes = [permissions.IsAuthenticated, ReadOnlyOrSuperAdmin]
+    filterset_fields = ["role", "is_active"]
+    search_fields = ["email", "first_name", "last_name"]
+    ordering_fields = ["email", "date_joined", "role"]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return UserCreateSerializer
+        return UserManagementSerializer
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        user = create_managed_user(
+            data["email"],
+            data["password"],
+            role=data.get("role", User.Role.EMPLOYEE),
+            first_name=data.get("first_name", ""),
+            last_name=data.get("last_name", ""),
+        )
+        serializer.instance = user
+
+
+class UserDetailView(generics.RetrieveUpdateAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserManagementSerializer
+    permission_classes = [permissions.IsAuthenticated, ReadOnlyOrSuperAdmin]
+    http_method_names = ["get", "patch", "head", "options"]
+
+
+@extend_schema(request=None, responses={200: UserManagementSerializer})
+class UserActivateView(generics.GenericAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserManagementSerializer
+    permission_classes = [permissions.IsAuthenticated, ReadOnlyOrSuperAdmin]
+
+    def post(self, request, *args, **kwargs):
+        user = self.get_object()
+        activate_user(user)
+        return Response(self.get_serializer(user).data)
+
+
+@extend_schema(request=None, responses={200: UserManagementSerializer})
+class UserDeactivateView(generics.GenericAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserManagementSerializer
+    permission_classes = [permissions.IsAuthenticated, ReadOnlyOrSuperAdmin]
+
+    def post(self, request, *args, **kwargs):
+        user = self.get_object()
+        deactivate_user(user)
+        return Response(self.get_serializer(user).data)

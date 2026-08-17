@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from apps.crm.services import assign_owner  # noqa: F401  (re-exported for apps.sales callers)
 
-from .models import Invoice, InvoiceItem, Quote, QuoteItem
+from .models import Invoice, InvoiceItem, PaymentTransaction, Quote, QuoteItem
 
 
 # --------------------------------------------------------------------------
@@ -249,6 +249,53 @@ def cancel_invoice(invoice):
     return invoice
 
 
+def record_payment(invoice, amount, *, method=PaymentTransaction.Method.OTHER, recorded_by=None, paid_at=None, notes=""):
+    """Record one payment against ``invoice`` and recalculate its status
+    from the resulting total paid — the "partial payments, transaction
+    history, balance" spec requirement, layered on top of (not replacing)
+    ``mark_invoice_paid()``'s existing all-at-once shortcut.
+
+    Rules, enforced here rather than left to the caller:
+
+    - A cancelled invoice can never receive a payment.
+    - ``amount`` must be strictly positive.
+    - The running total paid (this payment included) can never exceed
+      ``invoice.total`` — no overpayment, ever.
+    - Once the running total equals ``invoice.total``, the invoice moves
+      to ``PAID`` (and ``paid_at`` is set, mirroring
+      ``mark_invoice_paid()``); a smaller running total moves it to
+      ``PARTIAL`` instead of leaving it at ``DRAFT``/``SENT``.
+    """
+    if invoice.status == Invoice.Status.CANCELLED:
+        raise ValueError("Cannot record a payment against a cancelled invoice.")
+    if amount is None or amount <= 0:
+        raise ValueError("Payment amount must be greater than zero.")
+
+    remaining = invoice.total - invoice.amount_paid
+    if amount > remaining:
+        raise ValueError(f"Payment of {amount} exceeds the remaining balance of {remaining}.")
+
+    transaction = PaymentTransaction.objects.create(
+        invoice=invoice,
+        amount=amount,
+        method=method,
+        paid_at=paid_at or timezone.now(),
+        recorded_by=recorded_by,
+        notes=notes,
+    )
+
+    new_total_paid = invoice.amount_paid
+    if new_total_paid >= invoice.total:
+        invoice.status = Invoice.Status.PAID
+        invoice.paid_at = transaction.paid_at
+        invoice.save(update_fields=["status", "paid_at", "updated_at"])
+    elif new_total_paid > 0:
+        invoice.status = Invoice.Status.PARTIAL
+        invoice.save(update_fields=["status", "updated_at"])
+
+    return transaction
+
+
 __all__ = [
     "assign_owner",
     "create_quote",
@@ -263,4 +310,5 @@ __all__ = [
     "recalculate_invoice_totals",
     "mark_invoice_paid",
     "cancel_invoice",
+    "record_payment",
 ]

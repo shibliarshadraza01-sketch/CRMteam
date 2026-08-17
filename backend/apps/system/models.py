@@ -86,6 +86,15 @@ class AuditLog(TimeStampedModel, RelatedToEntityModel):
             models.Index(fields=["actor"], name="system_auditlog_actor_idx"),
             models.Index(fields=["action"], name="system_auditlog_action_idx"),
             models.Index(fields=["content_type", "object_id"], name="system_auditlog_entity_idx"),
+            # AuditLog is the one table in this project explicitly expected
+            # to grow indefinitely and never be pruned (see this model's own
+            # docstring — no restore/hard-delete either). Every unfiltered
+            # list request pages through Meta.ordering's `-created_at`; the
+            # other three indexes above only help once a filter is applied.
+            # No other model in this project needs this same treatment —
+            # they're all bounded by real-world business-record counts, not
+            # an ever-growing event log.
+            models.Index(fields=["-created_at"], name="system_auditlog_created_idx"),
         ]
 
     def __str__(self):

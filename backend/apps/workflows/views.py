@@ -10,7 +10,9 @@ from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.accounts.permissions import assert_object_accessible
 from apps.core.utils import stamp_audit_fields
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
 from .filters import (
@@ -64,8 +66,9 @@ class WorkflowViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         workflow = serializer.instance
-        if workflow.owner_id is None:
-            workflow.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, workflow.owner)
+        if resolved_owner.pk != workflow.owner_id:
+            workflow.owner = resolved_owner
             workflow.save(update_fields=["owner", "updated_at"])
 
     @extend_schema(request=WorkflowExecuteSerializer, responses={201: WorkflowExecutionSerializer})
@@ -122,6 +125,7 @@ class WorkflowActionViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         workflow = data.pop("workflow")
+        assert_object_accessible(self.request, workflow)
         action_type = data.pop("action_type")
         configuration = data.pop("configuration", None)
         position = data.pop("position", None)

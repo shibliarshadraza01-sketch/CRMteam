@@ -55,7 +55,7 @@ def test_invoice_serializer_fields():
     fields = InvoiceSerializer().fields
     assert {
         "id", "customer", "quote", "owner", "invoice_number", "status", "due_date",
-        "subtotal", "tax", "total", "paid_at",
+        "subtotal", "tax", "total", "paid_at", "amount_paid", "balance",
         "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
     } == set(fields.keys())
 

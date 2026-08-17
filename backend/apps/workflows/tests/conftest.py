@@ -53,7 +53,11 @@ def customer(db, organization, employee):
     from apps.crm.models import Customer
 
     return Customer.objects.create(
-        organization=organization, name="Workflows Acme Customer", slug="workflows-acme-customer", owner=employee
+        organization=organization,
+        name="Workflows Acme Customer",
+        slug="workflows-acme-customer",
+        owner=employee,
+        email="customer@workflows-acme.example",
     )
 
 

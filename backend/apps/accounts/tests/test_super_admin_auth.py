@@ -11,6 +11,7 @@ test_super_admin_access_code.py instead, and does actually run/pass today.
 import pytest
 from django.contrib.auth import get_user_model
 from django.core import signing
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 from apps.accounts.challenge import issue_super_admin_challenge
@@ -18,6 +19,23 @@ from apps.accounts.challenge import issue_super_admin_challenge
 pytestmark = pytest.mark.django_db
 
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttle_cache():
+    """SuperAdminVerifyView is rate-limited via DRF's ScopedRateThrottle
+    (config/settings/base.py, scope "super_admin_verify"), which counts
+    requests in Django's default cache (LocMemCache — in-process, shared for
+    the whole test run, not reset between tests). Without this, this file's
+    ~13 tests against VERIFY_URL share one 5/min counter and start getting
+    throttled (403) partway through the file regardless of what each test
+    actually asserts — a test-isolation gap, not a production behavior
+    change. Production's LocMemCache correctly persists between real
+    requests; only the test suite needs its own state wiped per test.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 LOGIN_URL = "/api/v1/auth/login/"
 REFRESH_URL = "/api/v1/auth/refresh/"

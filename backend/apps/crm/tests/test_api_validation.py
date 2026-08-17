@@ -25,12 +25,26 @@ def test_creating_lead_with_converted_status_is_rejected(api_client, employee):
 
 
 def test_creating_customer_without_required_field_is_rejected(api_client, employee, organization):
+    """``slug`` is deliberately NOT tested here anymore — it's
+    required=False by design (perform_create() auto-generates it from
+    ``name`` when omitted; see CustomerSerializer's own comment). ``name``
+    remains genuinely required.
+    """
     api_client.force_authenticate(employee)
 
-    response = api_client.post(CUSTOMERS_URL, {"organization": organization.id, "name": "Acme"})  # missing slug
+    response = api_client.post(CUSTOMERS_URL, {"organization": organization.id})  # missing name
 
     assert response.status_code == 400
-    assert "slug" in response.data
+    assert "name" in response.data
+
+
+def test_creating_customer_without_slug_is_accepted_and_auto_generates_one(api_client, employee, organization):
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(CUSTOMERS_URL, {"organization": organization.id, "name": "Acme"})
+
+    assert response.status_code == 201
+    assert response.data["slug"] == "acme"
 
 
 def test_creating_customer_with_duplicate_slug_in_same_organization_is_rejected(api_client, employee, organization):

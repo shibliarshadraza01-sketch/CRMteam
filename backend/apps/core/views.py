@@ -131,3 +131,35 @@ class ReferenceDataModelViewSetMixin(SoftDeleteAuditModelViewSetMixin):
     def get_queryset(self):
         base_manager = self.base_active_manager if self.action == "list" else self.base_manager
         return base_manager.all()
+
+
+class PiiSafeSearchMixin:
+    """Removes customer-PII columns from ``SearchFilter``'s field list for
+    an employee-facing request.
+
+    Without this, an Employee could *discover* a customer's real email
+    address or phone number one guess at a time — ``?search=<value>``
+    returning a row is itself a confirmation oracle, even when the value
+    never appears in the response body. DRF's ``SearchFilter`` reads
+    ``view.search_fields`` through ``get_search_fields()``, so exposing it
+    as a request-aware property (rather than a class attribute) is enough
+    to make the restriction apply everywhere search is used, including
+    nested/custom list actions.
+
+    A subclass declares ``full_search_fields`` (what a Manager/Super Admin
+    may search) and ``pii_search_fields`` (the subset removed for an
+    Employee) instead of a plain ``search_fields``.
+    """
+
+    #: Every searchable column, for a reader allowed to see raw PII.
+    full_search_fields = []
+    #: The PII subset of ``full_search_fields``, removed for an Employee.
+    pii_search_fields = ()
+
+    @property
+    def search_fields(self):
+        from apps.core.serializers import pii_masking_required
+
+        if pii_masking_required(getattr(self, "request", None)):
+            return [field for field in self.full_search_fields if field not in self.pii_search_fields]
+        return list(self.full_search_fields)

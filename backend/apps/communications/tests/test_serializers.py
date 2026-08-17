@@ -60,14 +60,30 @@ def test_queue_serializer_rejects_neither():
 
 def test_queue_serializer_accepts_template_only():
     serializer = EmailMessageQueueSerializer()
-    attrs = {"template": object()}
+    attrs = {"template": object(), "customer": object()}
     assert serializer.validate(attrs) == attrs
 
 
 def test_queue_serializer_accepts_subject_and_body_only():
     serializer = EmailMessageQueueSerializer()
-    attrs = {"subject": "S", "body": "B"}
+    attrs = {"subject": "S", "body": "B", "customer": object()}
     assert serializer.validate(attrs) == attrs
+
+
+def test_queue_serializer_requires_a_recipient():
+    """A subject+body with nobody to send it to is a 400, not an email to
+    an address the caller never named — the recipient is always an ENTITY
+    the backend resolves the address from.
+    """
+    serializer = EmailMessageQueueSerializer()
+    with pytest.raises(serializers.ValidationError):
+        serializer.validate({"subject": "S", "body": "B"})
+
+
+def test_queue_serializer_rejects_multiple_named_targets():
+    serializer = EmailMessageQueueSerializer()
+    with pytest.raises(serializers.ValidationError):
+        serializer.validate({"subject": "S", "body": "B", "customer": object(), "lead": object()})
 
 
 # --------------------------------------------------------------------------

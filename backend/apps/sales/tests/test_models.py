@@ -84,7 +84,7 @@ def test_invoice_number_is_unique():
 
 def test_invoice_status_choices_and_default():
     values = {c.value for c in Invoice.Status}
-    assert values == {"DRAFT", "SENT", "PAID", "CANCELLED"}
+    assert values == {"DRAFT", "SENT", "PARTIAL", "PAID", "CANCELLED"}
     assert Invoice._meta.get_field("status").default == Invoice.Status.DRAFT
 
 

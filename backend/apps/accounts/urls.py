@@ -26,6 +26,10 @@ from .views import (
     SessionListView,
     SessionRevokeView,
     SuperAdminVerifyView,
+    UserActivateView,
+    UserDeactivateView,
+    UserDetailView,
+    UserListCreateView,
 )
 
 app_name = "accounts"
@@ -39,4 +43,9 @@ urlpatterns = [
     path("sessions/", SessionListView.as_view(), name="session-list"),
     path("sessions/<int:id>/", SessionRevokeView.as_view(), name="session-revoke"),
     path("logout-all/", LogoutAllView.as_view(), name="logout-all"),
+    # Final-completion-pass: admin-facing Users management API.
+    path("users/", UserListCreateView.as_view(), name="user-list"),
+    path("users/<int:pk>/", UserDetailView.as_view(), name="user-detail"),
+    path("users/<int:pk>/activate/", UserActivateView.as_view(), name="user-activate"),
+    path("users/<int:pk>/deactivate/", UserDeactivateView.as_view(), name="user-deactivate"),
 ]

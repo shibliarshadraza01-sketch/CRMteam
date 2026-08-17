@@ -26,9 +26,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import is_super_admin, user_has_role_at_least
+from apps.accounts.permissions import assert_object_accessible, is_super_admin, user_has_role_at_least
 from apps.accounts.models import User
 from apps.core.utils import stamp_audit_fields
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
 from .filters import ActivityLogFilterSet, EventFilterSet, ReminderFilterSet, TaskFilterSet
@@ -72,8 +73,9 @@ class TaskViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         task = serializer.instance
-        if task.owner_id is None:
-            task.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, task.owner)
+        if resolved_owner.pk != task.owner_id:
+            task.owner = resolved_owner
             task.save(update_fields=["owner", "updated_at"])
 
     def _task_response(self, task):
@@ -134,8 +136,9 @@ class EventViewSet(_CrmModelViewSet):
         """See ``TaskViewSet.perform_create()`` — identical reasoning."""
         super().perform_create(serializer)
         event = serializer.instance
-        if event.owner_id is None:
-            event.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, event.owner)
+        if resolved_owner.pk != event.owner_id:
+            event.owner = resolved_owner
             event.save(update_fields=["owner", "updated_at"])
 
     @extend_schema(
@@ -222,8 +225,14 @@ class ReminderViewSet(_CrmModelViewSet):
         CP13's `PriceBookEntry`).
         """
         data = dict(serializer.validated_data)
+        task = data.get("task")
+        event = data.get("event")
+        if task is not None:
+            assert_object_accessible(self.request, task)
+        if event is not None:
+            assert_object_accessible(self.request, event)
         reminder = create_reminder(
-            task=data.get("task"), event=data.get("event"), remind_at=data["remind_at"], message=data.get("message", "")
+            task=task, event=event, remind_at=data["remind_at"], message=data.get("message", "")
         )
         stamp_audit_fields(reminder, self.request.user, creating=True)
         reminder.save()

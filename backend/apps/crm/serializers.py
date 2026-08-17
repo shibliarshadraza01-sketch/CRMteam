@@ -14,7 +14,13 @@ list/detail *output*).
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer
-from apps.core.serializers import SoftDeleteTimeStampedSerializerMixin
+from apps.core.serializers import (
+    CONTACT_CAPABILITY_FIELDS,
+    ContactCapabilityMixin,
+    PiiMaskedSerializerMixin,
+    ServerGeneratedFieldUniqueTogetherValidator,
+    SoftDeleteTimeStampedSerializerMixin,
+)
 
 from .models import Address, ContactPerson, Customer, Lead
 from .opportunities import Opportunity, OpportunityActivity, OpportunityNote
@@ -31,13 +37,23 @@ class _CrmSerializer(SoftDeleteTimeStampedSerializerMixin, serializers.ModelSeri
 # --------------------------------------------------------------------------
 
 
-class ContactPersonSerializer(_CrmSerializer):
+class ContactPersonSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSerializer):
+    """``email``/``phone`` are WRITABLE (data entry is what a CRM is for)
+    but are stripped from the RESPONSE for an Employee — see
+    ``apps.core.serializers.PiiMaskedSerializerMixin``. An Employee reads
+    ``can_email``/``can_call``/``can_whatsapp`` instead and communicates
+    through ``apps.communications``, which resolves the real address/
+    number server-side and never returns it.
+    """
+
+    pii_fields = ("email", "phone")
+
     class Meta:
         model = ContactPerson
         fields = [
             "id", "customer", "first_name", "last_name", "designation", "email", "phone", "is_primary",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
-        ]
+        ] + CONTACT_CAPABILITY_FIELDS
 
     def validate(self, attrs):
         """Mirrors the DB's partial unique constraint (at most one primary
@@ -45,14 +61,27 @@ class ContactPersonSerializer(_CrmSerializer):
         ``IntegrityError`` — the constraint itself remains the actual
         source of truth/last line of defense (see ``models.py``); this is
         purely a better error message for the common case.
+
+        Skipped entirely on CREATE (``self.instance is None``):
+        ``ContactPersonViewSet.perform_create()`` routes every create
+        through ``apps.crm.services.add_contact()``, which auto-demotes
+        the existing primary contact before creating the new one — a
+        second ``is_primary=True`` at create time is the documented,
+        intended way to promote a new primary, not an error. Rejecting it
+        here would make ``add_contact()``'s demote step unreachable, since
+        DRF calls ``validate()`` before ``perform_create()`` ever runs.
+        Still enforced on UPDATE, where no such auto-demote wrapper
+        exists — a PATCH shouldn't silently steal primary status from
+        another contact without an explicit swap.
         """
-        is_primary = attrs.get("is_primary", getattr(self.instance, "is_primary", False))
-        customer = attrs.get("customer", getattr(self.instance, "customer", None))
+        if self.instance is None:
+            return attrs
+
+        is_primary = attrs.get("is_primary", self.instance.is_primary)
+        customer = attrs.get("customer", self.instance.customer)
 
         if is_primary and customer is not None:
-            existing = ContactPerson.objects.filter(customer=customer, is_primary=True)
-            if self.instance is not None:
-                existing = existing.exclude(pk=self.instance.pk)
+            existing = ContactPerson.objects.filter(customer=customer, is_primary=True).exclude(pk=self.instance.pk)
             if existing.exists():
                 raise serializers.ValidationError(
                     {"is_primary": "This customer already has a primary contact."}
@@ -79,13 +108,34 @@ class AddressSerializer(_CrmSerializer):
 # --------------------------------------------------------------------------
 
 
-class CustomerSerializer(_CrmSerializer):
+class CustomerSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSerializer):
+    """See ``ContactPersonSerializer`` — identical PII rule, applied to a
+    `Customer`'s own ``email``/``phone``.
+    """
+
+    pii_fields = ("email", "phone")
+
     class Meta:
         model = Customer
         fields = [
             "id", "organization", "name", "slug", "owner", "status", "industry", "website",
             "email", "phone", "notes", "is_active",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
+        ] + CONTACT_CAPABILITY_FIELDS
+        # required=False: the model field itself requires a non-blank
+        # slug, but CustomerViewSet.perform_create() routes through
+        # services.create_customer(), which auto-generates one from
+        # `name` when none is supplied.
+        extra_kwargs = {"slug": {"required": False, "allow_blank": True}}
+        # The model's organization+slug UniqueConstraint (see models.py)
+        # auto-generates a plain UniqueTogetherValidator that would
+        # override the extra_kwargs above and force slug required anyway
+        # — see ServerGeneratedFieldUniqueTogetherValidator's own
+        # docstring (apps/core/serializers.py) for why.
+        validators = [
+            ServerGeneratedFieldUniqueTogetherValidator(
+                queryset=Customer.objects.all(), fields=("organization", "slug"), server_generated_field="slug"
+            )
         ]
 
 
@@ -111,7 +161,13 @@ class CustomerDetailSerializer(CustomerSerializer):
 # --------------------------------------------------------------------------
 
 
-class LeadSerializer(_CrmSerializer):
+class LeadSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSerializer):
+    """See ``ContactPersonSerializer`` — identical PII rule, applied to a
+    `Lead`'s own ``email``/``phone``.
+    """
+
+    pii_fields = ("email", "phone")
+
     # Conversion is a workflow action (apps.crm.services.convert_lead()),
     # not a plain field edit — read-only here even on the "writable"
     # serializer so a client can never link/unlink a customer by hand.
@@ -123,7 +179,7 @@ class LeadSerializer(_CrmSerializer):
             "id", "company_name", "contact_name", "email", "phone", "source", "status", "owner",
             "converted_customer", "notes",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
-        ]
+        ] + CONTACT_CAPABILITY_FIELDS
 
     def validate_status(self, value):
         """``CONVERTED`` is a status a lead ARRIVES at only through

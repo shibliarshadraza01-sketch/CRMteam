@@ -8,11 +8,26 @@ established in CP2's apps/accounts/tests/test_user_model.py.
 """
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 pytestmark = pytest.mark.django_db
 
 User = get_user_model()
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttle_cache():
+    """LoginView is now rate-limited (final-completion-pass: ScopedRateThrottle,
+    scope "login", see config/settings/base.py) — same LocMemCache
+    test-isolation need as test_super_admin_auth.py's identical fixture.
+    Without this, this file's ~20 tests against LOGIN_URL share one 10/min
+    counter and start getting throttled partway through the file.
+    """
+    cache.clear()
+    yield
+    cache.clear()
+
 
 LOGIN_URL = "/api/v1/auth/login/"
 REFRESH_URL = "/api/v1/auth/refresh/"
@@ -263,15 +278,24 @@ def test_logout_already_blacklisted_token(client, employee):
 
 @pytest.mark.parametrize("role", [User.Role.EMPLOYEE, User.Role.MANAGER, User.Role.SUPER_ADMIN])
 def test_login_works_for_every_role(client, role):
-    """Every role authenticates through the identical CP3 email/password flow.
+    """Every role authenticates through the identical CP3 email/password
+    validation step.
 
-    For SUPER_ADMIN this is deliberately only the *base* login step — the
-    secondary access-code challenge is CP4's job, not tested here because it
-    does not exist yet. See BACKEND_LEARNING_GUIDE.md CP3, "Super Admin note".
+    CP4 (built after this test was first written) changed what a
+    SUPER_ADMIN's successful primary-credential check actually returns:
+    not tokens directly, but a `secondary_verification_required` challenge
+    — see LoginView and test_super_admin_auth.py for the full flow this
+    challenge feeds into. Updated here to assert the real CP4 shape rather
+    than the pre-CP4 placeholder this parametrize case predates.
     """
     user = User.objects.create_user(email=f"{role.lower()}@example.com", password=VALID_PASSWORD, role=role)
 
     response = client.post(LOGIN_URL, {"email": user.email, "password": VALID_PASSWORD})
 
     assert response.status_code == 200
-    assert response.json()["user"]["role"] == role
+    body = response.json()
+    if role == User.Role.SUPER_ADMIN:
+        assert body["secondary_verification_required"] is True
+        assert body["challenge"]
+    else:
+        assert body["user"]["role"] == role

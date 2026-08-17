@@ -11,6 +11,7 @@ test_session_utils.py instead, and does actually run/pass today.
 """
 import pytest
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -18,6 +19,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.accounts.models import UserSession
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(autouse=True)
+def _reset_throttle_cache():
+    """LoginView is rate-limited (final-completion-pass: ScopedRateThrottle,
+    scope "login") — this file's ``_login()`` helper is called dozens of
+    times across its tests, sharing one LocMemCache counter without this.
+    Same pattern as test_auth.py's identical fixture.
+    """
+    cache.clear()
+    yield
+    cache.clear()
 
 User = get_user_model()
 
@@ -157,7 +170,13 @@ def test_refresh_rotates_the_tracked_jti_not_a_new_session(client, employee):
     session = UserSession.objects.get(user=employee)
     new_jti = RefreshToken(refreshed["refresh"]).payload["jti"]
     assert session.refresh_token_jti == new_jti
-    old_jti = RefreshToken(login["refresh"]).payload["jti"]
+    # verify=False: login["refresh"] was already rotated (and, since
+    # BLACKLIST_AFTER_ROTATION=True, blacklisted) by the refresh call
+    # above — RefreshToken(...) with default verification would raise
+    # TokenError reading it back. Decoding its payload without
+    # re-verifying is fine here: this is just extracting the OLD jti for
+    # comparison, not authenticating a request with it.
+    old_jti = RefreshToken(login["refresh"], verify=False).payload["jti"]
     assert session.refresh_token_jti != old_jti
 
 
@@ -352,8 +371,11 @@ def test_logout_all_revokes_other_sessions_but_not_current(client, employee):
     assert response.status_code == 200
     assert response.json()["revoked"] == 1
 
-    session_a = UserSession.objects.get(refresh_token_jti=RefreshToken(login_a["refresh"]).payload["jti"])
-    session_b = UserSession.objects.get(refresh_token_jti=RefreshToken(login_b["refresh"]).payload["jti"])
+    # verify=False: login_b's refresh token was just revoked (blacklisted)
+    # by the logout-all call above — see the note on the identical pattern
+    # in test_refresh_rotates_the_tracked_jti_not_a_new_session.
+    session_a = UserSession.objects.get(refresh_token_jti=RefreshToken(login_a["refresh"], verify=False).payload["jti"])
+    session_b = UserSession.objects.get(refresh_token_jti=RefreshToken(login_b["refresh"], verify=False).payload["jti"])
     assert session_a.is_active is True  # current session survives
     assert session_b.is_active is False  # the other one is revoked
 

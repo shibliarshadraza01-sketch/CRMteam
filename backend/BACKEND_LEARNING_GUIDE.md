@@ -9163,3 +9163,95 @@ proven.
 *End of CP20. This is the final checkpoint of this guide's planned
 scope — the project's full nineteen-checkpoint build history, plus this
 audit, are recorded here in full.*
+
+## 12. Final Completion Pass (post-CP20)
+
+CP20's single remaining blocker — a reachable PostgreSQL server — was
+resolved after CP20 was written. Everything CP20 could only describe as
+"unverifiable without a database" has since actually been run against a
+live PostgreSQL instance: `migrate`, the full test suite, and every
+endpoint via live HTTP requests.
+
+Work completed in this pass, on top of CP1–CP20's backend:
+
+- A full Organization/Department/Team/Membership REST API (models and
+  services existed; there was previously no HTTP surface at all).
+- Lead duplicate detection and merge (`services.find_duplicate_leads()`
+  / `merge_leads()`), reachable at `POST /crm/leads/<id>/merge/` and
+  `GET /crm/leads/<id>/duplicates/`.
+- Real CSV/XLSX lead import/export (`apps/crm/imports.py`), replacing
+  a client-side-only fake import that had never been connected to any
+  endpoint.
+- SendGrid wired as the production `EMAIL_BACKEND` (Django's own SMTP
+  backend pointed at `smtp.sendgrid.net`, no new HTTP client dependency)
+  — marked EXTERNAL PROVIDER VERIFICATION BLOCKED pending a real API key,
+  since none was available in this environment.
+- A user-management API (`apps/accounts`) for Super Admin create/list/
+  activate/deactivate, previously only a model with no HTTP surface.
+- A project-wide static regression test asserting no serializer response
+  ever exposes a password/secret/token/hash field.
+- Production hardening: `X_FRAME_OPTIONS`, `SECURE_REFERRER_POLICY`,
+  fail-fast `CSRF_TRUSTED_ORIGINS`, opt-in `SECURE_PROXY_SSL_HEADER`,
+  and a login rate-throttle scope.
+- Every frontend module (Leads, Customers, Users/Team, Settings, Audit,
+  Tasks, Communication, Payments, Reports/Dashboard) wired to its real
+  backend contract, replacing the mock/local-state CRUD the frontend
+  previously ran on entirely.
+
+Two more genuine bugs were found the same way CP-era bugs were found —
+by wiring a real workflow end-to-end and watching it fail, not by static
+review:
+
+- `Customer.slug`'s DRF `UniqueTogetherValidator` re-forced requiredness
+  on a server-generated field regardless of `extra_kwargs` — fixed with
+  a shared `ServerGeneratedFieldUniqueTogetherValidator`
+  (`apps/core/serializers.py`), the same class of bug CP-era
+  `PriceBookEntry` hit independently.
+- A `django_db_setup` pytest fixture override lived in a sibling test
+  directory's `conftest.py`, invisible to pytest's fixture resolution
+  outside that directory's own subtree — silently correct only when the
+  full suite ran as one invocation. Moved to a genuine project-root
+  `backend/conftest.py`.
+
+Final state: 1730 backend tests, 0 failures, 0 errors. `manage.py check`,
+`check --deploy`, and `makemigrations --check --dry-run` all clean.
+`npm run lint` and `npm run build` both clean. See
+`BACKEND_PROGRESS.md`'s matching final section for the itemized
+per-module verification and the honest list of what remains out of
+scope (WhatsApp/telephony/storage/transcription — explicitly descoped
+by the user earlier in this project; SendGrid delivery unverified
+against a real account).
+
+## 13. Final Release Completion Pass — closing the payment ledger gap
+
+Section 12 above listed "no partial-payment ledger on `Invoice`" as a
+known, deliberately-unaddressed gap. A follow-up completion pass
+re-read the frontend's own original module copy for Payments — "track
+partial payments... view their payment history" — and concluded that
+gap WAS in scope, not out of it (unlike WhatsApp/telephony, which the
+user explicitly descoped by name earlier in the project). The
+distinction matters: "no spec document exists" doesn't mean "no spec
+exists" — the frontend's own feature copy, written before any backend
+work began, is the closest thing this project has to a specification,
+and it was worth re-reading rather than trusting a prior pass's summary
+of it.
+
+The fix followed the same layering every other domain in this project
+already uses: a new `PaymentTransaction` model owned by (not
+replacing) `Invoice`, a `services.record_payment()` function that is
+the ONLY place overpayment/cancelled-invoice validation and the
+resulting status recalculation happen, a thin viewset that delegates to
+it, and `amount_paid`/`balance` as properties computed from the live
+transaction table rather than a separately-maintained running total —
+the same "derived, never hand-edited" rule CP12's `InvoiceItem.total_price`
+already established, applied to a new case.
+
+One more thing this pass caught that a purely spec-driven audit would
+have missed: the frontend had been displaying a `PENDING` invoice
+status that never existed on the backend (the real value is `SENT`).
+This was found only because wiring the new `Paid`/`Balance` columns
+required re-reading `invoiceToRow()` closely enough to notice the
+label map didn't match `Invoice.Status.choices` — a reminder that
+"finish this one feature" work is still a good opportunity to re-verify
+adjacent code the original pass wrote quickly under time pressure,
+rather than treating already-shipped code as immune to review.

@@ -28,6 +28,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.views import ReferenceDataModelViewSetMixin
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
 from .filters import (
@@ -67,6 +68,19 @@ class _SystemConfigModelViewSet(ReferenceDataModelViewSetMixin, viewsets.ModelVi
     """
 
     permission_classes = [IsAuthenticated, SystemConfigWritePermission]
+
+    def get_queryset(self):
+        """``SystemSetting.active_objects``/``FeatureFlag.active_objects``
+        mean "not deleted AND is_active/is_enabled=True" (see models.py) —
+        used unmodified via ``base_active_manager``, that would make
+        ``is_active``/``is_enabled`` an unfilterable dead field on the list
+        endpoint. Re-widen list back to "not deleted" so those stay genuine,
+        working filters (matching every other app's list default).
+        """
+        queryset = super().get_queryset()
+        if self.action == "list":
+            queryset = self.base_manager.filter(is_deleted=False)
+        return queryset
 
 
 class SystemSettingViewSet(_SystemConfigModelViewSet):
@@ -114,8 +128,9 @@ class BackgroundJobViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         job = serializer.instance
-        if job.owner_id is None:
-            job.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, job.owner)
+        if resolved_owner.pk != job.owner_id:
+            job.owner = resolved_owner
             job.save(update_fields=["owner", "updated_at"])
 
     def _job_response(self, job):

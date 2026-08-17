@@ -126,6 +126,10 @@ class EmailMessage(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         SENT = "SENT", _("Sent")
         FAILED = "FAILED", _("Failed")
 
+    class Direction(models.TextChoices):
+        OUTBOUND = "OUTBOUND", _("Outbound")
+        INBOUND = "INBOUND", _("Inbound")
+
     template = models.ForeignKey(
         EmailTemplate,
         verbose_name=_("template"),
@@ -144,11 +148,38 @@ class EmailMessage(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         related_name="owned_email_messages",
         help_text=_("The user who queued this email — used for ownership-based access scoping."),
     )
-    to_email = models.EmailField(_("to"))
+    to_email = models.EmailField(
+        _("to"),
+        help_text=_(
+            "The customer's REAL address — backend-internal only. Never serialized to an Employee "
+            "(see apps/communications/serializers.py's EmailMessageSerializer.pii_fields)."
+        ),
+    )
     subject = models.CharField(_("subject"), max_length=255)
     body = models.TextField(_("body"))
     status = models.CharField(
         _("status"), max_length=10, choices=Status.choices, default=Status.QUEUED, db_index=True
+    )
+    direction = models.CharField(
+        _("direction"), max_length=10, choices=Direction.choices, default=Direction.OUTBOUND, db_index=True,
+        help_text=_("INBOUND rows are customer replies received through the inbound-email webhook."),
+    )
+    reply_token = models.CharField(
+        _("reply token"), max_length=64, blank=True, default="", db_index=True,
+        help_text=_(
+            "Opaque, CRM-owned identifier embedded in this message's Reply-To address so a reply routes "
+            "back to this conversation WITHOUT the employee (or the reply path) ever handling the "
+            "customer's real address."
+        ),
+    )
+    in_reply_to = models.ForeignKey(
+        "self",
+        verbose_name=_("in reply to"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="replies",
+        help_text=_("For an INBOUND reply: the outbound message whose Reply-To address it came back on."),
     )
     sent_at = models.DateTimeField(_("sent at"), null=True, blank=True)
     error_message = models.TextField(_("error message"), blank=True, default="")
@@ -167,7 +198,16 @@ class EmailMessage(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         ]
 
     def __str__(self):
-        return f"{self.subject} -> {self.to_email} [{self.status}]"
+        """Deliberately WITHOUT ``to_email``.
+
+        ``__str__`` is not a private debugging convenience here: CP14's
+        ``RelatedObjectMixin`` puts ``str(target)`` straight into an
+        employee-visible ``related_object.label``, and Django's admin
+        change lists render it too. Any PII in this string would leak
+        through both. The primary key is enough to identify the row, and
+        the real recipient is always resolvable server-side.
+        """
+        return f"Email #{self.pk} {self.subject} [{self.status}]"
 
     def manager_has_access(self, user):
         """CP6's documented per-object extension point, reused unchanged —
@@ -308,6 +348,8 @@ class CommunicationLog(SoftDeleteTimeStampedModel, RelatedToEntityModel):
     class Channel(models.TextChoices):
         EMAIL = "EMAIL", _("Email")
         NOTIFICATION = "NOTIFICATION", _("Notification")
+        CALL = "CALL", _("Call")
+        WHATSAPP = "WHATSAPP", _("WhatsApp")
         OTHER = "OTHER", _("Other")
 
     channel = models.CharField(_("channel"), max_length=20, choices=Channel.choices, db_index=True)
@@ -352,3 +394,186 @@ class CommunicationLog(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         from apps.crm.services import managed_user_ids
 
         return self.actor_id is not None and self.actor_id in managed_user_ids(user)
+
+
+# --------------------------------------------------------------------------
+# Call (final production operations pass — A1 Routes SIP integration)
+# --------------------------------------------------------------------------
+
+
+class CallQuerySet(SoftDeleteQuerySet):
+    pass
+
+
+class CallManager(models.Manager.from_queryset(CallQuerySet)):
+    """``Call.objects`` — unfiltered, per CP7's soft-delete convention."""
+
+
+class ActiveCallManager(CallManager):
+    def get_queryset(self):
+        return super().get_queryset().active()
+
+
+class Call(SoftDeleteTimeStampedModel, RelatedToEntityModel):
+    """One phone call placed or received through the A1 Routes SIP
+    trunk — created the moment a call is initiated (``QUEUED``), then
+    updated by ``POST /api/v1/webhooks/a1routes/`` as the provider
+    reports status changes, the same "record created by the app, then
+    updated by the provider's own webhook" shape ``WebhookDelivery``
+    (``apps.integrations``) already established for a different provider
+    class. Never stores SIP credentials — only the provider's own
+    opaque ``provider_call_id``.
+    """
+
+    class Direction(models.TextChoices):
+        OUTBOUND = "OUTBOUND", _("Outbound")
+        INBOUND = "INBOUND", _("Inbound")
+
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", _("Queued")
+        RINGING = "RINGING", _("Ringing")
+        IN_PROGRESS = "IN_PROGRESS", _("In Progress")
+        COMPLETED = "COMPLETED", _("Completed")
+        FAILED = "FAILED", _("Failed")
+        NO_ANSWER = "NO_ANSWER", _("No Answer")
+        BUSY = "BUSY", _("Busy")
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("owner"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_calls",
+        help_text=_("The user who placed (or, for an inbound call, is assigned) this call."),
+    )
+    direction = models.CharField(_("direction"), max_length=10, choices=Direction.choices)
+    from_number = models.CharField(_("from number"), max_length=32)
+    to_number = models.CharField(_("to number"), max_length=32)
+    provider_call_id = models.CharField(
+        _("provider call id"), max_length=128, blank=True, default="",
+        help_text=_("A1 Routes' own opaque call identifier — used to match inbound webhook updates to this row."),
+    )
+    status = models.CharField(_("status"), max_length=12, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    started_at = models.DateTimeField(_("started at"), null=True, blank=True)
+    ended_at = models.DateTimeField(_("ended at"), null=True, blank=True)
+    duration_seconds = models.PositiveIntegerField(_("duration seconds"), null=True, blank=True)
+    error_message = models.TextField(_("error message"), blank=True, default="")
+
+    objects = CallManager()
+    active_objects = ActiveCallManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = _("call")
+        verbose_name_plural = _("calls")
+        indexes = [
+            models.Index(fields=["owner"], name="comms_call_owner_idx"),
+            models.Index(fields=["status"], name="comms_call_status_idx"),
+            models.Index(fields=["provider_call_id"], name="comms_call_provider_id_idx"),
+            models.Index(fields=["content_type", "object_id"], name="comms_call_entity_idx"),
+        ]
+
+    def __str__(self):
+        """No phone numbers — see ``EmailMessage.__str__()``'s docstring
+        for why (``initiate_call()`` writes a ``CommunicationLog`` whose
+        ``related_object`` is this `Call`, and that label IS employee-
+        visible).
+        """
+        return f"{self.direction} call #{self.pk} [{self.status}]"
+
+    def manager_has_access(self, user):
+        from apps.crm.services import managed_user_ids
+
+        return self.owner_id is not None and self.owner_id in managed_user_ids(user)
+
+
+# --------------------------------------------------------------------------
+# WhatsAppMessage (final production operations pass — WhatsApp Business API)
+# --------------------------------------------------------------------------
+
+
+class WhatsAppMessageQuerySet(SoftDeleteQuerySet):
+    pass
+
+
+class WhatsAppMessageManager(models.Manager.from_queryset(WhatsAppMessageQuerySet)):
+    """``WhatsAppMessage.objects`` — unfiltered, per CP7's soft-delete
+    convention.
+    """
+
+
+class ActiveWhatsAppMessageManager(WhatsAppMessageManager):
+    def get_queryset(self):
+        return super().get_queryset().active()
+
+
+class WhatsAppMessage(SoftDeleteTimeStampedModel):
+    """One WhatsApp Business API message, inbound or outbound. Real
+    delivery/read receipts arrive via ``POST /api/v1/webhooks/whatsapp/``
+    and update ``status`` on the matching row (looked up by
+    ``provider_message_id``) — the same provider-writes-status-back
+    shape as ``Call``, above.
+    """
+
+    class Direction(models.TextChoices):
+        OUTBOUND = "OUTBOUND", _("Outbound")
+        INBOUND = "INBOUND", _("Inbound")
+
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", _("Queued")
+        SENT = "SENT", _("Sent")
+        DELIVERED = "DELIVERED", _("Delivered")
+        READ = "READ", _("Read")
+        FAILED = "FAILED", _("Failed")
+
+    customer = models.ForeignKey(
+        "crm.Customer",
+        verbose_name=_("customer"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="whatsapp_messages",
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("owner"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_whatsapp_messages",
+        help_text=_("The user who sent this message — null for an inbound message with no assignee yet."),
+    )
+    direction = models.CharField(_("direction"), max_length=10, choices=Direction.choices)
+    sender = models.CharField(_("sender"), max_length=32)
+    receiver = models.CharField(_("receiver"), max_length=32)
+    message = models.TextField(_("message"))
+    status = models.CharField(_("status"), max_length=10, choices=Status.choices, default=Status.QUEUED, db_index=True)
+    provider_message_id = models.CharField(
+        _("provider message id"), max_length=128, blank=True, default="",
+        help_text=_("WhatsApp Cloud API's own opaque message identifier — used to match inbound webhook status updates to this row."),
+    )
+    error_message = models.TextField(_("error message"), blank=True, default="")
+
+    objects = WhatsAppMessageManager()
+    active_objects = ActiveWhatsAppMessageManager()
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = _("WhatsApp message")
+        verbose_name_plural = _("WhatsApp messages")
+        indexes = [
+            models.Index(fields=["owner"], name="comms_wa_owner_idx"),
+            models.Index(fields=["customer"], name="comms_wa_customer_idx"),
+            models.Index(fields=["status"], name="comms_wa_status_idx"),
+            models.Index(fields=["provider_message_id"], name="comms_wa_provider_id_idx"),
+        ]
+
+    def __str__(self):
+        """No WhatsApp numbers — see ``Call.__str__()``."""
+        return f"{self.direction} WhatsApp message #{self.pk} [{self.status}]"
+
+    def manager_has_access(self, user):
+        from apps.crm.services import managed_user_ids
+
+        return self.owner_id is not None and self.owner_id in managed_user_ids(user)

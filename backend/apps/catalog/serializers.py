@@ -11,6 +11,7 @@ worth-nesting relation of their own and use one serializer
 unconditionally, the same shape CP9's `ContactPerson`/`Address` used.
 """
 from rest_framework import serializers
+from rest_framework.validators import UniqueTogetherValidator
 
 from apps.core.serializers import SoftDeleteTimeStampedSerializerMixin
 
@@ -50,12 +51,60 @@ class PriceBookSerializer(_CatalogSerializer):
         ]
 
 
+class _OptionalFieldUniqueTogetherValidator(UniqueTogetherValidator):
+    """DRF's stock ``UniqueTogetherValidator.enforce_required_fields()``
+    unconditionally treats every field in its tuple as required on create
+    — it has no concept of a PARTIAL unique constraint (this project's
+    ``price_book``+``product`` and ``price_book``+``service`` constraints
+    both carry a ``condition=`` — see models.py — meaning each only
+    applies when that one field is actually set). Left as-is, that forces
+    ``product``/``service`` to always both be present, contradicting
+    "exactly one of the two" being a valid, intentional state.
+
+    On create, if any field this validator covers is simply absent from
+    the request (not "empty" — genuinely not part of this pairing at
+    all), the constraint doesn't apply to this request and is skipped
+    entirely; the exactly-one-of invariant itself is still enforced by
+    ``PriceBookEntrySerializer.validate()`` below. Update behavior is
+    unchanged from DRF's default (missing fields are filled from the
+    existing instance, same as stock ``UniqueTogetherValidator``).
+    """
+
+    def __call__(self, attrs, serializer):
+        if serializer.instance is None:
+            sources = [serializer.fields[field_name].source for field_name in self.fields]
+            if any(source not in attrs for source in sources):
+                return
+        super().__call__(attrs, serializer)
+
+
 class PriceBookEntrySerializer(_CatalogSerializer):
+    # Explicit required=False/allow_null=True so the model's own
+    # null=True/blank=True (see models.py) holds at the field level —
+    # necessary but not sufficient on its own: see
+    # _OptionalFieldUniqueTogetherValidator above for the other half of
+    # this fix (DRF's auto-generated validator re-forces "required"
+    # independently of the field's own declaration).
+    product = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(), required=False, allow_null=True
+    )
+    service = serializers.PrimaryKeyRelatedField(
+        queryset=Service.objects.all(), required=False, allow_null=True
+    )
+
     class Meta:
         model = PriceBookEntry
         fields = [
             "id", "price_book", "product", "service", "price", "is_active",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
+        ]
+        validators = [
+            _OptionalFieldUniqueTogetherValidator(
+                queryset=PriceBookEntry.objects.all(), fields=("price_book", "product")
+            ),
+            _OptionalFieldUniqueTogetherValidator(
+                queryset=PriceBookEntry.objects.all(), fields=("price_book", "service")
+            ),
         ]
 
     def validate(self, attrs):

@@ -158,7 +158,7 @@ def test_creating_a_customer_writes_an_auditlog_entry(organization, employee):
         organization=organization, name="Signal Co", slug="signal-co", owner=employee, created_by=employee
     )
 
-    log = AuditLog.objects.get(related_object=customer)
+    log = AuditLog.objects.for_entity(customer).get()
     assert log.action == AuditLog.Action.CREATE
     assert log.actor == employee
 
@@ -181,7 +181,7 @@ def test_creating_an_opportunity_writes_an_auditlog_entry(customer, employee):
 
     opportunity = Opportunity.objects.create(customer=customer, title="Big Deal", owner=employee, created_by=employee)
 
-    assert AuditLog.objects.filter(related_object=opportunity, action=AuditLog.Action.CREATE).exists()
+    assert AuditLog.objects.for_entity(opportunity).filter(action=AuditLog.Action.CREATE).exists()
 
 
 @pytest.mark.django_db

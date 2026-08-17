@@ -220,6 +220,7 @@ class Invoice(SoftDeleteTimeStampedModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", _("Draft")
         SENT = "SENT", _("Sent")
+        PARTIAL = "PARTIAL", _("Partially Paid")
         PAID = "PAID", _("Paid")
         CANCELLED = "CANCELLED", _("Cancelled")
 
@@ -275,6 +276,37 @@ class Invoice(SoftDeleteTimeStampedModel):
 
         return self.owner_id is not None and self.owner_id in managed_user_ids(user)
 
+    @property
+    def amount_paid(self):
+        """Sum of every non-deleted ``PaymentTransaction`` recorded
+        against this invoice — computed on read, never stored, so it can
+        never drift out of sync with the transaction history itself (the
+        same "never hand-edited, always derived" rule CP12 already
+        applies to ``InvoiceItem.total_price``).
+
+        Prefers ``_amount_paid_annotated`` when present — set by
+        ``InvoiceViewSet.get_queryset()``'s own ``annotate()``, computed
+        as one aggregate JOIN across the whole page of results instead of
+        a separate query per invoice (avoiding an N+1 query pattern for
+        any list of more than one invoice). Falls back to a direct
+        per-instance aggregate query for an ``Invoice`` fetched outside
+        that queryset (e.g. from ``services.py`` or a test).
+        """
+        annotated = getattr(self, "_amount_paid_annotated", None)
+        if annotated is not None:
+            return annotated
+        total = self.payments.active().aggregate(total=models.Sum("amount"))["total"]
+        return total or 0
+
+    @property
+    def balance(self):
+        """Remaining amount owed — ``total`` minus every recorded payment.
+        Never negative from this property's own perspective;
+        ``services.record_payment()`` is what actually prevents a
+        payment from ever pushing this below zero in the first place.
+        """
+        return self.total - self.amount_paid
+
 
 class InvoiceItem(SoftDeleteTimeStampedModel):
     invoice = models.ForeignKey(Invoice, verbose_name=_("invoice"), on_delete=models.CASCADE, related_name="items")
@@ -301,6 +333,81 @@ class InvoiceItem(SoftDeleteTimeStampedModel):
 
     def __str__(self):
         return f"{self.product_name} x{self.quantity}"
+
+    @property
+    def owner(self):
+        return self.invoice.owner
+
+    def manager_has_access(self, user):
+        return self.invoice.manager_has_access(user)
+
+
+# --------------------------------------------------------------------------
+# PaymentTransaction
+# --------------------------------------------------------------------------
+
+
+class PaymentTransactionQuerySet(SoftDeleteQuerySet):
+    def for_invoice(self, invoice):
+        return self.filter(invoice=invoice)
+
+
+class PaymentTransactionManager(models.Manager.from_queryset(PaymentTransactionQuerySet)):
+    """``PaymentTransaction.objects`` — unfiltered, per CP7's soft-delete
+    convention.
+    """
+
+
+class ActivePaymentTransactionManager(PaymentTransactionManager):
+    def get_queryset(self):
+        return super().get_queryset().active()
+
+
+class PaymentTransaction(SoftDeleteTimeStampedModel):
+    """A single payment recorded against an ``Invoice`` — an invoice can
+    have any number of these (partial payments over time); the invoice's
+    own ``amount_paid``/``balance`` properties are always derived from
+    the live sum of this table, never a separately-maintained running
+    total, so the two can never drift apart. See ``services.record_payment()``
+    for the validation (no overpayment, no payment against a cancelled
+    invoice) and the invoice-status recalculation this triggers.
+    """
+
+    class Method(models.TextChoices):
+        CASH = "CASH", _("Cash")
+        CARD = "CARD", _("Card")
+        BANK_TRANSFER = "BANK_TRANSFER", _("Bank Transfer")
+        OTHER = "OTHER", _("Other")
+
+    invoice = models.ForeignKey(
+        Invoice, verbose_name=_("invoice"), on_delete=models.CASCADE, related_name="payments"
+    )
+    amount = models.DecimalField(_("amount"), max_digits=14, decimal_places=2)
+    method = models.CharField(_("method"), max_length=20, choices=Method.choices, default=Method.OTHER)
+    paid_at = models.DateTimeField(_("paid at"))
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name=_("recorded by"),
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="recorded_payments",
+    )
+    notes = models.TextField(_("notes"), blank=True, default="")
+
+    objects = PaymentTransactionManager()
+    active_objects = ActivePaymentTransactionManager()
+
+    class Meta:
+        ordering = ["-paid_at"]
+        verbose_name = _("payment transaction")
+        verbose_name_plural = _("payment transactions")
+        indexes = [
+            models.Index(fields=["invoice", "paid_at"], name="sales_paymenttxn_invoice_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.invoice.invoice_number}: {self.amount}"
 
     @property
     def owner(self):

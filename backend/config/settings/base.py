@@ -62,6 +62,10 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 # DEBUG defaults to False here; development.py turns it on.
 DEBUG = False
 
+# /api/schema/, /api/docs/ default closed here (see config/urls.py) —
+# development.py is the only place that opens them back up.
+API_DOCS_PUBLIC = False
+
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", ["localhost", "127.0.0.1"])
 
 # ---------------------------------------------------------------------------
@@ -103,6 +107,7 @@ LOCAL_APPS = [
     "apps.workflows",
     "apps.integrations",
     "apps.system",
+    "apps.attendance",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -248,6 +253,28 @@ REST_FRAMEWORK = {
     # rate limiter, and not claimed to be one.
     "DEFAULT_THROTTLE_RATES": {
         "super_admin_verify": "5/min",
+        # Final-completion-pass: primary-credential login was previously
+        # unthrottled entirely — unlimited password guesses against any
+        # email. Same LocMemCache-backed ScopedRateThrottle, same
+        # "modest speed bump, not a distributed rate limiter" caveat as
+        # super_admin_verify above.
+        "login": "10/min",
+        # Final internet-facing security audit: refresh, and every
+        # expensive/data-mutating bulk or aggregation endpoint (report
+        # execution, lead import/export, lead merge, payment recording),
+        # were completely unthrottled — a compromised or malicious
+        # low-privilege account could hammer any of them without limit.
+        # Same LocMemCache-backed ScopedRateThrottle, same "modest speed
+        # bump, not a distributed rate limiter" caveat as the two scopes
+        # above.
+        "token_refresh": "30/min",
+        "expensive_operation": "20/min",
+        # Employee attendance tracking: the frontend heartbeats every
+        # ~20-30s per actively-working employee to prove (server-side)
+        # that they're still there — a much higher, per-user rate than
+        # any other scope, since this is expected, routine traffic, not
+        # an occasional action.
+        "attendance_heartbeat": "6/min",
     },
 }
 
@@ -343,6 +370,8 @@ SPECTACULAR_SETTINGS = {
         "QuoteStatusEnum": "apps.sales.models.Quote.Status",
         "InvoiceStatusEnum": "apps.sales.models.Invoice.Status",
         "ReportExecutionStatusEnum": "apps.reports.models.ReportExecution.Status",
+        "MembershipRoleEnum": "apps.organization.models.Membership.Role",
+        "UserRoleEnum": "apps.accounts.models.User.Role",
     },
 }
 
@@ -354,3 +383,105 @@ SPECTACULAR_SETTINGS = {
 # credentials). Concrete values come from each environment module.
 CORS_ALLOWED_ORIGINS = env_list("DJANGO_CORS_ALLOWED_ORIGINS", [])
 CORS_ALLOW_CREDENTIALS = True
+
+# ---------------------------------------------------------------------------
+# Email (final-completion-pass: SendGrid)
+# ---------------------------------------------------------------------------
+# apps.communications.services.send_queued_email()'s _default_send_func()
+# calls Django's own send_mail(), so wiring a real provider is entirely a
+# settings concern — no code in that module needed to change. SendGrid's
+# SMTP relay is used (not their HTTP API/SDK) so no new package dependency
+# is required: EMAIL_BACKEND stays Django's stock SMTP backend, just
+# pointed at SendGrid's relay with an API key as the SMTP password. Each
+# environment module (development.py/production.py) chooses the actual
+# EMAIL_BACKEND; this is only the shared DEFAULT_FROM_EMAIL/timeout.
+DEFAULT_FROM_EMAIL = env("DJANGO_DEFAULT_FROM_EMAIL", "no-reply@qualifylearn.example")
+EMAIL_TIMEOUT = 10
+
+# ---------------------------------------------------------------------------
+# Logging (final production infrastructure pass)
+# ---------------------------------------------------------------------------
+# Structured (one line per record, consistent fields) so a log aggregator
+# can parse timestamp/level/logger/message without regex-scraping free-form
+# text. Deliberately does NOT add a custom logging call anywhere that would
+# echo request bodies or auth headers — DRF/Django's own request logging
+# already never includes the Authorization header or POST body content,
+# and nothing in this project's own code logs passwords, JWTs, refresh
+# tokens, API keys, access codes, or webhook secrets (see
+# apps/core/tests/test_secret_exposure_regression.py's sibling concern for
+# API responses — this is the same discipline applied to logs instead).
+# `django.security` captures suspicious-request events (disallowed host,
+# CSRF failure, etc.) as its own logger, separate from ordinary request
+# noise, so a log aggregator can alert on it distinctly.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "structured": {
+            "format": "%(asctime)s level=%(levelname)s logger=%(name)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "structured",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Security-relevant events: disallowed Host header, CSRF failures,
+        # suspicious operations — kept at WARNING so it's never silently
+        # buried under ordinary request-log volume.
+        "django.security": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Telephony (A1 Routes) / WhatsApp Business API (final production
+# operations pass)
+# ---------------------------------------------------------------------------
+# Every credential is read directly from the environment by
+# apps/communications/providers/{a1routes,whatsapp}.py at call time (NOT
+# cached into a settings constant) so a credential rotation takes effect
+# on the next request without a restart. This project only declares the
+# ONE non-secret configuration value each provider needs beyond its own
+# module's own os.environ.get() calls — the outbound "from" number A1
+# Routes calls originate from, which callers of CallViewSet.create() never
+# supply themselves (see that view's own docstring).
+A1ROUTES_DEFAULT_FROM_NUMBER = env("A1ROUTES_DEFAULT_FROM_NUMBER", "")
+
+# ---------------------------------------------------------------------------
+# Inbound email (customer replies) — privacy-preserving Reply-To routing
+# ---------------------------------------------------------------------------
+# A customer's reply comes back to an address the CRM owns, not to the
+# employee's mailbox and never revealing the customer's address to the
+# employee: every outbound message carries
+# ``<prefix>+<reply_token>@INBOUND_EMAIL_DOMAIN`` as its Reply-To (see
+# apps/communications/services.py's reply_to_address()), and the mail
+# provider POSTs the parsed reply to /api/v1/webhooks/inbound-email/.
+#
+# Empty INBOUND_EMAIL_DOMAIN (the default) simply omits the Reply-To
+# header — outbound email keeps working exactly as before, inbound
+# routing is inert. The webhook's own secret is read from the environment
+# by apps/communications/providers/inbound_email.py at request time (like
+# every other provider credential here) and is NOT mirrored into a
+# settings constant.
+INBOUND_EMAIL_DOMAIN = env("INBOUND_EMAIL_DOMAIN", "")
+INBOUND_EMAIL_LOCAL_PART_PREFIX = env("INBOUND_EMAIL_LOCAL_PART_PREFIX", "reply")

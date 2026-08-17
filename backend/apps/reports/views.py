@@ -9,8 +9,11 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
+from apps.accounts.permissions import assert_object_accessible
 from apps.core.utils import stamp_audit_fields
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
 from .filters import (
@@ -56,9 +59,20 @@ class SavedReportViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         report = serializer.instance
-        if report.owner_id is None:
-            report.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, report.owner)
+        if resolved_owner.pk != report.owner_id:
+            report.owner = resolved_owner
             report.save(update_fields=["owner", "updated_at"])
+
+    def get_throttles(self):
+        # Rate-limited: execute() runs a real database aggregation query
+        # on demand — see config/settings/base.py's "expensive_operation"
+        # scope docstring. Every other action on this viewset (list/
+        # create/retrieve/etc.) is unaffected.
+        if self.action == "execute":
+            self.throttle_scope = "expensive_operation"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
 
     @extend_schema(request=None, responses={201: ReportExecutionSerializer})
     @action(detail=True, methods=["post"])
@@ -126,8 +140,9 @@ class DashboardViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         dashboard = serializer.instance
-        if dashboard.owner_id is None:
-            dashboard.owner = self.request.user
+        resolved_owner = resolve_owner_for_create(self.request.user, dashboard.owner)
+        if resolved_owner.pk != dashboard.owner_id:
+            dashboard.owner = resolved_owner
             dashboard.save(update_fields=["owner", "updated_at"])
 
     @extend_schema(request=None, responses={200: DashboardSerializer})
@@ -165,6 +180,8 @@ class DashboardWidgetViewSet(_CrmModelViewSet):
         data = dict(serializer.validated_data)
         dashboard = data.pop("dashboard")
         report = data.pop("report")
+        assert_object_accessible(self.request, dashboard)
+        assert_object_accessible(self.request, report)
         widget_type = data.pop("widget_type")
         title = data.pop("title")
         position = data.pop("position", None)

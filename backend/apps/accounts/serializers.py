@@ -50,6 +50,36 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class UserManagementSerializer(serializers.ModelSerializer):
+    """Final-completion-pass: the Users management API's list/retrieve/
+    update shape — a superset of ``UserSerializer`` (adds ``is_active``/
+    ``date_joined``, both genuinely needed by an admin user list) used
+    ONLY by ``UserViewSet`` (Manager/Super-Admin-only, see permissions.py),
+    never by any client-facing "who am I" endpoint. Still deliberately
+    excludes password/access-code fields — see ``UserSerializer``'s own
+    docstring for why that boundary matters.
+    """
+
+    class Meta:
+        model = User
+        fields = ["id", "email", "first_name", "last_name", "role", "is_active", "date_joined"]
+        read_only_fields = ["id", "date_joined"]
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    """Write-only ``password`` — create only, via
+    ``services.create_managed_user()`` (see ``UserViewSet.perform_create()``),
+    which routes through ``User.objects.create_user()`` for hashing.
+    """
+
+    password = serializers.CharField(write_only=True, trim_whitespace=False, min_length=8)
+
+    class Meta:
+        model = User
+        fields = ["id", "email", "password", "first_name", "last_name", "role"]
+        read_only_fields = ["id"]
+
+
 class LoginSerializer(serializers.Serializer):
     """Validates an email/password login request.
 

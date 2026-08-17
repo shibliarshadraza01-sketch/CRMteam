@@ -12,20 +12,26 @@ promote it to `apps.core.views` if a THIRD app ever needs the same base —
 not done here since only two apps use it today and CP12 didn't ask for
 that refactor.
 """
+from django.db.models import DecimalField, Q, Sum, Value
+from django.db.models.functions import Coalesce
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
+from apps.accounts.permissions import assert_object_accessible
 from apps.core.utils import stamp_audit_fields
+from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
-from .filters import InvoiceFilterSet, QuoteFilterSet
-from .models import Invoice, InvoiceItem, Quote, QuoteItem
+from .filters import InvoiceFilterSet, PaymentTransactionFilterSet, QuoteFilterSet
+from .models import Invoice, InvoiceItem, PaymentTransaction, Quote, QuoteItem
 from .serializers import (
     InvoiceDetailSerializer,
     InvoiceItemSerializer,
     InvoiceSerializer,
+    PaymentTransactionSerializer,
     QuoteDetailSerializer,
     QuoteItemSerializer,
     QuoteSerializer,
@@ -40,6 +46,7 @@ from .services import (
     create_invoice,
     create_quote,
     mark_invoice_paid,
+    record_payment,
     reject_quote,
     submit_quote,
 )
@@ -81,11 +88,12 @@ class QuoteViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         customer = data.pop("customer")
+        assert_object_accessible(self.request, customer)
         quote_number = data.pop("quote_number")
         owner = data.pop("owner", None)
 
         quote = create_quote(customer, quote_number, **data)
-        assign_owner(quote, owner or self.request.user)
+        assign_owner(quote, resolve_owner_for_create(self.request.user, owner))
         stamp_audit_fields(quote, self.request.user, creating=True)
         quote.save()
         serializer.instance = quote
@@ -173,6 +181,7 @@ class QuoteItemViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         quote = data.pop("quote")
+        assert_object_accessible(self.request, quote)
         product_name = data.pop("product_name")
         quantity = data.pop("quantity")
         unit_price = data.pop("unit_price")
@@ -198,7 +207,26 @@ class InvoiceViewSet(_CrmModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        return super().get_queryset().select_related("customer", "owner", "quote")
+        # Annotates `amount_paid` in the same query (one LEFT JOIN + SUM,
+        # filtered to non-deleted payments) instead of letting
+        # Invoice.amount_paid's property run a separate aggregate query
+        # per row — the difference between one query and N+1 queries for
+        # a page of invoices. See Invoice.amount_paid's own docstring for
+        # the matching property-side fallback (a directly-fetched
+        # instance, e.g. in services.py, still computes it correctly,
+        # just via a query instead of an annotation).
+        return (
+            super()
+            .get_queryset()
+            .select_related("customer", "owner", "quote")
+            .annotate(
+                _amount_paid_annotated=Coalesce(
+                    Sum("payments__amount", filter=Q(payments__is_deleted=False)),
+                    Value(0),
+                    output_field=DecimalField(max_digits=14, decimal_places=2),
+                )
+            )
+        )
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -208,11 +236,12 @@ class InvoiceViewSet(_CrmModelViewSet):
     def perform_create(self, serializer):
         data = dict(serializer.validated_data)
         customer = data.pop("customer")
+        assert_object_accessible(self.request, customer)
         invoice_number = data.pop("invoice_number")
         owner = data.pop("owner", None)
 
         invoice = create_invoice(customer, invoice_number, **data)
-        assign_owner(invoice, owner or self.request.user)
+        assign_owner(invoice, resolve_owner_for_create(self.request.user, owner))
         stamp_audit_fields(invoice, self.request.user, creating=True)
         invoice.save()
         serializer.instance = invoice
@@ -265,6 +294,7 @@ class InvoiceItemViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         invoice = data.pop("invoice")
+        assert_object_accessible(self.request, invoice)
         product_name = data.pop("product_name")
         quantity = data.pop("quantity")
         unit_price = data.pop("unit_price")
@@ -274,3 +304,56 @@ class InvoiceItemViewSet(_CrmModelViewSet):
         stamp_audit_fields(item, self.request.user, creating=True)
         item.save()
         serializer.instance = item
+
+
+class PaymentTransactionViewSet(_CrmModelViewSet):
+    """Create/list/retrieve only — no PATCH and no soft-delete via plain
+    DELETE (a recorded payment is a financial record; correcting one
+    means recording an offsetting entry, not silently rewriting history).
+    ``hard-delete`` remains reachable for Managers/Super Admins via
+    CP7's mixin, same as every other CP10+ model — this narrowing only
+    removes the ordinary edit/soft-delete surface, not the existing
+    role-gated administrative override.
+    """
+
+    http_method_names = ["get", "post", "head", "options"]
+    base_manager = PaymentTransaction.objects
+    base_active_manager = PaymentTransaction.active_objects
+    serializer_class = PaymentTransactionSerializer
+    filterset_class = PaymentTransactionFilterSet
+    owner_field = "invoice__owner"
+    ordering_fields = ["paid_at", "amount"]
+    ordering = ["-paid_at"]
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("invoice", "invoice__owner", "recorded_by")
+
+    def get_throttles(self):
+        # Rate-limited: recording a payment is a real, data-mutating
+        # financial operation — see config/settings/base.py's
+        # "expensive_operation" scope docstring. list/retrieve on this
+        # viewset are unaffected.
+        if self.action == "create":
+            self.throttle_scope = "expensive_operation"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
+    def perform_create(self, serializer):
+        """Routes creation through ``services.record_payment()`` — real
+        behavior: rejects overpayment and payments against a cancelled
+        invoice, and recalculates the parent invoice's status
+        (``PARTIAL``/``PAID``) as a side effect.
+        """
+        data = dict(serializer.validated_data)
+        invoice = data.pop("invoice")
+        assert_object_accessible(self.request, invoice)
+        amount = data.pop("amount")
+
+        try:
+            transaction = record_payment(invoice, amount, recorded_by=self.request.user, **data)
+        except ValueError as exc:
+            raise serializers.ValidationError({"detail": str(exc)}) from exc
+
+        stamp_audit_fields(transaction, self.request.user, creating=True)
+        transaction.save()
+        serializer.instance = transaction

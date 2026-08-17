@@ -16,8 +16,11 @@ it's the SAME function both ``views.py``'s ``get_queryset()`` and
 individual object-permission checks can never disagree about who a Manager
 can see.
 """
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import slugify
+from rest_framework.exceptions import PermissionDenied
 
 from apps.accounts.permissions import is_super_admin, user_has_role_at_least
 from apps.accounts.models import User
@@ -89,6 +92,86 @@ def convert_lead(lead, organization, *, owner=None, slug=None, **extra_customer_
     return customer
 
 
+def find_duplicate_leads(lead):
+    """Other active, unconverted ``Lead``s that plausibly refer to the same
+    real-world contact as ``lead``: a matching non-empty ``email`` or a
+    matching non-empty ``phone``. Deliberately conservative (no fuzzy name
+    matching) — a false-positive merge is destructive, a missed duplicate
+    is just an extra manual check.
+    """
+    if lead.pk is None:
+        return Lead.active_objects.none()
+
+    criteria = Q()
+    if lead.email:
+        criteria |= Q(email=lead.email)
+    if lead.phone:
+        criteria |= Q(phone=lead.phone)
+    if not criteria:
+        return Lead.active_objects.none()
+
+    return (
+        Lead.active_objects.filter(criteria)
+        .exclude(pk=lead.pk)
+        .exclude(status=Lead.Status.CONVERTED)
+    )
+
+
+@transaction.atomic
+def merge_leads(primary, duplicate, *, merged_by=None):
+    """Merge ``duplicate`` into ``primary``: every record elsewhere in the
+    system that points at ``duplicate`` via a generic (content_type +
+    object_id) relation — activities, tasks, reminders, communications,
+    audit log entries, workflow executions, anything built on
+    ``apps.activities.models.RelatedToEntityModel`` — is repointed at
+    ``primary`` instead, so nothing referencing the duplicate becomes an
+    orphaned/dangling reference. Empty fields on ``primary`` are backfilled
+    from ``duplicate`` (never overwritten if ``primary`` already has a
+    value); notes are concatenated, not dropped. ``duplicate`` is then
+    SOFT-deleted, never hard-deleted — the merge itself must stay
+    auditable/reversible, matching CP7's "no permanent delete unless
+    explicitly requested" rule; its own record (and the trail of what it
+    used to contain) is preserved, just marked deleted and no longer the
+    lead of record.
+
+    Raises ``ValueError`` for merging a lead with itself or merging an
+    already-converted lead (a converted lead is a customer now — its
+    history belongs to that customer, not to another lead).
+    """
+    if primary.pk == duplicate.pk:
+        raise ValueError("Cannot merge a lead with itself.")
+    if primary.is_converted or duplicate.is_converted:
+        raise ValueError("Cannot merge a converted lead — convert or merge before conversion, not after.")
+
+    from django.apps import apps as django_apps
+    from django.contrib.contenttypes.models import ContentType
+
+    from apps.activities.models import RelatedToEntityModel
+
+    lead_content_type = ContentType.objects.get_for_model(Lead)
+
+    for model in django_apps.get_models():
+        if not issubclass(model, RelatedToEntityModel) or model._meta.abstract:
+            continue
+        model.objects.filter(content_type=lead_content_type, object_id=duplicate.pk).update(object_id=primary.pk)
+
+    for field in ("email", "phone"):
+        if not getattr(primary, field) and getattr(duplicate, field):
+            setattr(primary, field, getattr(duplicate, field))
+    if duplicate.notes:
+        merged_note = f"--- Merged from duplicate lead #{duplicate.pk} ({duplicate.company_name}) ---\n{duplicate.notes}"
+        primary.notes = f"{primary.notes}\n\n{merged_note}".strip() if primary.notes else merged_note
+    if primary.owner_id is None and duplicate.owner_id is not None:
+        primary.owner = duplicate.owner
+    primary.updated_by = merged_by
+    primary.save()
+
+    duplicate.notes = (f"Merged into lead #{primary.pk}.\n\n{duplicate.notes}").strip()
+    duplicate.soft_delete(updated_by=merged_by)
+
+    return primary
+
+
 def assign_owner(instance, user):
     """Assign (or clear, with ``user=None``) the ``owner`` of a ``Customer``
     or ``Lead`` — anything with an ``owner`` FK. A thin wrapper (mirroring
@@ -98,6 +181,49 @@ def assign_owner(instance, user):
     instance.owner = user
     instance.save(update_fields=["owner", "updated_at"])
     return instance
+
+
+class OwnerAssignmentNotAllowed(PermissionDenied):
+    """Raised by ``resolve_owner_for_create()`` when the requester tried to
+    attribute a new record to a user they're not allowed to assign.
+    Subclasses DRF's own ``PermissionDenied`` so every caller gets an
+    automatic 403 with this message from DRF's exception handler,
+    without needing its own try/except.
+    """
+
+
+def resolve_owner_for_create(user, requested_owner):
+    """Final internet-facing security audit, Part 15: the owner to assign
+    a newly-created, owner-having record to, given an optional
+    client-requested owner — the rule every ``perform_create()`` across
+    the project (Lead, Customer, Opportunity, Quote, Invoice, Task,
+    Event, SavedReport, Dashboard, Workflow, Integration, BackgroundJob)
+    now goes through instead of accepting ``requested_owner`` unchecked.
+
+    - No ``requested_owner`` supplied (``None``): defaults to ``user``
+      themselves — unchanged from every checkpoint's original behavior.
+    - ``requested_owner == user``: always allowed (creating your own
+      record).
+    - Super Admin: may assign to anyone.
+    - Manager: may assign to anyone in their own ``managed_user_ids()``
+      (themselves + their teams' members) — the same boundary already
+      enforced for reads via ``scope_queryset_for_user()``.
+    - Employee (or anyone else) requesting a DIFFERENT owner: rejected.
+      Previously accepted unconditionally — any authenticated user could
+      attribute a brand-new record to an arbitrary other user, a
+      data-integrity gap even though it never granted access to an
+      EXISTING record (see the BOLA fix in the prior audit pass for
+      that, separate, class of issue).
+    """
+    if requested_owner is None:
+        return user
+    if requested_owner.pk == user.pk:
+        return requested_owner
+    if is_super_admin(user):
+        return requested_owner
+    if user_has_role_at_least(user, User.Role.MANAGER) and requested_owner.pk in managed_user_ids(user):
+        return requested_owner
+    raise OwnerAssignmentNotAllowed("You are not allowed to assign this record to that owner.")
 
 
 def add_contact(customer, first_name, last_name, *, is_primary=False, **extra_fields):
@@ -307,6 +433,8 @@ __all__ = [
     "create_lead",
     "convert_lead",
     "assign_owner",
+    "resolve_owner_for_create",
+    "OwnerAssignmentNotAllowed",
     "add_contact",
     "add_address",
     "managed_user_ids",

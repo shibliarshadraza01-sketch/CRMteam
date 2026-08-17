@@ -6,7 +6,7 @@ available — see BACKEND_PROGRESS.md CP2 for the current blocker/status.
 """
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.core.exceptions import ValidationError
 
 pytestmark = pytest.mark.django_db
 
@@ -45,14 +45,24 @@ def test_password_is_hashed_not_stored_raw():
 def test_duplicate_email_rejected():
     User.objects.create_user(email="dup@example.com", password="a-strong-password-1")
 
-    with pytest.raises(IntegrityError):
+    # create_user() calls full_clean() before ever reaching the DB, so the
+    # unique-email constraint (Lower(email), see models.py) is caught as a
+    # clean ValidationError here — the DB-level UniqueConstraint is a
+    # defense-in-depth backstop for paths that bypass full_clean(), not
+    # the mechanism the normal create_user() flow actually raises.
+    with pytest.raises(ValidationError):
         User.objects.create_user(email="dup@example.com", password="another-password-2")
 
 
 def test_duplicate_email_rejected_case_insensitively():
     User.objects.create_user(email="dup2@example.com", password="a-strong-password-1")
 
-    with pytest.raises(IntegrityError):
+    # create_user() calls full_clean() before ever reaching the DB, so the
+    # unique-email constraint (Lower(email), see models.py) is caught as a
+    # clean ValidationError here — the DB-level UniqueConstraint is a
+    # defense-in-depth backstop for paths that bypass full_clean(), not
+    # the mechanism the normal create_user() flow actually raises.
+    with pytest.raises(ValidationError):
         User.objects.create_user(email="DUP2@EXAMPLE.COM", password="another-password-2")
 
 

@@ -40,10 +40,15 @@ def test_email_message_status_defaults_to_queued():
     assert EmailMessage._meta.get_field("status").default == EmailMessage.Status.QUEUED
 
 
-def test_email_message_str_includes_subject_recipient_and_status():
+def test_email_message_str_includes_subject_and_status_but_never_the_recipient():
+    """``__str__`` deliberately omits ``to_email``: CP14's
+    ``RelatedObjectMixin`` renders ``str(target)`` into an employee-visible
+    ``related_object.label``, and Django's admin change list renders it
+    too, so any PII here would leak through both.
+    """
     message = EmailMessage(subject="Hi", to_email="a@example.com", status=EmailMessage.Status.QUEUED)
     assert "Hi" in str(message)
-    assert "a@example.com" in str(message)
+    assert "a@example.com" not in str(message)
     assert "QUEUED" in str(message)
 
 

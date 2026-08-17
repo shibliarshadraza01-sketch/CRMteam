@@ -43,6 +43,19 @@ def test_create_customer(api_client, organization, manager):
     assert customer.created_by_id == manager.id
 
 
+def test_create_customer_without_slug_auto_generates_one(api_client, organization, manager):
+    """slug is required=False at the serializer level specifically so
+    perform_create()'s create_customer() auto-generation (from `name`) is
+    actually reachable via the API — omitting it must not 400.
+    """
+    api_client.force_authenticate(manager)
+
+    response = api_client.post(CUSTOMERS_URL, {"organization": organization.id, "name": "Globex Corp"})
+
+    assert response.status_code == 201
+    assert response.data["slug"] == "globex-corp"
+
+
 def test_list_customers_returns_only_active_rows(api_client, super_admin, organization):
     visible = Customer.objects.create(organization=organization, name="Visible", slug="visible")
     deleted = Customer.objects.create(organization=organization, name="Deleted", slug="deleted")
@@ -255,3 +268,77 @@ def test_delete_address_soft_deletes(api_client, customer, owner):
     assert response.status_code == 204
     address.refresh_from_db()
     assert address.is_deleted is True
+
+
+# --------------------------------------------------------------------------
+# Lead duplicate detection + merge
+# --------------------------------------------------------------------------
+
+
+def test_list_duplicate_leads(api_client, owner):
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    duplicate = Lead.objects.create(company_name="Acme Inc", contact_name="Jane D", email="jane@acme.example", owner=owner)
+    api_client.force_authenticate(owner)
+
+    response = api_client.get(f"{_detail(LEADS_URL, primary.pk)}duplicates/")
+
+    assert response.status_code == 200
+    assert [row["id"] for row in response.data] == [duplicate.id]
+
+
+def test_duplicates_action_only_shows_leads_the_requester_can_see(api_client, owner, django_user_model):
+    other_owner = django_user_model.objects.create_user(email="other-lead-owner@example.com", password="x")
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    Lead.objects.create(company_name="Acme Inc", contact_name="Jane D", email="jane@acme.example", owner=other_owner)
+    api_client.force_authenticate(owner)
+
+    response = api_client.get(f"{_detail(LEADS_URL, primary.pk)}duplicates/")
+
+    assert response.data == []
+
+
+def test_merge_leads_via_api(api_client, owner):
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    duplicate = Lead.objects.create(company_name="Acme Inc", contact_name="Jane D", email="jane@acme.example", owner=owner)
+    api_client.force_authenticate(owner)
+
+    response = api_client.post(f"{_detail(LEADS_URL, primary.pk)}merge/", {"duplicate_id": duplicate.pk})
+
+    assert response.status_code == 200
+    duplicate.refresh_from_db()
+    assert duplicate.is_deleted is True
+
+
+def test_merge_leads_requires_duplicate_id(api_client, owner):
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    api_client.force_authenticate(owner)
+
+    response = api_client.post(f"{_detail(LEADS_URL, primary.pk)}merge/", {})
+
+    assert response.status_code == 400
+
+
+def test_merge_leads_404s_for_a_lead_the_requester_cannot_see(api_client, owner, django_user_model):
+    other_owner = django_user_model.objects.create_user(email="other-lead-owner-2@example.com", password="x")
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    invisible = Lead.objects.create(company_name="Acme Inc", contact_name="Jane D", email="jane@acme.example", owner=other_owner)
+    api_client.force_authenticate(owner)
+
+    response = api_client.post(f"{_detail(LEADS_URL, primary.pk)}merge/", {"duplicate_id": invisible.pk})
+
+    assert response.status_code == 404
+    invisible.refresh_from_db()
+    assert invisible.is_deleted is False
+
+
+def test_merge_leads_rejects_merging_converted_lead_via_api(api_client, owner, organization):
+    from apps.crm.services import convert_lead
+
+    primary = Lead.objects.create(company_name="Acme", contact_name="Jane", email="jane@acme.example", owner=owner)
+    converted = Lead.objects.create(company_name="Acme Inc", contact_name="Jane D", email="jane@acme.example", owner=owner)
+    convert_lead(converted, organization)
+    api_client.force_authenticate(owner)
+
+    response = api_client.post(f"{_detail(LEADS_URL, primary.pk)}merge/", {"duplicate_id": converted.pk})
+
+    assert response.status_code == 400

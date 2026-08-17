@@ -1,0 +1,210 @@
+name: CI/CD
+
+# Final production operations pass: implements the documented deployment
+# flow (PRODUCTION_DEPLOYMENT_GUIDE.md §8) as an actual pipeline:
+#
+#   Code push -> Tests -> Build -> Backup -> Migration -> Deploy ->
+#   Health check -> Release
+#
+# The `test` and `build` jobs run on every push/PR and are fully
+# self-contained (a real ephemeral PostgreSQL/Redis service, no external
+# dependencies) — genuinely runnable as-is. The `backup`/`migrate`/
+# `deploy`/`health-check` jobs only run on a push to `main` and require
+# real deployment secrets (a target host, backup bucket credentials,
+# etc.) that do not exist in this repository — they are structured and
+# documented, not fabricated to "look done" without a real target. See
+# each job's own comments for exactly what's real vs. what a real
+# deployment target needs filled in.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ------------------------------------------------------------------
+  # Tests — fully real, runs on every push/PR against ephemeral services
+  # ------------------------------------------------------------------
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: crm_db
+          POSTGRES_USER: crm_dev
+          POSTGRES_PASSWORD: crm_dev_password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U crm_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DJANGO_SECRET_KEY: ci-test-only-not-a-real-secret
+      DB_NAME: crm_db
+      DB_USER: crm_dev
+      DB_PASSWORD: crm_dev_password
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Django checks
+        working-directory: backend
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+      - name: Run tests
+        working-directory: backend
+        run: pytest -q
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  # ------------------------------------------------------------------
+  # Deploy-time-only jobs — main branch, only after tests pass
+  # ------------------------------------------------------------------
+  # NOTE: these require secrets (DEPLOY_HOST, BACKUP_*, a real
+  # DATABASE_URL for the production database) that this repository does
+  # not have configured — see PRODUCTION_DEPLOYMENT_GUIDE.md's "what
+  # this guide does NOT claim" section. As written, these jobs are the
+  # documented STRUCTURE of the flow; they will fail (correctly, safely)
+  # until a real deployment target's secrets are added to this repo's
+  # GitHub Actions secrets.
+
+  backup:
+    needs: [backend-tests, frontend-checks]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Install PostgreSQL client tools (pg_dump)
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Backup production database before migrating
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.production
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_ALLOWED_HOSTS: ${{ secrets.DJANGO_ALLOWED_HOSTS }}
+          DJANGO_CORS_ALLOWED_ORIGINS: ${{ secrets.DJANGO_CORS_ALLOWED_ORIGINS }}
+          DJANGO_CSRF_TRUSTED_ORIGINS: ${{ secrets.DJANGO_CSRF_TRUSTED_ORIGINS }}
+          DJANGO_SENDGRID_API_KEY: ${{ secrets.DJANGO_SENDGRID_API_KEY }}
+          DB_NAME: ${{ secrets.PROD_DB_NAME }}
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_PORT: ${{ secrets.PROD_DB_PORT }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          BACKUP_STORAGE_PROVIDER: ${{ secrets.BACKUP_STORAGE_PROVIDER }}
+          BACKUP_BUCKET: ${{ secrets.BACKUP_BUCKET }}
+          BACKUP_S3_ENDPOINT_URL: ${{ secrets.BACKUP_S3_ENDPOINT_URL }}
+          BACKUP_S3_ACCESS_KEY: ${{ secrets.BACKUP_S3_ACCESS_KEY }}
+          BACKUP_S3_SECRET_KEY: ${{ secrets.BACKUP_S3_SECRET_KEY }}
+        run: python manage.py backup_database
+
+  migrate:
+    needs: [backup]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Apply migrations (backup above already succeeded)
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.production
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_ALLOWED_HOSTS: ${{ secrets.DJANGO_ALLOWED_HOSTS }}
+          DJANGO_CORS_ALLOWED_ORIGINS: ${{ secrets.DJANGO_CORS_ALLOWED_ORIGINS }}
+          DJANGO_CSRF_TRUSTED_ORIGINS: ${{ secrets.DJANGO_CSRF_TRUSTED_ORIGINS }}
+          DJANGO_SENDGRID_API_KEY: ${{ secrets.DJANGO_SENDGRID_API_KEY }}
+          DB_NAME: ${{ secrets.PROD_DB_NAME }}
+          DB_USER: ${{ secrets.PROD_DB_USER }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_PORT: ${{ secrets.PROD_DB_PORT }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+        run: python manage.py migrate
+
+  deploy:
+    needs: [migrate]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: |
+          echo "No hosting platform is configured in this repository yet."
+          echo "This step is where your platform's own deploy action goes:"
+          echo "  - Fly.io:  flyctl deploy"
+          echo "  - Render/Railway: triggered automatically on push, or via their CLI/API"
+          echo "  - A container platform: build + push an image, update the running service"
+          echo "A rolling/blue-green deploy strategy (see PRODUCTION_DEPLOYMENT_GUIDE.md §8)"
+          echo "should be provided by whichever of these you choose, not reimplemented here."
+          exit 1
+
+  health-check:
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Verify the new deployment is ready before considering this a release
+        env:
+          PROD_URL: ${{ secrets.PROD_URL }}
+        run: |
+          if [ -z "$PROD_URL" ]; then
+            echo "PROD_URL secret is not set — no deployed instance to health-check yet."
+            exit 1
+          fi
+          for i in $(seq 1 10); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL/ready")
+            if [ "$status" = "200" ]; then
+              echo "Ready."
+              exit 0
+            fi
+            echo "Not ready yet (status=$status), retrying..."
+            sleep 6
+          done
+          echo "Deployment did not become ready in time — treat this as a FAILED release, roll back."
+          exit 1

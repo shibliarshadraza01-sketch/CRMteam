@@ -47,6 +47,22 @@ class _CatalogModelViewSet(ReferenceDataModelViewSetMixin, viewsets.ModelViewSet
 
     permission_classes = [IsAuthenticated, CatalogWritePermission]
 
+    def get_queryset(self):
+        """Every catalog model's ``active_objects`` means "not deleted AND
+        ``is_active=True``" (``CatalogItemQuerySet.active()`` deliberately
+        overrides CP7's soft-delete-only ``active()``). Used unmodified via
+        ``ReferenceDataModelViewSetMixin``'s ``base_active_manager`` switch,
+        that would make ``is_active`` an unfilterable dead field on the list
+        endpoint — the base queryset would already exclude every inactive
+        row before the ``FilterSet`` ever runs. Re-widen list back to "not
+        deleted" (matching every other app's list default) so ``is_active``
+        stays a genuine, working filter.
+        """
+        queryset = super().get_queryset()
+        if self.action == "list":
+            queryset = self.base_manager.filter(is_deleted=False)
+        return queryset
+
 
 class ProductViewSet(_CatalogModelViewSet):
     base_manager = Product.objects

@@ -5811,3 +5811,367 @@ IMPLEMENT
 
 If a checkpoint fails midway, record it as PARTIAL/BLOCKED instead of COMPLETE.
 
+## Final Completion Pass (post-CP20)
+
+PostgreSQL is now reachable and every check below has actually been run,
+not merely described as blocked.
+
+**Backend:**
+- `manage.py check` — clean, 0 issues.
+- `manage.py check --deploy` (production settings, real env vars) — clean, 0 issues.
+- `manage.py makemigrations --check --dry-run` — no changes detected.
+- `manage.py showmigrations --list` — 0 unapplied migrations.
+- `pytest -q` (full suite) — **1730 passed, 0 failed, 0 errors.**
+
+**Frontend:**
+- `npm run lint` — 0 warnings, 0 errors (a minimal `eslint.config.mjs`
+  was added; none existed before, which is why `next lint` previously
+  needed an interactive setup prompt).
+- `npm run build` — clean production build.
+- `npx tsc --noEmit` — clean.
+
+**Modules wired to the real backend this pass** (previously mock/local
+state, or partially wired with dead-end action buttons): Leads
+(including duplicate-detection/merge/import — these existed on the
+backend but were never actually called by the frontend before this
+pass), Customers, Users/Team, Settings, Audit (read-only by design),
+Tasks, Communication, Payments/Invoices, Reports/Dashboard (SavedReport
+CRUD + execute). Every one of these was verified with a live `curl`
+sequence against the running dev server (create → read → update/action
+→ list → delete), not just a passing unit test.
+
+**Known, explicitly out-of-scope gaps** (not silently dropped — recorded
+here on purpose):
+- No partial-payment ledger on `Invoice` (only a `status`/`paid_at`
+  boolean-like state) — the original spec's "balance tracking" language
+  is not implementable without new backend model work.
+- WhatsApp, telephony, and file storage/transcription were explicitly
+  descoped by the user earlier in this project (SendGrid-only email,
+  no other channel).
+- SendGrid is wired correctly (SMTP backend, fail-fast on a missing API
+  key in production) but has never been verified against a real SendGrid
+  account — no credential was available in this environment.
+- The Smart Calendar's reminders/notes remain a local-only UI feature
+  by design — no backend model exists for them, and building one was
+  never requested.
+- Lead list rows show a static "—" for possible-duplicate status
+  (computing it live per-row would require an extra API call per
+  visible lead); the actual duplicate-detection and merge action
+  itself is real and backend-verified.
+
+## Final Release Completion Pass — Payment Ledger
+
+A re-audit against the frontend's own original Payments module copy
+("track partial payments... view their payment history") found that
+the previous pass's `Invoice.status` boolean-like state did NOT satisfy
+that requirement — flagged in the prior pass's own honest gap list as
+"no partial-payment ledger". This pass closes it:
+
+- New `PaymentTransaction` model (`apps/sales/models.py`) — one row per
+  payment against an `Invoice`, any number per invoice. `Invoice` grew
+  two derived (never stored) properties, `amount_paid`/`balance`, and a
+  new `PARTIAL` status alongside the existing `DRAFT`/`SENT`/`PAID`/
+  `CANCELLED`.
+- `services.record_payment()` — validates no overpayment and no
+  payment against a cancelled invoice, then recalculates the invoice's
+  status (`PARTIAL` while `0 < amount_paid < total`, `PAID` once
+  `amount_paid == total`). Deliberately layered alongside, not instead
+  of, the existing `mark_invoice_paid()`/`cancel_invoice()` shortcuts —
+  neither was touched.
+- `POST/GET /api/v1/sales/payments/` (create + list + retrieve only —
+  no PATCH, no plain-DELETE soft-delete; a financial record is
+  corrected with an offsetting entry, not silently rewritten).
+  `InvoiceDetailSerializer` now nests the full `payments` history.
+- 18 new tests (`apps/sales/tests/test_payment_transactions.py`):
+  overpayment rejection, cancelled-invoice rejection, zero/negative
+  amount rejection, status transitions, ownership scoping, soft-deleted
+  payments excluded from `amount_paid`, PATCH/DELETE correctly 405.
+- Frontend Payments module now shows real `Paid`/`Balance` columns
+  (sourced from the API's own computed fields, not client-side math)
+  and payment-history via `InvoiceDetailSerializer`; recording a
+  payment is done by raising the "Paid" field, which the frontend
+  translates into a `POST /payments/` for the difference.
+- Migration `apps/sales/migrations/0002_alter_invoice_status_paymenttransaction.py`
+  applied cleanly to the running PostgreSQL database; `makemigrations
+  --check --dry-run` clean afterward.
+
+**Real bug found and fixed in the same pass, unrelated to the ledger
+work**: the frontend's `INVOICE_STATUS_LABELS` map used a status value
+(`PENDING`) that has never existed on the `Invoice` model — the real
+enum is `DRAFT`/`SENT`/`PAID`/`CANCELLED` (now plus `PARTIAL`). Every
+dashboard KPI and calendar-view spot that filtered on the wrong label
+was silently undercounting "pending" revenue. Fixed to filter on
+`balance > 0` (the API's own computed field) instead of a status-label
+string, which is correct regardless of which non-terminal status an
+invoice is in.
+
+Final backend test count after this pass: **1748 passed, 0 failed, 0
+errors** (up from 1730 — the +18 above). `manage.py check`,
+`check --deploy`, and `makemigrations --check --dry-run` all re-verified
+clean. `npm run lint` and `npm run build` both re-verified clean.
+Payment ledger workflow (create invoice → set total via one line item →
+two partial payments → PAID → overpay rejected) live-verified end-to-end
+against the running dev server.
+
+## Backend Scale Readiness Audit
+
+A targeted N+1/index audit across every app, prompted by the previous
+pass's own new `Invoice.amount_paid`/`balance` properties (both real
+DB-computed aggregates, not stored fields — see above). Found and fixed:
+
+- **N+1 confirmed and fixed**: `InvoiceSerializer.amount_paid`/`balance`
+  ran one `aggregate()` query per invoice when listing (`GET
+  /sales/invoices/` — 20 rows per page meant up to 40 extra queries).
+  Fixed by annotating `_amount_paid_annotated` on `InvoiceViewSet
+  .get_queryset()` (one `Coalesce(Sum(...))` JOIN for the whole page);
+  `Invoice.amount_paid` now prefers the annotation when present and
+  falls back to the per-instance aggregate only for an `Invoice` fetched
+  outside that queryset (e.g. `services.record_payment()`, a test).
+  Verified with `CaptureQueriesContext`: 20 invoices, `amount_paid` +
+  `balance` both accessed on every row → 5 total queries (was up to 45).
+- **Two new indexes, both justified by an actual query, not
+  speculative**: `AuditLog(-created_at)` (the only table in this
+  project expected to grow indefinitely and never be pruned — every
+  unfiltered page relies on `Meta.ordering`'s `-created_at`, which the
+  other three `AuditLog` indexes don't help with) and `Lead(email)`/
+  `Lead(phone)` (backs `services.find_duplicate_leads()`'s
+  `Q(email=...) | Q(phone=...)` lookup, used by every "Merge
+  Duplicates" bulk action and `GET .../duplicates/` call).
+- **Everything else already correct, confirmed not re-derived**: every
+  app's list endpoints already carry the `select_related`/
+  `prefetch_related` calls their serializers need (audited app by app:
+  accounts, organization, crm, sales, reports, communications,
+  activities, system, catalog); `apps/reports/services.py`'s five
+  report computations all use `.annotate()`/`.aggregate()` — none loads
+  a full table into Python memory; pagination (`StandardPagination`,
+  page size 20, max 100) is the DRF-wide default with no view
+  overriding it to disable pagination.
+- **One bounded, pre-existing pattern left unfixed, flagged rather than
+  silently left out of this report**: `activities`/`communications`/
+  `system`'s shared `related_object` `SerializerMethodField` resolves a
+  `GenericForeignKey` per row (one query per row when populated) — a
+  deliberate design tradeoff documented in `apps/activities/serializers.py`'s
+  own docstring since the checkpoint that built it ("the target could be
+  any of five unrelated models"). Bounded by page size (≤100 rows), not
+  by total table size, so it does not get worse as the table grows —
+  unlike the `AuditLog`/`Invoice` issues above, which is why it wasn't
+  fixed in this pass. A proper fix would need Django's `GenericPrefetch`
+  (available since 4.1) enumerating all five target models; flagged here
+  as a known follow-up rather than attempted under this pass's "fix only
+  genuine performance issues, do not over-engineer" instruction.
+
+## Final Internet-Facing Security Audit
+
+Found and fixed a real, live-verified BOLA/IDOR vulnerability affecting
+every "child resource attaches to an existing parent identified by a
+client-supplied ID" create endpoint project-wide: ``ContactPerson``/
+``Address`` -> ``Customer``, ``Quote``/``QuoteItem`` -> ``Customer``/
+``Quote``, ``Invoice``/``InvoiceItem``/``PaymentTransaction`` ->
+``Customer``/``Invoice``, ``DashboardWidget`` -> ``Dashboard``/
+``SavedReport``, ``WorkflowAction`` -> ``Workflow``, ``Reminder`` ->
+``Task``/``Event``, ``APIKey``/``WebhookEndpoint`` -> ``Integration``.
+Live-verified with two real employee accounts: Employee B could record a
+real payment against Employee A's invoice, and inject a fabricated
+line item inflating Employee A's invoice total — neither blocked, since
+DRF only runs `has_object_permission()` against an object `get_object()`
+already fetched, and a POST to a list endpoint has none yet, so the
+parent PK referenced inside a create payload was validated only by the
+serializer field's unscoped queryset. Fixed with a single new function,
+`apps.accounts.permissions.assert_object_accessible()`, called
+immediately after popping the parent object in every affected
+`perform_create()` — reuses the exact `IsOwnerOrSuperAdmin
+.has_object_permission()` rule already enforced for retrieve/update/
+destroy, so create-time and read/update-time access control can never
+disagree again. 7 new regression tests in
+`apps/core/tests/test_bola_regression.py`, covering both the fixed
+vulnerabilities, the equivalent `ContactPerson`/`Address`/`Invoice`
+cases, that the legitimate owner is unaffected, and that a Manager
+overseeing the actual owner's team still works.
+
+Also in this pass:
+- `/api/schema/`/`/api/docs/` (full API surface — every endpoint, every
+  field) were public with no environment-based gating. Now open in
+  development (`API_DOCS_PUBLIC`, `config/urls.py`) for usability,
+  authentication-required in production — live-verified both ways.
+- Added a `token_refresh` (30/min) throttle scope — the refresh endpoint
+  had none at all — and an `expensive_operation` (20/min) scope applied
+  to report execution, lead import/export/merge, and payment recording,
+  none of which were rate-limited before this pass.
+- Confirmed clean: no secrets ever committed (`.env`/`.env.local` never
+  appear in `git ls-files` or `git log --all`), no wildcard CORS, admin
+  panel gated by Django's own staff/superuser auth, anonymous access to
+  every domain endpoint denied (401), cross-user/cross-manager read
+  access already correctly enforced (live-verified again in this pass).
+
+**One finding reported, not fixed, given this pass's time budget**:
+every "create with an optional explicit `owner`" endpoint (Lead,
+Customer, Quote, Invoice, Task, and others following the same
+`assign_owner(owner or request.user)` pattern) accepts a client-supplied
+`owner` id from ANY authenticated user, not just Manager+, so an
+Employee can create a new record explicitly attributed to a different
+user. This is a data-attribution gap, not an existing-data access
+escalation (it never grants read/write on someone else's EXISTING
+records — see the BOLA fix above, which does close that door) — flagged
+here for a future pass rather than patched across the ~10 affected
+viewsets without the same level of verification the rest of this pass
+received.
+
+**Deployment infrastructure**: this audit covers the application CODE
+only. No WAF, CDN, load balancer, autoscaling, centralized logging/
+monitoring, or automated database backup exists in this environment —
+there is no deployed infrastructure to audit; this is a local
+development checkout. `CODE READY, INFRASTRUCTURE NOT CONFIGURED` for
+every item in that category — see the final report's own section for
+the itemized list.
+
+## Final Production Infrastructure Pass
+
+Closed the P2 finding from the prior security audit (owner-field mass
+assignment) and added the production-infrastructure code support that
+audit's own recommendations called for. See `PRODUCTION_DEPLOYMENT_GUIDE.md`
+for the full architecture/Cloudflare/backup/DR/monitoring documentation
+— summary of the CODE changes here:
+
+- **`apps.crm.services.resolve_owner_for_create()`** — new, single
+  function enforcing "Employee: owner=self only; Manager: owner=self or
+  their own team; Super Admin: owner=anyone" on every owner-having
+  create endpoint project-wide (Lead, Customer, Opportunity, Quote,
+  Invoice, Task, Event, SavedReport, Dashboard, Workflow, Integration,
+  BackgroundJob — 10 viewsets). Raises `OwnerAssignmentNotAllowed` (a
+  `rest_framework.exceptions.PermissionDenied` subclass, so every
+  caller gets an automatic 403 with no per-view try/except needed). 8
+  new regression tests: `apps/core/tests/test_owner_assignment_regression.py`.
+- **Redis-backed cache in production** — `django-redis` installed and
+  added to `requirements.txt`; `config/settings/production.py` now
+  requires `REDIS_URL` (fails fast without it, same pattern as
+  `DJANGO_SENDGRID_API_KEY`) and configures `CACHES["default"]` as
+  `RedisCache`, which DRF's `ScopedRateThrottle` automatically uses —
+  closing the "throttle counters aren't shared across instances"
+  limitation the prior audit pass flagged. Development is unaffected
+  (still Django's default `LocMemCache`, no Redis dependency for local
+  work).
+- **`GET /ready`** — new readiness probe alongside the existing
+  `/health` liveness probe. Opens a real database connection
+  (`SELECT 1`) and returns 503 if unreachable, 200 otherwise — verified
+  live against the running dev server and PostgreSQL instance.
+- **Structured logging** — `LOGGING` dict config added to
+  `config/settings/base.py` (previously there was none — Django's
+  unconfigured default). `django.security`/`django.request` kept at a
+  distinct `WARNING` level so security-relevant events aren't buried
+  under ordinary request volume. No code anywhere logs a raw secret —
+  confirmed by inspection, consistent with the existing serializer-level
+  secret-exposure regression test's discipline.
+- **`PRODUCTION_DEPLOYMENT_GUIDE.md`** (new) — architecture diagram,
+  environment variables, Cloudflare/WAF/DDoS documentation (edge-level,
+  explicitly not duplicated in Django), database hardening, backup
+  strategy + restore runbook, disaster-recovery table (9 scenarios with
+  detection/protection/recovery/RPO/RTO), deployment flow + rollback
+  plan, monitoring/logging recommendations, file-storage verification
+  (nothing depends on local disk today), email-reliability verification,
+  horizontal-scaling readiness, and a pre-launch checklist. Explicitly
+  distinguishes CODE READY from INFRASTRUCTURE NOT CONFIGURED throughout
+  — this is a local development checkout with no deployed
+  infrastructure, and the guide says so rather than implying otherwise.
+
+Final backend test count after this pass: full suite re-run, baseline
+maintained (see this session's final report for the exact count).
+`manage.py check`, `check --deploy` (with a fabricated `REDIS_URL`
+alongside the other required production env vars), and
+`makemigrations --check --dry-run` all re-verified clean. `npm run lint`
+and `npm run build` both re-verified clean.
+
+## Final Production Operations Pass
+
+Two new provider integrations, backup automation, CI/CD, and a
+production-readiness gap sweep. Single-company architecture unchanged —
+no multi-tenancy work.
+
+- **A1 Routes SIP integration** — `apps/communications/providers/a1routes.py`
+  (real HTTP client, HMAC-SHA256 webhook signature verification), a new
+  `Call` model, `services.initiate_call()`/`apply_a1routes_webhook_event()`
+  (idempotent — re-applying the same status is a no-op), `CallViewSet`
+  (`POST/GET /api/v1/communications/calls/`, throttled at the
+  `expensive_operation` scope, audit-logged, ownership-scoped like
+  every other CP10+ resource), and `POST /api/v1/webhooks/a1routes/`
+  (no JWT — authenticated by its own HMAC signature instead, 401 on a
+  bad/missing one, never leaks whether an unrecognized `call_id`
+  exists). No SIP credential is ever accepted from or returned in a
+  request — read from the environment only, same discipline as
+  SendGrid. No real A1 Routes account exists in this environment —
+  every provider HTTP call is mocked in tests (`unittest.mock`); the
+  client code itself makes real HTTP calls with the real request/
+  response shape the provider documents. Status: **provider-ready,
+  external verification pending**.
+- **WhatsApp Business API integration** — identical shape/reasoning:
+  `apps/communications/providers/whatsapp.py`, a new `WhatsAppMessage`
+  model, `services.send_whatsapp_message()`/`apply_whatsapp_webhook_event()`,
+  `WhatsAppMessageViewSet` (`POST /api/v1/communications/whatsapp/send/`,
+  `GET .../whatsapp/messages/`), and `/api/v1/webhooks/whatsapp/`
+  (Meta's own `X-Hub-Signature-256` HMAC scheme, plus the `GET`
+  subscription-handshake endpoint Meta's own webhook registration
+  requires). Same **provider-ready, external verification pending**
+  status.
+- **Audit logging extended**: `Call`/`WhatsAppMessage` added to
+  `apps.system.signals`' curated audited-models list (previously
+  Customer/Lead/Opportunity/Quote/Invoice only) — live-verified: placing
+  a call produces real `CREATE`/`UPDATE` `AuditLog` rows.
+- **23 new tests** (`apps/communications/tests/test_providers.py`):
+  signature verification (accept/reject), service-layer success/failure
+  recording (a provider failure is recorded on the row, never raised),
+  webhook idempotency, authentication/authorization (cross-user 404,
+  anonymous 401), and both webhooks' signature enforcement.
+- **Redis-backed cache confirmed production-required** (carried from
+  the prior infrastructure pass) — `/ready` now also round-trips the
+  cache backend, not just the database, so a Redis outage correctly
+  produces a 503 instead of a false "ready".
+- **Frontend session-expiry handling** (Part 8): previously, a dead
+  refresh token only forced a logout at the NEXT full page load
+  (`AuthGate`'s mount-time check) — an in-session request failing
+  mid-use just showed that one request's own error toast. Added a
+  `window` custom event (`lib/api.ts`'s `onSessionExpired()`) dispatched
+  the moment a refresh attempt is rejected, so `AuthGate` reacts
+  immediately regardless of which component's fetch triggered it.
+  Confirmed no secret/token is ever exposed via a `NEXT_PUBLIC_*`
+  variable (only `NEXT_PUBLIC_API_URL`, a public value by definition).
+- **Backup automation**: `python manage.py backup_database`
+  (`apps/system/management/commands/backup_database.py`) — `pg_dump`,
+  SHA-256 checksum, optional S3-compatible upload with upload
+  verification (re-download + compare) and two-tier retention (full
+  granularity for 24h, thinned to 1/day after that, deleted past
+  `BACKUP_RETENTION_DAYS`). 5 tests, all passing, using mocked
+  `subprocess`/`boto3`. **Honestly unverified**: no PostgreSQL client
+  tools (`pg_dump`) exist in this environment, and no real S3-compatible
+  bucket is provisioned — live-verified only that the missing-`pg_dump`
+  path fails gracefully (`CommandError`, not a crash) rather than a real
+  end-to-end backup/restore. See `BACKUP_AND_RECOVERY_GUIDE.md` (new)
+  for the full strategy, restore runbook, and this same honesty about
+  what is/isn't actually tested.
+- **CI/CD pipeline** (`.github/workflows/ci-cd.yml`, new): `test`/`build`
+  jobs are fully self-contained (ephemeral PostgreSQL + Redis services)
+  and genuinely runnable as committed; `backup`/`migrate`/`deploy`/
+  `health-check` jobs implement the documented flow's structure but
+  require real deployment secrets this repository doesn't have — they
+  fail safely (exit 1 with a clear message) rather than silently
+  no-op-ing, so a real deployment target's absence is loud, not hidden.
+- **Gap sweep** (grep for TODO/FIXME/mock/dummy/hardcoded/placeholder/
+  fake/simulation across the whole project): found and removed one real
+  issue — `WorkflowPanel`, a decorative "Form & Validation" + "Empty &
+  Loading States" showcase rendered on EVERY module's page in
+  production, entirely disconnected from the real create/edit modal and
+  the real (already-existing, still-present) empty-state handling in
+  `DataTable` — non-functional inputs with no `onChange`, a hardcoded
+  "field index 1 is required" demo unrelated to any real field's actual
+  validation. Removed; the real form/empty-state UI was never affected
+  (verified: `npx tsc --noEmit`, `npm run lint` both clean afterward).
+  No other TODO/FIXME/mock/dummy/fake/simulation hits found outside
+  legitimate uses (test names, comments describing the ABSENCE of
+  hardcoding, an `EmailTemplate`'s own `{{placeholder}}` templating
+  syntax, HTML input placeholder text).
+
+Final backend test count after this pass: full suite re-run (see this
+session's final report for the exact number — grew by the 23 provider
+tests + 5 backup-command tests over the previous pass's baseline).
+`manage.py check`, `check --deploy`, `makemigrations --check --dry-run`
+all re-verified clean. `npm run lint`, `npm run build`, `npx tsc --noEmit`
+all re-verified clean.
+

@@ -34,7 +34,7 @@ from rest_framework import serializers
 from apps.accounts.serializers import UserSerializer
 from apps.core.serializers import SoftDeleteTimeStampedSerializerMixin
 
-from .models import Invoice, InvoiceItem, Quote, QuoteItem
+from .models import Invoice, InvoiceItem, PaymentTransaction, Quote, QuoteItem
 
 
 class _SalesSerializer(SoftDeleteTimeStampedSerializerMixin, serializers.ModelSerializer):
@@ -71,6 +71,37 @@ class InvoiceItemSerializer(_SalesSerializer):
 
 
 # --------------------------------------------------------------------------
+# PaymentTransaction
+# --------------------------------------------------------------------------
+
+
+class PaymentTransactionSerializer(_SalesSerializer):
+    """``recorded_by`` defaults to the requesting user (see
+    ``views.PaymentTransactionViewSet.perform_create()``) and is
+    read-only here, the same "server assigns it, never the client" rule
+    CP9/CP10's ``created_by``/``updated_by`` already follow.
+    """
+
+    recorded_by = serializers.PrimaryKeyRelatedField(read_only=True)
+    # Defaults to "now" server-side (see services.record_payment()) when
+    # omitted — a client backfilling a payment made earlier can still
+    # supply an explicit paid_at.
+    paid_at = serializers.DateTimeField(required=False)
+
+    class Meta:
+        model = PaymentTransaction
+        fields = [
+            "id", "invoice", "amount", "method", "paid_at", "recorded_by", "notes",
+            "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
+        ]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Payment amount must be greater than zero.")
+        return value
+
+
+# --------------------------------------------------------------------------
 # Quote (writable)
 # --------------------------------------------------------------------------
 
@@ -102,12 +133,14 @@ class InvoiceSerializer(_SalesSerializer):
     subtotal = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     total = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     paid_at = serializers.DateTimeField(read_only=True)
+    amount_paid = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    balance = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
 
     class Meta:
         model = Invoice
         fields = [
             "id", "customer", "quote", "owner", "invoice_number", "status", "due_date",
-            "subtotal", "tax", "total", "paid_at",
+            "subtotal", "tax", "total", "paid_at", "amount_paid", "balance",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
         ]
 
@@ -152,7 +185,8 @@ class InvoiceDetailSerializer(InvoiceSerializer):
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     quote = QuoteSerializer(read_only=True)
     items = InvoiceItemSerializer(many=True, read_only=True)
+    payments = PaymentTransactionSerializer(many=True, read_only=True)
 
     class Meta(InvoiceSerializer.Meta):
-        fields = InvoiceSerializer.Meta.fields + ["customer_name", "items"]
+        fields = InvoiceSerializer.Meta.fields + ["customer_name", "items", "payments"]
         read_only_fields = fields

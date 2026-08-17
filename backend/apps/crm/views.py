@@ -16,14 +16,18 @@ or via ``Customer``/``Lead.manager_has_access()`` for a Manager overseeing
 the owner's team), or being a Super Admin — enforced by CP6's
 ``IsOwnerOrSuperAdmin``, unchanged.
 """
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
+from apps.core.serializers import pii_masking_required
 from apps.core.utils import stamp_audit_fields
-from apps.core.views import SoftDeleteAuditModelViewSetMixin
+from apps.core.views import PiiSafeSearchMixin, SoftDeleteAuditModelViewSetMixin
 
 from .filters import (
     AddressFilterSet,
@@ -32,9 +36,10 @@ from .filters import (
     LeadFilterSet,
     OpportunityFilterSet,
 )
+from .imports import export_leads_csv, export_leads_xlsx, import_leads, parse_rows_from_file
 from .models import Address, ContactPerson, Customer, Lead
 from .opportunities import Opportunity, OpportunityActivity, OpportunityNote
-from .permissions import IsOwnerOrSuperAdmin
+from .permissions import IsOwnerOrSuperAdmin, assert_object_accessible
 from .serializers import (
     AddressSerializer,
     ContactPersonSerializer,
@@ -57,9 +62,12 @@ from .services import (
     assign_owner,
     create_customer,
     create_opportunity,
+    find_duplicate_leads,
     mark_lost,
     mark_won,
+    merge_leads,
     reopen,
+    resolve_owner_for_create,
     scope_queryset_for_user,
 )
 
@@ -90,27 +98,50 @@ class _CrmModelViewSet(SoftDeleteAuditModelViewSetMixin, viewsets.ModelViewSet):
         deliberately uses the UNFILTERED manager so a soft-deleted row
         remains reachable for ``restore``/``hard-delete`` — see CP7's
         ``SoftDeleteModelMixin.restore()`` docstring for why this can't be
-        left implicit. Both branches are then scoped by ownership via
-        ``scope_queryset_for_user()`` (CP10) — an Employee, Manager, or
-        Super Admin never sees rows outside what they're allowed to,
-        whether browsing a list or looking up a specific ID directly.
+        left implicit.
+
+        ``restore``/``hard-delete`` skip ``scope_queryset_for_user()``
+        entirely: those two actions are gated by CP7's
+        ``CanRestoreOrHardDelete`` (Manager-or-above, role only — see its
+        own docstring), not by ``IsOwnerOrSuperAdmin``'s per-object
+        ownership check. Applying ownership scoping here too would make
+        the object invisible to ``get_object()`` (a 404) for exactly the
+        cross-team case ``CanRestoreOrHardDelete`` exists to allow, before
+        that permission class ever gets a chance to authorize it — the
+        queryset would silently defeat the permission class's own
+        contract. Every other action keeps the ownership scope: an
+        Employee, Manager, or Super Admin never sees rows outside what
+        they're allowed to when browsing a list or looking up a specific
+        ID directly for retrieve/update/destroy.
         """
         base_manager = self.base_active_manager if self.action == "list" else self.base_manager
         queryset = base_manager.all()
+        if self.action in ("restore", "hard_delete"):
+            return queryset
         return scope_queryset_for_user(queryset, self.request.user, owner_field=self.owner_field)
 
 
-class CustomerViewSet(_CrmModelViewSet):
+class CustomerViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
     base_manager = Customer.objects
-    base_active_manager = Customer.active_objects
+    # NOT Customer.active_objects: CustomerQuerySet.active() deliberately
+    # overrides CP7's soft-delete-only active() to ALSO require
+    # is_active=True (see models.py). Using it here as base_active_manager
+    # would make is_active an unfilterable dead field on the list endpoint
+    # — get_queryset() below re-applies the intended "not deleted only"
+    # scoping instead, so is_active stays a genuine, working filter.
+    base_active_manager = Customer.objects
     serializer_class = CustomerSerializer
     filterset_class = CustomerFilterSet
-    search_fields = ["name", "email", "phone", "website"]
+    full_search_fields = ["name", "email", "phone", "website"]
+    pii_search_fields = ("email", "phone")
     ordering_fields = ["name", "created_at", "updated_at", "status"]
     ordering = ["name"]
 
     def get_queryset(self):
-        return super().get_queryset().select_related("organization", "owner")
+        queryset = super().get_queryset().select_related("organization", "owner")
+        if self.action == "list":
+            queryset = queryset.filter(is_deleted=False)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -128,22 +159,23 @@ class CustomerViewSet(_CrmModelViewSet):
         data = dict(serializer.validated_data)
         organization = data.pop("organization")
         name = data.pop("name")
-        slug = data.pop("slug")
+        slug = data.pop("slug", "")
         owner = data.pop("owner", None)
 
         customer = create_customer(organization, name, slug=slug, **data)
-        assign_owner(customer, owner or self.request.user)
+        assign_owner(customer, resolve_owner_for_create(self.request.user, owner))
         stamp_audit_fields(customer, self.request.user, creating=True)
         customer.save()
         serializer.instance = customer
 
 
-class LeadViewSet(_CrmModelViewSet):
+class LeadViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
     base_manager = Lead.objects
     base_active_manager = Lead.active_objects
     serializer_class = LeadSerializer
     filterset_class = LeadFilterSet
-    search_fields = ["company_name", "contact_name", "email", "phone"]
+    full_search_fields = ["company_name", "contact_name", "email", "phone"]
+    pii_search_fields = ("email", "phone")
     ordering_fields = [("company_name", "name"), "created_at", "updated_at", "status"]
     ordering = ["-created_at"]
 
@@ -155,6 +187,16 @@ class LeadViewSet(_CrmModelViewSet):
             return LeadDetailSerializer
         return LeadSerializer
 
+    def get_throttles(self):
+        # Rate-limited: merge/import/export are all real, comparatively
+        # expensive bulk operations — see config/settings/base.py's
+        # "expensive_operation" scope docstring. Ordinary list/create/
+        # retrieve/duplicates on this viewset are unaffected.
+        if self.action in ("merge", "import_leads_action", "export_leads_action"):
+            self.throttle_scope = "expensive_operation"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
     def perform_create(self, serializer):
         """Standard audit-stamped creation (CP7's ``AuditStampedModelMixin``
         — no CP9 service has real behavior beyond a bare ``.create()`` for
@@ -165,16 +207,117 @@ class LeadViewSet(_CrmModelViewSet):
         """
         super().perform_create(serializer)
         lead = serializer.instance
-        if lead.owner_id is None:
-            assign_owner(lead, self.request.user)
+        resolved_owner = resolve_owner_for_create(self.request.user, lead.owner)
+        if resolved_owner.pk != lead.owner_id:
+            assign_owner(lead, resolved_owner)
+
+    @extend_schema(request=None, responses={200: LeadSerializer(many=True)})
+    @action(detail=True, methods=["get"])
+    def duplicates(self, request, *args, **kwargs):
+        """``GET /leads/<id>/duplicates/`` — other leads that plausibly
+        refer to the same real-world contact (see
+        ``services.find_duplicate_leads()``), scoped by the same
+        ownership rule as every other list result on this viewset.
+        """
+        lead = self.get_object()
+        queryset = scope_queryset_for_user(find_duplicate_leads(lead), request.user, owner_field=self.owner_field)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(request=None, responses={200: LeadSerializer})
+    @action(detail=True, methods=["post"], url_path="merge")
+    def merge(self, request, *args, **kwargs):
+        """``POST /leads/<id>/merge/`` — merge ``duplicate_id`` (body) into
+        this lead (see ``services.merge_leads()``). Both leads must
+        actually be visible to the requester under the normal ownership
+        rule — this action does not grant any additional reach.
+        """
+        primary = self.get_object()
+        duplicate_id = request.data.get("duplicate_id")
+        if not duplicate_id:
+            return Response({"detail": "duplicate_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        visible = scope_queryset_for_user(self.base_manager.all(), request.user, owner_field=self.owner_field)
+        duplicate = get_object_or_404(visible, pk=duplicate_id)
+
+        try:
+            merge_leads(primary, duplicate, merged_by=request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        primary.refresh_from_db()
+        serializer = self.get_serializer(primary)
+        return Response(serializer.data)
+
+    @extend_schema(request=None, responses={200: dict})
+    @action(detail=False, methods=["post"], url_path="import")
+    def import_leads_action(self, request, *args, **kwargs):
+        """``POST /leads/import/`` — bulk-create leads from an uploaded
+        ``.csv``/``.xlsx`` file (multipart field name ``file``). Every
+        row is validated independently (see ``imports.import_leads()``):
+        malformed rows are reported, not silently dropped or allowed to
+        abort the whole file. Imported leads default to the requester as
+        owner, exactly like a single manual create.
+        """
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file is None:
+            return Response({"detail": "A file is required (multipart field 'file')."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rows = parse_rows_from_file(uploaded_file)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        summary = import_leads(rows, default_owner=request.user, created_by=request.user)
+        return Response(summary, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: bytes})
+    @action(detail=False, methods=["get"], url_path="export")
+    def export_leads_action(self, request, *args, **kwargs):
+        """``GET /leads/export/?export_format=csv|xlsx`` — every lead the
+        requester can see (the same ownership scoping and filters
+        ``list`` applies), as a downloadable file. Defaults to CSV.
+
+        NOTE: the query parameter is deliberately NOT named ``format`` —
+        that name is reserved by DRF's own content-negotiation (
+        ``URL_FORMAT_OVERRIDE``, default ``"format"``) and colliding with
+        it makes DRF try to resolve a renderer named "xlsx", which
+        doesn't exist, producing a 404 before this method ever runs.
+        """
+        export_format = request.query_params.get("export_format", "csv").lower()
+        if export_format not in ("csv", "xlsx"):
+            return Response({"detail": "export_format must be 'csv' or 'xlsx'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # An export is just another response body: the same PII rule the
+        # JSON API enforces applies to the downloadable file, so an
+        # Employee's export omits the lead email/phone columns entirely
+        # rather than handing over in a spreadsheet what the API refuses
+        # to return in JSON.
+        include_pii = not pii_masking_required(request)
+
+        if export_format == "xlsx":
+            content = export_leads_xlsx(queryset, include_pii=include_pii)
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = "leads.xlsx"
+        else:
+            content = export_leads_csv(queryset, include_pii=include_pii)
+            content_type = "text/csv"
+            filename = "leads.csv"
+
+        response = HttpResponse(content, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
 
-class ContactPersonViewSet(_CrmModelViewSet):
+class ContactPersonViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
     base_manager = ContactPerson.objects
     base_active_manager = ContactPerson.active_objects
     serializer_class = ContactPersonSerializer
     filterset_class = ContactPersonFilterSet
-    search_fields = ["first_name", "last_name", "email"]
+    full_search_fields = ["first_name", "last_name", "email"]
+    pii_search_fields = ("email",)
     ordering_fields = [("last_name", "name"), "created_at", "updated_at"]
     ordering = ["-is_primary", "last_name"]
     owner_field = "customer__owner"
@@ -189,6 +332,7 @@ class ContactPersonViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         customer = data.pop("customer")
+        assert_object_accessible(self.request, customer)
         first_name = data.pop("first_name")
         last_name = data.pop("last_name")
         is_primary = data.pop("is_primary", False)
@@ -220,6 +364,7 @@ class AddressViewSet(_CrmModelViewSet):
         """
         data = dict(serializer.validated_data)
         customer = data.pop("customer")
+        assert_object_accessible(self.request, customer)
         address_type = data.pop("address_type")
 
         address = add_address(customer, address_type, **data)
@@ -275,7 +420,7 @@ class OpportunityViewSet(_CrmModelViewSet):
         owner = data.pop("owner", None)
 
         opportunity = create_opportunity(customer, title, **data)
-        assign_owner(opportunity, owner or self.request.user)
+        assign_owner(opportunity, resolve_owner_for_create(self.request.user, owner))
         stamp_audit_fields(opportunity, self.request.user, creating=True)
         opportunity.save()
         serializer.instance = opportunity
