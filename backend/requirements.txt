@@ -56,3 +56,6 @@ requests==2.34.2
 # upload) without BACKUP_STORAGE_PROVIDER configured — see that
 # command's own docstring.
 boto3==1.43.72
+
+
+gunicorn==26.0.0
