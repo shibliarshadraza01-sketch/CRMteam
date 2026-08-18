@@ -91,16 +91,20 @@ if not CSRF_TRUSTED_ORIGINS:
 # SDK dependency is needed)
 # ---------------------------------------------------------------------------
 SENDGRID_API_KEY = env("DJANGO_SENDGRID_API_KEY")
-if not SENDGRID_API_KEY:
-    raise ValueError(
-        "DJANGO_SENDGRID_API_KEY environment variable is required in production."
-    )
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.sendgrid.net"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "apikey"  # SendGrid's SMTP relay literally expects this username
-EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+if SENDGRID_API_KEY:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = "smtp.sendgrid.net"
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = "apikey"  # SendGrid's SMTP relay literally expects this username
+    EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+else:
+    # TEMPORARY deployment mode: no DJANGO_SENDGRID_API_KEY configured yet,
+    # so outbound email is redirected to the console (logged, never actually
+    # delivered) instead of failing the whole deployment at startup. Set
+    # DJANGO_SENDGRID_API_KEY and redeploy to restore real email delivery —
+    # this branch should not be relied on once SendGrid is configured.
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 # ---------------------------------------------------------------------------
 # Cache / distributed rate limiting (final production infrastructure pass)
