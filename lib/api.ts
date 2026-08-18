@@ -238,6 +238,35 @@ export async function logout(): Promise<void> {
 
 export type Paginated<T> = { count: number; next: string | null; previous: string | null; results: T[] };
 
+// ---- Lead import (CSV + Google Sheets) ---------------------------------
+
+export type LeadImportPreview = {
+  stage?: "preview" | "imported";
+  source?: string;
+  total: number;
+  valid: number;
+  invalid: number;
+  warnings: string[];
+  errors: Array<{ row: number; message?: string; error?: string }>;
+  sample: Array<Record<string, unknown>>;
+};
+
+export type LeadImportResult = {
+  stage?: "preview" | "imported";
+  source?: string;
+  total: number;
+  created: number;
+  failed: number;
+  warnings: string[];
+  errors: Array<{ row: number; message?: string; error?: string }>;
+  lead_ids: number[];
+};
+
+// `configured: false` is a real, expected state in an environment with no
+// Google credentials — the UI must show it honestly rather than pretending
+// a connection succeeded.
+export type GoogleSheetStatus = { provider: string; configured: boolean; is_mock: boolean };
+
 export const crm = {
   listLeads: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/crm/leads/${query}`),
   createLead: (body: Record<string, unknown>) =>
@@ -257,7 +286,31 @@ export const crm = {
       formData
     );
   },
-  exportLeads: (format: "csv" | "xlsx") => apiDownload(`/api/v1/crm/leads/export/?export_format=${format}`),
+  exportLeads: (format: "csv" | "xlsx", query = "") =>
+    apiDownload(`/api/v1/crm/leads/export/?export_format=${format}${query ? `&${query.replace(/^\?/, "")}` : ""}`),
+
+  // Staff-management pass. Bulk (re)assignment of leads to a Manager or an
+  // Employee. Authorization is entirely server-side (Super Admin may target
+  // anyone; a Manager only their own scope; an Employee is always refused),
+  // so this client never decides who may be assigned what — it only renders
+  // what the server allows and surfaces the error it returns.
+  assignLeads: (body: { lead_ids: Array<number | string>; target_type: "manager" | "employee"; target_user_id: number }) =>
+    apiRequest<Record<string, unknown>[]>("/api/v1/crm/leads/assign/", { method: "POST", body: JSON.stringify(body) }),
+
+  // Import workflow — "preview then confirm", for both supported sources.
+  // The CSV path validates a real uploaded file before anything is written;
+  // the Google Sheets path uses the same two-step shape via `confirm`.
+  importPreviewLeads: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiUpload<LeadImportPreview>("/api/v1/crm/leads/import-preview/", formData);
+  },
+  googleSheetStatus: () => apiRequest<GoogleSheetStatus>("/api/v1/crm/leads/google-sheet-status/"),
+  importGoogleSheet: (body: { spreadsheet_id: string; sheet_range?: string; confirm: boolean }) =>
+    apiRequest<LeadImportPreview & LeadImportResult>("/api/v1/crm/leads/import-google-sheet/", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
 
   listCustomers: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/crm/customers/${query}`),
   createCustomer: (body: Record<string, unknown>) =>
@@ -272,15 +325,118 @@ export const organization = {
     apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/organization/organizations/${query}`)
 };
 
+// ---- Staff profile (Employee Profile / Manager Profile) ----------------
+//
+// ONE endpoint serves both: the payload is role-aware server-side, adding
+// `managed_employees`/`scope_lead_stats` when the profile belongs to a
+// Manager. Scoping is also server-side — Super Admin may read anyone,
+// a Manager themselves plus their own team, an Employee only themselves;
+// anything out of reach is a 404, never a 403.
+export type StaffProfile = {
+  profile: {
+    id: number;
+    email: string;
+    username: string;
+    first_name: string;
+    last_name: string;
+    full_name: string;
+    phone: string;
+    department: string;
+    role: BackendRole;
+    date_joined: string;
+    is_active: boolean;
+  };
+  lead_performance: {
+    total_assigned: number;
+    assigned_this_month: number;
+    converted: number;
+    conversion_rate: number;
+    by_status: Record<string, number>;
+  };
+  converted_customers: Array<{
+    customer_id: number;
+    customer_name: string;
+    lead_id: number;
+    converted_at: string;
+    payment_status: string;
+  }>;
+  interaction_history: Array<{
+    id: number;
+    channel: string;
+    summary: string;
+    occurred_at: string;
+    related_type: string | null;
+    related_id: number | null;
+  }>;
+  work_activity: {
+    task_counts: { total: number; open: number; completed: number; overdue: number };
+    upcoming_events: Array<{ id: number; title: string; start_at: string; location: string }>;
+    attendance_today: DailyAttendance | null;
+  };
+  managed_employees: Array<{ id: number; full_name: string; email: string; role: BackendRole; is_active: boolean }>;
+  scope_lead_stats: {
+    assigned_to_manager: number;
+    assigned_to_team: number;
+    converted_in_scope: number;
+    scope_conversion_rate: number;
+  } | null;
+};
+
+// The security-settings verification step. GET first to learn WHICH
+// verification input to collect (today always `current_password`, but the
+// backend is designed to swap in another method later — so the UI reads
+// this response rather than hardcoding the field).
+export type SecuritySettingsInfo = { method: string; required_fields: string[] };
+
 export const accounts = {
   listUsers: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/auth/users/${query}`),
   createUser: (body: Record<string, unknown>) =>
     apiRequest("/api/v1/auth/users/", { method: "POST", body: JSON.stringify(body) }),
   updateUser: (id: number | string, body: Record<string, unknown>) =>
-    apiRequest(`/api/v1/auth/users/${id}/`, { method: "PATCH", body: JSON.stringify(body) })
+    apiRequest(`/api/v1/auth/users/${id}/`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  activateUser: (id: number | string) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/auth/users/${id}/activate/`, { method: "POST" }),
+  deactivateUser: (id: number | string) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/auth/users/${id}/deactivate/`, { method: "POST" }),
+  // Deliberately NOT destructive server-side: this returns 200 with the
+  // (now deactivated) user rather than 204, and no row is ever removed.
+  // Every confirmation dialog around it must say so honestly.
+  deleteUser: (id: number | string) =>
+    apiRequest<{ detail: string; user: Record<string, unknown> }>(`/api/v1/auth/users/${id}/`, { method: "DELETE" }),
+
+  getStaffProfile: (id: number | string) => apiRequest<StaffProfile>(`/api/v1/auth/users/${id}/profile/`),
+
+  getSecuritySettings: () => apiRequest<SecuritySettingsInfo>("/api/v1/auth/settings/security/"),
+  updateSecuritySettings: (body: Record<string, unknown>) =>
+    apiRequest<{ updated_fields: string[]; user: Record<string, unknown> }>("/api/v1/auth/settings/security/", {
+      method: "POST",
+      body: JSON.stringify(body)
+    })
+};
+
+// Real CRM events for the "Recent Activities" panel — already role-scoped
+// server-side (Super Admin org-wide, Manager their team, Employee their
+// own), so there is nothing for this client to filter.
+export type RecentActivityEntry = {
+  kind: string;
+  timestamp: string;
+  title: string;
+  description: string;
+  entity_type: string | null;
+  entity_id: number | null;
+  actor_id: number | null;
+  actor_name: string;
 };
 
 export const activities = {
+  listRecentActivity: (params: { limit?: number; days?: number } = {}) => {
+    const query = new URLSearchParams();
+    if (params.limit != null) query.set("limit", String(Math.min(Math.max(params.limit, 1), 100)));
+    if (params.days != null) query.set("days", String(Math.min(Math.max(params.days, 1), 90)));
+    const qs = query.toString();
+    return apiRequest<RecentActivityEntry[]>(`/api/v1/activities/recent/${qs ? `?${qs}` : ""}`);
+  },
   listTasks: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/activities/tasks/${query}`),
   createTask: (body: Record<string, unknown>) =>
     apiRequest("/api/v1/activities/tasks/", { method: "POST", body: JSON.stringify(body) }),
@@ -335,7 +491,30 @@ export const communications = {
       body: JSON.stringify(body)
     }),
   listCommunicationLogs: (query = "") =>
-    apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/communications/communication-logs/${query}`)
+    apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/communications/communication-logs/${query}`),
+
+  // Notifications. GET (list/retrieve) and mark-read/mark-unread are open
+  // to every role; every WRITE (create/update/delete) is Super-Admin-only
+  // and 403s for a Manager or Employee — so the UI must not offer a
+  // create/edit control to those roles, since it could only ever fail.
+  listNotifications: (query = "") =>
+    apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/communications/notifications/${query}`),
+  createNotification: (body: Record<string, unknown>) =>
+    apiRequest<Record<string, unknown>>("/api/v1/communications/notifications/", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  updateNotification: (id: number | string, body: Record<string, unknown>) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/communications/notifications/${id}/`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  deleteNotification: (id: number | string) =>
+    apiRequest(`/api/v1/communications/notifications/${id}/`, { method: "DELETE" }),
+  markNotificationRead: (id: number | string) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/communications/notifications/${id}/mark-read/`, { method: "POST" }),
+  markNotificationUnread: (id: number | string) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/communications/notifications/${id}/mark-unread/`, { method: "POST" })
 };
 
 export const sales = {
@@ -413,12 +592,32 @@ export type CurrentAttendance = {
   earnings: AttendanceEarnings;
 };
 
+// One clock event through the day, for the Time Logs list. The backend
+// derives these from the same session/heartbeat ledger the tracker already
+// writes — nothing new is recorded to produce them.
+export type AttendanceTimeLog = {
+  at: string;
+  type: "CHECK_IN" | "WORK_START" | "BREAK_START" | "BREAK_END" | "IDLE_START" | "IDLE_END" | "WORK_END" | "CHECK_OUT";
+};
+
+// Every field below the divider was ADDED by the staff-management pass —
+// nothing was renamed or removed, so `login_time`/`logout_time`/
+// `session_seconds`/`active_working_seconds` remain valid for existing
+// call sites while the Check In/Check Out presentation reads the new ones.
 export type DailyAttendance = {
   employee_id: number;
   employee_name: string;
+  employee_role?: BackendRole | null;
   date: string;
   login_time: string | null;
   logout_time: string | null;
+  check_in_time?: string | null;
+  check_out_time?: string | null;
+  gross_seconds?: number;
+  effective_seconds?: number;
+  shift_start_time?: string | null;
+  shift_end_time?: string | null;
+  time_logs?: AttendanceTimeLog[];
   session_seconds: number;
   active_working_seconds: number;
   break_seconds: number;
