@@ -1295,7 +1295,13 @@ const FORM_ONLY_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
 };
 
 function tableColumnsForRole(module: ModuleConfig, role: Role): string[] {
-  const base = role === "employee" ? employeeSafeColumns(module) : module.columns;
+  let base = role === "employee" ? employeeSafeColumns(module) : module.columns;
+  // Spec 11: lead source is Super-Admin-only. The backend already omits
+  // `source` from a Manager's lead payloads, so rendering the column for
+  // them would only produce an empty one - drop it here to match.
+  if (module.key === "leads" && role !== "superadmin") {
+    base = base.filter((column) => column !== "Source");
+  }
   const formOnly = FORM_ONLY_COLUMNS[module.key];
   return formOnly ? base.filter((column) => !formOnly.includes(column)) : base;
 }
@@ -2107,8 +2113,12 @@ function SuperAdminPage({
   // is what the grid renders. They differ only by FORM_ONLY_COLUMNS, so a
   // credential field can be entered without ever becoming a table cell.
   const formModule = useMemo(() => {
-    if (role !== "employee") return activeModule;
-    return { ...activeModule, columns: employeeSafeColumns(activeModule) };
+    if (role === "employee") return { ...activeModule, columns: employeeSafeColumns(activeModule) };
+    // A Manager cannot see a lead's source, so they cannot set one either.
+    if (role === "manager" && activeModule.key === "leads") {
+      return { ...activeModule, columns: activeModule.columns.filter((column) => column !== "Source") };
+    }
+    return activeModule;
   }, [role, activeModule]);
 
   const tableModule = useMemo(
@@ -5061,6 +5071,9 @@ function AnalyticsDashboard({
   const conversionKpi = kpis.find((kpi) => kpi.label === "Conversion Rate");
   const conversionValue = conversionKpi ? Number.parseFloat(conversionKpi.value) || 0 : 0;
 
+  // Spec 11: Manager and Employee never see a lead's source anywhere.
+  const recentLeadColumns = role === "superadmin" ? ["Lead", "Source", "Owner", "Status"] : ["Lead", "Owner", "Status"];
+
   const conversionData = groupCountsByColumn(recentLeads, "Status");
   const sourceData = groupCountsByColumnWithColor(recentLeads, "Source");
   const revenueData = monthlySumTrend(paymentRows, "_createdAt", "Paid");
@@ -5231,7 +5244,8 @@ function AnalyticsDashboard({
             <LineChart data={revenueData} prefix="$" suffix="K" />
           </ChartCard>
         ) : null}
-        {isVisible("leadSources") ? (
+        {/* Spec 11/20: lead-source analytics is Super-Admin-only. */}
+        {role === "superadmin" && isVisible("leadSources") ? (
           <ChartCard title="Lead Sources" subtitle="Source mix by percentage">
             <PieChart data={sourceData} donut={false} />
           </ChartCard>
@@ -5258,7 +5272,7 @@ function AnalyticsDashboard({
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h3 className="text-lg font-bold">Recent Leads</h3>
-              <p className="text-sm text-muted-foreground">Fresh leads from Meta, website, CSV, and referrals.</p>
+              <p className="text-sm text-muted-foreground">The newest leads in your scope.</p>
             </div>
             <button onClick={onQuickAdd} className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">
               <Plus className="size-4" />
@@ -5269,7 +5283,7 @@ function AnalyticsDashboard({
             <table className="w-full min-w-[560px] text-left">
               <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  {["Lead", "Source", "Owner", "Status"].map((column) => (
+                  {recentLeadColumns.map((column) => (
                     <th key={column} className="px-3 py-3 font-bold">
                       {column}
                     </th>
@@ -5279,7 +5293,7 @@ function AnalyticsDashboard({
               <tbody className="divide-y">
                 {recentLeads.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    <td colSpan={recentLeadColumns.length} className="px-3 py-6 text-center text-sm text-muted-foreground">
                       No leads yet.
                     </td>
                   </tr>
@@ -5287,7 +5301,7 @@ function AnalyticsDashboard({
                 {recentLeads.slice(0, 4).map((lead) => (
                   <tr key={lead.id} className="text-sm">
                     <td className="px-3 py-3 font-semibold">{lead.Lead}</td>
-                    <td className="px-3 py-3 text-muted-foreground">{lead.Source}</td>
+                    {role === "superadmin" ? <td className="px-3 py-3 text-muted-foreground">{lead.Source}</td> : null}
                     <td className="px-3 py-3 text-muted-foreground">{lead.Owner}</td>
                     <td className="px-3 py-3">
                       <span className={cn("rounded-full px-2 py-1 text-xs font-bold ring-1", statusClass(lead.Status))}>{lead.Status}</span>
@@ -8374,7 +8388,7 @@ function DayContent({
       {day.leads.length > 0 ? (
         <DetailSection title="Leads created/updated">
           {day.leads.map((row) => (
-            <DetailRow key={row.id} title={row.Lead ?? row.id} subtitle={`${row.Source ?? ""} - ${row.Owner ?? ""}`} badge={row.Status} />
+            <DetailRow key={row.id} title={row.Lead ?? row.id} subtitle={row.Owner ?? ""} badge={row.Status} />
           ))}
         </DetailSection>
       ) : null}
@@ -9094,10 +9108,14 @@ function DataTable({
   allowEdit?: boolean;
 }) {
   const isEmployeeViewOnly = role === "employee";
+  // Spec 10: on staff tables the destructive action is a deactivation, not
+  // a deletion, and cloning a person is meaningless - so the row menu says
+  // "Deactivate" and drops "Duplicate" there.
+  const isStaffTable = module.key === "users" || module.key === "team";
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const MENU_WIDTH = 160;
-  const MENU_HEIGHT = 84;
+  const MENU_HEIGHT = isStaffTable ? 44 : 84;
 
   function toggleMenu(rowId: string, event: React.MouseEvent<HTMLButtonElement>) {
     if (openMenuId === rowId) {
@@ -9217,16 +9235,18 @@ function DataTable({
                 className="fixed z-50 w-40 overflow-hidden rounded-lg border bg-card shadow-soft"
                 style={{ top: menuPos.top, left: menuPos.left }}
               >
-                <button
-                  onClick={() => {
-                    onDuplicate(openMenuRow);
-                    setOpenMenuId(null);
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted"
-                >
-                  <Copy className="size-4" />
-                  Duplicate
-                </button>
+                {isStaffTable ? null : (
+                  <button
+                    onClick={() => {
+                      onDuplicate(openMenuRow);
+                      setOpenMenuId(null);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted"
+                  >
+                    <Copy className="size-4" />
+                    Duplicate
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onDelete(openMenuRow);
@@ -9235,7 +9255,7 @@ function DataTable({
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
                 >
                   <Trash2 className="size-4" />
-                  Delete
+                  {isStaffTable ? "Deactivate" : "Delete"}
                 </button>
               </div>
             </>,
