@@ -1808,6 +1808,9 @@ function SuperAdminPage({
   // Backend rejection text for the open create/edit form, shown as its own
   // banner and cleared the moment the user edits any field (spec 23).
   const [formServerError, setFormServerError] = useState<string | null>(null);
+  // Spec 11/30: the dedicated lead-assignment workspace, opened by the
+  // Leads / Team "Assign Lead" action for the roles allowed to route work.
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
@@ -3005,6 +3008,12 @@ function SuperAdminPage({
       return;
     }
 
+    if (label === "Assign Lead" || label === "Reassign Lead") {
+      if (role === "employee") return;
+      setAssignmentOpen(true);
+      return;
+    }
+
     if (label === "Merge Duplicates") {
       mergeDuplicateLeads();
       return;
@@ -3063,6 +3072,21 @@ function SuperAdminPage({
     }
 
     openCreateModal();
+  }
+
+  function applyLeadAssignment(updated: Array<Record<string, unknown>>, targetLabel: string) {
+    const updatedRows = updated.map((lead) => leadToRow(lead));
+    const byId = new Map(updatedRows.map((row) => [row.id, row]));
+    setRecordsByModule((current) => ({
+      ...current,
+      leads: (current.leads ?? []).map((row) => byId.get(row.id) ?? row)
+    }));
+    setAssignmentOpen(false);
+    showToast({
+      type: "success",
+      message: `${updatedRows.length} lead${updatedRows.length === 1 ? "" : "s"} assigned to ${targetLabel}.`
+    });
+    logActivity(`Assigned ${updatedRows.length} lead${updatedRows.length === 1 ? "" : "s"} to ${targetLabel}.`, "leads", null);
   }
 
   function quickAddLead() {
@@ -3465,6 +3489,14 @@ function SuperAdminPage({
               setEditingRecord(null);
             }}
           />
+        ) : assignmentOpen ? (
+          <LeadAssignmentModal
+            leads={recordsByModule.leads ?? []}
+            users={recordsByModule.users ?? []}
+            onClose={() => setAssignmentOpen(false)}
+            onAssigned={applyLeadAssignment}
+            onError={(message) => showToast({ type: "error", message })}
+          />
         ) : modalOpen ? (
           <RecordModal
             key={`${activeKey}-${modalMode}-${editingRecord?.id ?? "new"}`}
@@ -3847,6 +3879,302 @@ function ModuleNav({
         );
       })}
     </nav>
+  );
+}
+
+// Spec 11/30: the dedicated lead-assignment workspace. A lead can go to a
+// Manager or straight to an Employee, and the Manager -> Employee step is
+// made explicit by optionally narrowing the employee list to one manager's
+// team, read from that manager's real `managed_employees` on the staff
+// profile endpoint. Everything here posts to the single backend contract
+// POST /api/v1/crm/leads/assign/; nothing is assigned client-side.
+function LeadAssignmentModal({
+  leads,
+  users,
+  onClose,
+  onAssigned,
+  onError
+}: {
+  leads: RowRecord[];
+  users: RowRecord[];
+  onClose: () => void;
+  onAssigned: (updated: Array<Record<string, unknown>>, targetLabel: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [onlyUnassigned, setOnlyUnassigned] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [targetType, setTargetType] = useState<"manager" | "employee">("employee");
+  const [viaManagerId, setViaManagerId] = useState("");
+  const [targetUserId, setTargetUserId] = useState("");
+  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [loadingTeam, setLoadingTeam] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const activeUsers = useMemo(() => users.filter((user) => user.Status !== "Inactive"), [users]);
+  const managers = useMemo(() => activeUsers.filter((user) => user.Role === "Manager"), [activeUsers]);
+  const employees = useMemo(() => activeUsers.filter((user) => user.Role === "Employee"), [activeUsers]);
+
+  // Narrow the employee list to one manager's real team when a manager is
+  // chosen as the routing step. Falls back to the full employee list if
+  // the profile cannot be read, and says so rather than silently emptying.
+  useEffect(() => {
+    if (targetType !== "employee" || !viaManagerId) {
+      setTeamMembers(null);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTeam(true);
+    accounts
+      .getStaffProfile(viaManagerId)
+      .then((profile) => {
+        if (cancelled) return;
+        setTeamMembers(
+          (profile.managed_employees ?? [])
+            .filter((member) => member.is_active)
+            .map((member) => ({ id: String(member.id), name: member.full_name || member.email }))
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTeamMembers(null);
+        onError("Could not load that manager's team - showing all employees instead.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTeam(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [targetType, viaManagerId, onError]);
+
+  const targetOptions = useMemo(() => {
+    if (targetType === "manager") return managers.map((user) => ({ id: user.id, name: user.Name || user.Email }));
+    if (teamMembers) return teamMembers;
+    return employees.map((user) => ({ id: user.id, name: user.Name || user.Email }));
+  }, [targetType, managers, employees, teamMembers]);
+
+  useEffect(() => {
+    // Drop a selection that is no longer offered by the current target list.
+    setTargetUserId((current) => (targetOptions.some((option) => option.id === current) ? current : ""));
+  }, [targetOptions]);
+
+  const visibleLeads = useMemo(() => {
+    const lowerQuery = query.trim().toLowerCase();
+    return leads.filter((lead) => {
+      if (onlyUnassigned && lead.Owner && lead.Owner !== "Unassigned") return false;
+      if (!lowerQuery) return true;
+      return `${lead.Lead ?? ""} ${lead.Status ?? ""} ${lead.Owner ?? ""}`.toLowerCase().includes(lowerQuery);
+    });
+  }, [leads, query, onlyUnassigned]);
+
+  const targetName = targetOptions.find((option) => option.id === targetUserId)?.name ?? "";
+  const canSubmit = selectedIds.length > 0 && targetUserId !== "" && !submitting;
+
+  function toggleLead(id: string) {
+    setSelectedIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  function toggleAllVisible() {
+    const visibleIds = visibleLeads.map((lead) => lead.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    setSelectedIds(allSelected ? [] : visibleIds);
+  }
+
+  function submit() {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    crm
+      .assignLeads({ lead_ids: selectedIds, target_type: targetType, target_user_id: Number(targetUserId) })
+      .then((updated) => {
+        onAssigned(updated as Array<Record<string, unknown>>, targetName);
+      })
+      .catch((err) => {
+        onError(err instanceof ApiError ? err.message : "Could not assign the selected leads.");
+      })
+      .finally(() => setSubmitting(false));
+  }
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <h3 className="text-xl font-bold">Assign Leads</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose the leads to route, then the manager or employee who should own them.
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="inline-flex size-9 items-center justify-center rounded-lg border">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <section className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[200px] flex-1">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search leads"
+                  className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                />
+              </div>
+              <button
+                onClick={() => setOnlyUnassigned((current) => !current)}
+                className={cn(
+                  "inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold",
+                  onlyUnassigned ? "border-teal-600 bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200" : "bg-background"
+                )}
+              >
+                <Filter className="size-4" />
+                Unassigned only
+              </button>
+              <button onClick={toggleAllVisible} className="inline-flex h-10 items-center rounded-lg border bg-background px-3 text-sm font-semibold">
+                {visibleLeads.length > 0 && visibleLeads.every((lead) => selectedIds.includes(lead.id)) ? "Clear all" : "Select all"}
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto rounded-xl border">
+              {visibleLeads.length === 0 ? (
+                <p className="p-6 text-center text-sm text-muted-foreground">No leads match this search.</p>
+              ) : (
+                visibleLeads.map((lead) => (
+                  <label
+                    key={lead.id}
+                    className="flex cursor-pointer items-center gap-3 border-b px-3 py-2.5 last:border-b-0 hover:bg-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(lead.id)}
+                      onChange={() => toggleLead(lead.id)}
+                      className="size-4 accent-teal-600"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold">{lead.Lead || `Lead #${lead.id}`}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{lead.Owner || "Unassigned"}</span>
+                    <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ring-1", statusClass(lead.Status ?? ""))}>
+                      {lead.Status}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {selectedIds.length} lead{selectedIds.length === 1 ? "" : "s"} selected
+            </p>
+          </section>
+
+          <section className="space-y-4 rounded-xl border bg-background p-4">
+            <div>
+              <p className="text-sm font-semibold">Assign to</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {(["manager", "employee"] as const).map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => {
+                      setTargetType(option);
+                      setViaManagerId("");
+                    }}
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-sm font-semibold capitalize",
+                      targetType === option
+                        ? "border-teal-600 bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                        : "bg-card"
+                    )}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {targetType === "employee" ? (
+              <label className="block space-y-1.5">
+                <span className="text-sm font-semibold">Via manager (optional)</span>
+                <select
+                  value={viaManagerId}
+                  onChange={(event) => setViaManagerId(event.target.value)}
+                  className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                >
+                  <option value="">All employees</option>
+                  {managers.map((manager) => (
+                    <option key={manager.id} value={manager.id}>
+                      {manager.Name || manager.Email}
+                    </option>
+                  ))}
+                </select>
+                <span className="block text-xs text-muted-foreground">
+                  {loadingTeam
+                    ? "Loading that manager's team..."
+                    : viaManagerId
+                    ? `Showing ${targetOptions.length} employee${targetOptions.length === 1 ? "" : "s"} on this manager's team.`
+                    : "Narrow the list to one manager's team, or assign directly."}
+                </span>
+              </label>
+            ) : null}
+
+            <label className="block space-y-1.5">
+              <span className="text-sm font-semibold">
+                {targetType === "manager" ? "Manager" : "Employee"}
+                <span className="ml-0.5 text-red-600">*</span>
+              </span>
+              <select
+                value={targetUserId}
+                onChange={(event) => setTargetUserId(event.target.value)}
+                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+              >
+                <option value="">{`Select ${targetType}`}</option>
+                {targetOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+              {targetOptions.length === 0 ? (
+                <span className="block text-xs font-medium text-red-600 dark:text-red-400">
+                  No active {targetType}s are available to assign to.
+                </span>
+              ) : null}
+            </label>
+
+            {selectedIds.length > 0 && targetName ? (
+              <p className="rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">
+                {selectedIds.length} lead{selectedIds.length === 1 ? "" : "s"} will be assigned to{" "}
+                <strong className="text-foreground">{targetName}</strong>.
+              </p>
+            ) : null}
+          </section>
+        </div>
+
+        <div className="flex flex-col-reverse gap-2 border-t p-5 sm:flex-row sm:justify-end">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={!canSubmit}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? <Loader2 className="size-4 animate-spin" /> : <UserCheck className="size-4" />}
+            Assign
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
