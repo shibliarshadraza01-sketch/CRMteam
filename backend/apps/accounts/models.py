@@ -51,6 +51,35 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(_("email address"), max_length=254, unique=True)
     first_name = models.CharField(_("first name"), max_length=150, blank=True)
     last_name = models.CharField(_("last name"), max_length=150, blank=True)
+
+    # Staff-management pass: profile-only fields for the Super Admin's
+    # "User/Staff Management" creation form. IMPORTANT: ``username`` is a
+    # DISPLAY/PROFILE field, NOT ``USERNAME_FIELD`` and NOT usable for
+    # authentication — login is, and remains, email + password for every
+    # account (see this module's ``USERNAME_FIELD`` below and
+    # apps/accounts/views.py's LoginView, both deliberately unchanged).
+    # ``null=True`` (rather than blank="") so the unique constraint still
+    # permits many accounts with no username set: in SQL, NULL != NULL.
+    username = models.CharField(
+        _("username"),
+        max_length=150,
+        unique=True,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=_(
+            "Display/profile handle shown in staff management. NOT used for "
+            "authentication — sign-in is always email + password."
+        ),
+    )
+    phone = models.CharField(_("phone"), max_length=32, blank=True, default="")
+    department = models.CharField(
+        _("department"),
+        max_length=150,
+        blank=True,
+        default="",
+        help_text=_("Free-text department/category label for staff management."),
+    )
     role = models.CharField(
         _("role"),
         max_length=20,
@@ -121,6 +150,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def save(self, *args, **kwargs):
         self.email = self.email.lower()
+        # An empty username must be stored as NULL, never as "" — a second
+        # account saved with "" would collide with the first under the
+        # unique constraint, whereas NULLs never collide.
+        if not self.username:
+            self.username = None
         # Invariant (see BACKEND_LEARNING_GUIDE.md CP2, "model invariants"):
         # a Django superuser is always the CRM's SUPER_ADMIN role. This keeps
         # Django's own admin-privilege concept and the CRM's role concept

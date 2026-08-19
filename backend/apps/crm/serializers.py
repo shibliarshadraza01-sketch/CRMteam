@@ -20,6 +20,7 @@ from apps.core.serializers import (
     PiiMaskedSerializerMixin,
     ServerGeneratedFieldUniqueTogetherValidator,
     SoftDeleteTimeStampedSerializerMixin,
+    SuperAdminOnlyFieldsMixin,
 )
 
 from .models import Address, ContactPerson, Customer, Lead
@@ -161,12 +162,25 @@ class CustomerDetailSerializer(CustomerSerializer):
 # --------------------------------------------------------------------------
 
 
-class LeadSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSerializer):
-    """See ``ContactPersonSerializer`` — identical PII rule, applied to a
-    `Lead`'s own ``email``/``phone``.
+class LeadSerializer(
+    SuperAdminOnlyFieldsMixin, PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSerializer
+):
+    """Two DISTINCT, independently-applied visibility rules:
+
+    - ``pii_fields`` — ``email``/``phone`` are hidden from an EMPLOYEE; a
+      Manager still sees them (unchanged from the PII-privacy pass).
+    - ``super_admin_only_fields`` — ``source`` (Lead Source) is hidden from
+      BOTH Manager and Employee; only a Super Admin ever sees it. Writable
+      (a Super Admin, or an import, still sets it) but stripped from the
+      response for anyone below Super Admin — see
+      ``apps.core.serializers.SuperAdminOnlyFieldsMixin``. The matching
+      filter and export column are gated in ``filters.py``/``views.py``
+      so a lead's source cannot be recovered by filtering or downloading
+      either.
     """
 
     pii_fields = ("email", "phone")
+    super_admin_only_fields = ("source",)
 
     # Conversion is a workflow action (apps.crm.services.convert_lead()),
     # not a plain field edit — read-only here even on the "writable"
@@ -193,6 +207,35 @@ class LeadSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, _CrmSeria
                 "A lead cannot be marked CONVERTED directly — use the lead-conversion service."
             )
         return value
+
+
+class LeadAssignmentSerializer(serializers.Serializer):
+    """Input for ``POST /api/v1/crm/leads/assign/`` — the Super Admin /
+    Manager lead-assignment panel's one request.
+
+    Validates SHAPE only. Every authorization decision (may this caller
+    assign at all, may they assign to this target, are these leads inside
+    their scope) belongs to ``apps.crm.services.assign_leads()`` and is
+    made there — this class deliberately does not re-implement any of it.
+    """
+
+    lead_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False, min_length=1
+    )
+    target_type = serializers.ChoiceField(choices=["manager", "employee"])
+    target_user_id = serializers.IntegerField(min_value=1)
+
+
+class GoogleSheetImportSerializer(serializers.Serializer):
+    """Input for ``POST /api/v1/crm/leads/import-google-sheet/``.
+
+    ``confirm=false`` (the default) runs the PREVIEW stage — validation
+    only, nothing written. ``confirm=true`` performs the real import.
+    """
+
+    spreadsheet_id = serializers.CharField()
+    sheet_range = serializers.CharField(required=False, allow_blank=True)
+    confirm = serializers.BooleanField(required=False, default=False)
 
 
 class LeadDetailSerializer(LeadSerializer):

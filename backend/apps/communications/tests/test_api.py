@@ -180,8 +180,12 @@ def test_send_action_rejects_already_sent(api_client, employee, email_message, m
 # --------------------------------------------------------------------------
 
 
-def test_create_notification_for_another_user(api_client, employee, other_employee):
-    api_client.force_authenticate(employee)
+def test_create_notification_for_another_user(api_client, super_admin, other_employee):
+    """Staff-management pass: authoring a notification is now a Super Admin
+    action (see ``NotificationViewSet``). The recipient may still be anyone
+    — that part is unchanged.
+    """
+    api_client.force_authenticate(super_admin)
     response = api_client.post(
         NOTIFICATIONS_URL, {"recipient": other_employee.pk, "notification_type": "INFO", "title": "Hi"}
     )
@@ -226,8 +230,10 @@ def test_communication_log_has_no_create_endpoint(api_client, employee):
     assert response.status_code == 405
 
 
-def test_communication_log_populated_automatically_by_notification_creation(api_client, employee, other_employee):
-    api_client.force_authenticate(employee)
+def test_communication_log_populated_automatically_by_notification_creation(
+    api_client, super_admin, other_employee
+):
+    api_client.force_authenticate(super_admin)
     api_client.post(NOTIFICATIONS_URL, {"recipient": other_employee.pk, "notification_type": "INFO", "title": "Hi"})
 
     assert CommunicationLog.objects.filter(channel=CommunicationLog.Channel.NOTIFICATION, summary="Hi").exists()

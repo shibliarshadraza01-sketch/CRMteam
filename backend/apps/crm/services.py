@@ -226,6 +226,107 @@ def resolve_owner_for_create(user, requested_owner):
     raise OwnerAssignmentNotAllowed("You are not allowed to assign this record to that owner.")
 
 
+class LeadAssignmentNotAllowed(PermissionDenied):
+    """Raised by ``assign_leads()`` when the caller may not perform the
+    requested assignment. Subclasses DRF's ``PermissionDenied`` (same
+    reasoning as ``OwnerAssignmentNotAllowed`` above) so the API layer
+    returns a 403 without its own try/except.
+    """
+
+
+#: Accepted ``target_type`` values for ``assign_leads()``, mapped to the
+#: role the target user must actually hold. "Assign to a manager" must
+#: never quietly assign to an employee (or vice versa) just because the
+#: caller passed the wrong id.
+ASSIGNMENT_TARGET_ROLES = {
+    "manager": User.Role.MANAGER,
+    "employee": User.Role.EMPLOYEE,
+}
+
+
+def can_assign_leads(user):
+    """Only Manager-or-above may assign leads at all. An Employee can
+    never assign a lead — not to themselves, not to anyone (the spec's
+    "Employees cannot assign leads" rule, enforced in the data layer, not
+    by hiding a button).
+    """
+    return user_has_role_at_least(user, User.Role.MANAGER)
+
+
+def validate_assignment_target(actor, target_user, target_type):
+    """Resolve and authorize the user ``actor`` wants to assign leads TO.
+
+    - ``target_type`` must be ``"manager"`` or ``"employee"``, and
+      ``target_user.role`` must actually match it.
+    - The target must be active — assigning work to a deactivated account
+      would silently orphan it.
+    - Super Admin: any valid target.
+    - Manager: only a target inside their own ``managed_user_ids()``, and
+      never another Manager other than themselves (a Manager may take a
+      lead themselves, but may not hand work to a peer manager or to the
+      Super Admin).
+    """
+    if target_type not in ASSIGNMENT_TARGET_ROLES:
+        raise LeadAssignmentNotAllowed("target_type must be 'manager' or 'employee'.")
+    if target_user is None:
+        raise LeadAssignmentNotAllowed("The assignment target does not exist.")
+    if target_user.role != ASSIGNMENT_TARGET_ROLES[target_type]:
+        raise LeadAssignmentNotAllowed(
+            f"Target user is not a {target_type}; their role is {target_user.role}."
+        )
+    if not target_user.is_active:
+        raise LeadAssignmentNotAllowed("Cannot assign leads to a deactivated account.")
+
+    if is_super_admin(actor):
+        return target_user
+    if not can_assign_leads(actor):
+        raise LeadAssignmentNotAllowed("You are not allowed to assign leads.")
+    if target_user.pk == actor.pk:
+        return target_user
+    if target_user.pk in managed_user_ids(actor):
+        return target_user
+    raise LeadAssignmentNotAllowed("You may only assign leads to employees within your own scope.")
+
+
+@transaction.atomic
+def assign_leads(actor, lead_ids, target_type, target_user):
+    """Bulk (re)assign leads to ``target_user``. Returns the updated
+    ``Lead`` objects, in the order they were found.
+
+    Two independent authorization checks, both required:
+
+    1. ``validate_assignment_target()`` — may ``actor`` assign work TO
+       this user at all (role/scope/active checks above).
+    2. Every lead must ALREADY be visible to ``actor`` under
+       ``scope_queryset_for_user()`` — the same boundary every read uses.
+       A lead outside that scope is reported as not found rather than
+       silently skipped, so a Manager can never reassign another team's
+       lead by guessing its id.
+
+    Reassignment of an already-assigned lead is explicitly supported (the
+    spec's "reassign previously assigned leads") — there is no "already
+    owned" guard, only the two authorization checks above.
+    """
+    target_user = validate_assignment_target(actor, target_user, target_type)
+
+    ids = list(dict.fromkeys(lead_ids or []))
+    if not ids:
+        raise LeadAssignmentNotAllowed("lead_ids must contain at least one lead id.")
+
+    visible = scope_queryset_for_user(Lead.active_objects.all(), actor)
+    leads = list(visible.filter(pk__in=ids))
+    found_ids = {lead.pk for lead in leads}
+    missing = [lead_id for lead_id in ids if lead_id not in found_ids]
+    if missing:
+        raise Lead.DoesNotExist(f"Leads not found or not accessible: {missing}")
+
+    for lead in leads:
+        lead.owner = target_user
+        lead.updated_by = actor
+        lead.save(update_fields=["owner", "updated_by", "updated_at"])
+    return leads
+
+
 def add_contact(customer, first_name, last_name, *, is_primary=False, **extra_fields):
     """Add a ``ContactPerson`` to ``customer``.
 
@@ -435,6 +536,11 @@ __all__ = [
     "assign_owner",
     "resolve_owner_for_create",
     "OwnerAssignmentNotAllowed",
+    "LeadAssignmentNotAllowed",
+    "ASSIGNMENT_TARGET_ROLES",
+    "can_assign_leads",
+    "validate_assignment_target",
+    "assign_leads",
     "add_contact",
     "add_address",
     "managed_user_ids",

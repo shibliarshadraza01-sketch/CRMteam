@@ -22,9 +22,11 @@ from .views import (
     LogoutAllView,
     LogoutView,
     MeView,
+    SecuritySettingsView,
     SessionAwareTokenRefreshView,
     SessionListView,
     SessionRevokeView,
+    StaffProfileView,
     SuperAdminVerifyView,
     UserActivateView,
     UserDeactivateView,
@@ -48,4 +50,7 @@ urlpatterns = [
     path("users/<int:pk>/", UserDetailView.as_view(), name="user-detail"),
     path("users/<int:pk>/activate/", UserActivateView.as_view(), name="user-activate"),
     path("users/<int:pk>/deactivate/", UserDeactivateView.as_view(), name="user-deactivate"),
+    # Staff-management pass: consolidated staff profile + own security settings.
+    path("users/<int:pk>/profile/", StaffProfileView.as_view(), name="user-profile"),
+    path("settings/security/", SecuritySettingsView.as_view(), name="settings-security"),
 ]

@@ -60,24 +60,55 @@ class UserManagementSerializer(serializers.ModelSerializer):
     docstring for why that boundary matters.
     """
 
+    full_name = serializers.CharField(read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "email", "first_name", "last_name", "role", "is_active", "date_joined"]
-        read_only_fields = ["id", "date_joined"]
+        fields = [
+            "id", "email", "username", "first_name", "last_name", "full_name",
+            "phone", "department", "role", "is_active", "date_joined",
+        ]
+        read_only_fields = ["id", "full_name"]
+        extra_kwargs = {
+            # A blank submission means "no username", stored as NULL — see
+            # ``User.save()``. Without allow_null/required=False a PATCH that
+            # simply omits it would be fine but an explicit "" would 400.
+            "username": {"required": False, "allow_null": True, "allow_blank": True},
+        }
+
+    def validate_username(self, value):
+        return value or None
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
     """Write-only ``password`` — create only, via
-    ``services.create_managed_user()`` (see ``UserViewSet.perform_create()``),
+    ``services.create_managed_user()`` (see ``UserListCreateView.perform_create()``),
     which routes through ``User.objects.create_user()`` for hashing.
+
+    Staff-management pass: carries the full "User/Staff Management"
+    creation form — Full Name (``first_name``/``last_name``), Username
+    (a PROFILE field only; authentication stays email+password),
+    Email, Phone, Role, Department, Joining date (``date_joined``),
+    Status (``is_active``), Credentials (``password``).
     """
 
     password = serializers.CharField(write_only=True, trim_whitespace=False, min_length=8)
 
     class Meta:
         model = User
-        fields = ["id", "email", "password", "first_name", "last_name", "role"]
+        fields = [
+            "id", "email", "password", "username", "first_name", "last_name",
+            "phone", "department", "role", "date_joined", "is_active",
+        ]
         read_only_fields = ["id"]
+        extra_kwargs = {
+            "username": {"required": False, "allow_null": True, "allow_blank": True},
+            "date_joined": {"required": False},
+            "is_active": {"required": False},
+        }
+
+    def validate_username(self, value):
+        return value or None
 
 
 class LoginSerializer(serializers.Serializer):
@@ -266,3 +297,69 @@ class RevokeAllResponseSerializer(serializers.Serializer):
     """Output-only: POST /api/v1/auth/logout-all/'s response shape, for drf-spectacular."""
 
     revoked = serializers.IntegerField(help_text="Number of sessions revoked (excludes the current session).")
+
+
+# --------------------------------------------------------------------------
+# Staff-management pass: security-sensitive settings
+# --------------------------------------------------------------------------
+
+
+class SecuritySettingsSerializer(serializers.Serializer):
+    """Input for ``POST /api/v1/auth/settings/security/``.
+
+    Every field is optional; at least one of ``username``/``new_password``/
+    ``new_access_code`` must be supplied. ``current_password`` (and any
+    other field a future verification provider requires — see
+    ``apps.accounts.verification``) is the verification factor, checked
+    BEFORE anything is written.
+
+    Nothing here is ever echoed back: the response carries only the safe
+    ``UserManagementSerializer`` shape plus which fields changed. No
+    password or access code, current or new, appears in any response.
+    """
+
+    username = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=150)
+    new_password = serializers.CharField(required=False, write_only=True, trim_whitespace=False, min_length=8)
+    new_access_code = serializers.CharField(required=False, write_only=True, trim_whitespace=False, min_length=6)
+    current_password = serializers.CharField(required=False, write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if not any(key in attrs for key in ("username", "new_password", "new_access_code")):
+            raise serializers.ValidationError(
+                "Supply at least one of: username, new_password, new_access_code."
+            )
+        return attrs
+
+
+class SecuritySettingsResponseSerializer(serializers.Serializer):
+    """Output-only shape of ``POST /api/v1/auth/settings/security/``."""
+
+    updated_fields = serializers.ListField(child=serializers.CharField())
+    user = UserManagementSerializer()
+
+
+class StaffProfileSerializer(serializers.Serializer):
+    """Output-only: documents ``GET /api/v1/auth/users/<id>/profile/``'s
+    response for drf-spectacular. The payload itself is built by
+    ``apps.accounts.profiles.build_staff_profile()`` (plain dicts computed
+    from existing ledgers, never a model instance), so this class exists
+    for the schema, not for serialization.
+    """
+
+    profile = serializers.DictField()
+    lead_performance = serializers.DictField()
+    converted_customers = serializers.ListField(child=serializers.DictField())
+    interaction_history = serializers.ListField(child=serializers.DictField())
+    work_activity = serializers.DictField()
+    managed_employees = serializers.ListField(child=serializers.DictField())
+    scope_lead_stats = serializers.DictField(allow_null=True)
+
+
+class SecurityVerificationMethodSerializer(serializers.Serializer):
+    """Output-only: ``GET /api/v1/auth/settings/security/`` — what the
+    configured verification provider needs before a security change is
+    accepted (see ``apps.accounts.verification.describe_security_verification()``).
+    """
+
+    method = serializers.CharField()
+    required_fields = serializers.ListField(child=serializers.CharField())

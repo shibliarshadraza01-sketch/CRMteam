@@ -45,11 +45,16 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from .challenge import issue_super_admin_challenge
 from .models import UserSession
 from .permissions import ReadOnlyOrSuperAdmin
+from .profiles import build_staff_profile, can_view_staff_profile
 from .serializers import (
     LoginSerializer,
     LoginSuccessSerializer,
     LogoutSerializer,
     RevokeAllResponseSerializer,
+    SecuritySettingsResponseSerializer,
+    SecuritySettingsSerializer,
+    SecurityVerificationMethodSerializer,
+    StaffProfileSerializer,
     SuperAdminChallengeSerializer,
     SuperAdminVerifySerializer,
     UserCreateSerializer,
@@ -59,12 +64,20 @@ from .serializers import (
 )
 from .services import (
     activate_user,
+    apply_security_settings,
     create_managed_user,
     create_session,
     deactivate_user,
     revoke_all_sessions_except,
     revoke_session,
     touch_session_on_refresh,
+)
+from .verification import (
+    CHANGE_ACCESS_CODE,
+    CHANGE_PASSWORD,
+    CHANGE_USERNAME,
+    describe_security_verification,
+    verify_security_change,
 )
 
 User = get_user_model()
@@ -415,15 +428,49 @@ class UserListCreateView(generics.ListCreateAPIView):
             role=data.get("role", User.Role.EMPLOYEE),
             first_name=data.get("first_name", ""),
             last_name=data.get("last_name", ""),
+            username=data.get("username"),
+            phone=data.get("phone", ""),
+            department=data.get("department", ""),
+            date_joined=data.get("date_joined"),
+            is_active=data.get("is_active", True),
         )
         serializer.instance = user
 
 
-class UserDetailView(generics.RetrieveUpdateAPIView):
+class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """``DELETE`` here is deliberately NON-DESTRUCTIVE.
+
+    A `User` row is referenced (via ``SET_NULL`` FKs) by leads, customers,
+    invoices, attendance sessions, communication logs, audit entries and
+    every ``created_by``/``updated_by`` column in the system. Really
+    deleting the row would silently null out that entire historical
+    attribution — exactly what the spec's "preserve historical records"
+    rule forbids. So the Users management API has NO hard delete at all:
+    ``DELETE /users/<id>/`` performs the same reversible deactivation as
+    ``POST /users/<id>/deactivate/`` and returns ``200`` with the updated
+    user (not ``204``), so a caller can see the account is now inactive
+    rather than gone.
+    """
+
     queryset = User.objects.all()
     serializer_class = UserManagementSerializer
     permission_classes = [permissions.IsAuthenticated, ReadOnlyOrSuperAdmin]
-    http_method_names = ["get", "patch", "head", "options"]
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    @extend_schema(responses={200: UserManagementSerializer})
+    def destroy(self, request, *args, **kwargs):
+        user = self.get_object()
+        deactivate_user(user)
+        return Response(
+            {
+                "detail": (
+                    "Account deactivated. User records are never hard-deleted — all "
+                    "historical CRM data owned by or attributed to this user is preserved."
+                ),
+                "user": self.get_serializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 @extend_schema(request=None, responses={200: UserManagementSerializer})
@@ -448,3 +495,90 @@ class UserDeactivateView(generics.GenericAPIView):
         user = self.get_object()
         deactivate_user(user)
         return Response(self.get_serializer(user).data)
+
+
+@extend_schema(responses={200: StaffProfileSerializer})
+class StaffProfileView(APIView):
+    """``GET /api/v1/auth/users/<id>/profile/`` — the consolidated staff
+    profile (see ``apps/accounts/profiles.py``).
+
+    Scoping (``profiles.can_view_staff_profile()``): Super Admin -> anyone;
+    Manager -> themselves + their own ``managed_user_ids()``; Employee ->
+    themselves only. A target outside the caller's reach returns 404, never
+    403 — the same "never confirm a record exists for someone else" rule
+    the rest of this project already uses.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk, *args, **kwargs):
+        target = User.objects.filter(pk=pk).first()
+        if target is None or not can_view_staff_profile(request.user, target):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(build_staff_profile(target), status=status.HTTP_200_OK)
+
+
+class SecuritySettingsView(generics.GenericAPIView):
+    """``GET``/``POST /api/v1/auth/settings/security/`` — the caller's OWN
+    security-sensitive settings (username, password, Super Admin access
+    code).
+
+    ``GET`` describes the verification step the configured provider
+    requires, so a frontend can render it before submitting.
+
+    ``POST`` runs ``verification.verify_security_change()`` FIRST and
+    aborts with 403 if it does not pass — nothing is written unless every
+    requested change verified. Applies only to ``request.user``: this
+    endpoint can never change another account's credentials (staff
+    accounts are managed through the Users API, which sets an initial
+    password at creation time only).
+
+    The access code is Super-Admin-only by construction (the model clears
+    the hash for any other role on save — see ``User.save()``), so
+    requesting one as a Manager/Employee is rejected explicitly rather
+    than silently ignored.
+    """
+
+    serializer_class = SecuritySettingsSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "super_admin_verify"
+
+    @extend_schema(responses={200: SecurityVerificationMethodSerializer})
+    def get(self, request, *args, **kwargs):
+        return Response(describe_security_verification(), status=status.HTTP_200_OK)
+
+    @extend_schema(request=SecuritySettingsSerializer, responses={200: SecuritySettingsResponseSerializer})
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        user = request.user
+
+        if "new_access_code" in data and user.role != User.Role.SUPER_ADMIN:
+            return Response(
+                {"detail": "Only a Super Admin has a secondary access code."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify BEFORE writing anything — one verification covers the whole
+        # atomic change set (see apps/accounts/verification.py).
+        for change_type, key in (
+            (CHANGE_USERNAME, "username"),
+            (CHANGE_PASSWORD, "new_password"),
+            (CHANGE_ACCESS_CODE, "new_access_code"),
+        ):
+            if key in data:
+                verify_security_change(user, change_type, request.data)
+
+        updated_fields = apply_security_settings(
+            user,
+            username=data["username"] if "username" in data else None,
+            new_password=data.get("new_password"),
+            new_access_code=data.get("new_access_code"),
+            change_username=("username" in data),
+        )
+        return Response(
+            {"updated_fields": updated_fields, "user": UserManagementSerializer(user).data},
+            status=status.HTTP_200_OK,
+        )

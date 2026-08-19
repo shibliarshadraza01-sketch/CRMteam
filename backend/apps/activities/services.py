@@ -233,9 +233,299 @@ def get_timeline(entity, *, user=None):
     return sorted(entries, key=lambda entry: entry["timestamp"], reverse=True)
 
 
+# --------------------------------------------------------------------------
+# Staff-management pass: the "Recent Activities" feed
+# --------------------------------------------------------------------------
+
+#: Every event kind the feed can emit. Stable machine names — a frontend
+#: renders an icon/label per kind and never parses the human text.
+RECENT_ACTIVITY_KINDS = (
+    "LEAD_CONVERTED",
+    "LEAD_ASSIGNED",
+    "CUSTOMER_CREATED",
+    "PAYMENT_RECEIVED",
+    "PAYMENT_OVERDUE",
+    "USER_CREATED",
+    "FOLLOW_UP_SCHEDULED",
+    "INTERACTION_LOGGED",
+    "REMINDER_GENERATED",
+    "CHECKED_IN",
+    "CHECKED_OUT",
+)
+
+#: Default window and page size — a "recent activity" panel, not an archive.
+RECENT_ACTIVITY_DEFAULT_DAYS = 7
+RECENT_ACTIVITY_DEFAULT_LIMIT = 25
+
+
+def get_recent_activity(user, *, limit=RECENT_ACTIVITY_DEFAULT_LIMIT, days=RECENT_ACTIVITY_DEFAULT_DAYS, now=None):
+    """Real, role-scoped CRM events — never static placeholder text.
+
+    Read-only aggregation over models that already record these events
+    (``Lead``, ``Customer``, ``PaymentTransaction``/``Invoice``, ``Task``,
+    ``Reminder``, ``CommunicationLog``, ``AttendanceSession``, ``User``).
+    Deliberately NOT a new "activity feed" table: every entry here is a
+    projection of a row that already exists, and a duplicate write-path
+    would immediately be able to disagree with the ledger it mirrors.
+
+    Scoping reuses ``scope_queryset_for_user()`` on every source queryset,
+    so the three-tier rule is identical to every list endpoint:
+
+    - Super Admin: org-wide (plus the org-wide-only kinds ``USER_CREATED``
+      and ``PAYMENT_OVERDUE``, which are administrative by nature).
+    - Manager: their own + their team's records only.
+    - Employee: their own records only.
+
+    Returns a list of dicts sorted most-recent-first::
+
+        {"kind": "LEAD_CONVERTED", "timestamp": <datetime>,
+         "title": str, "description": str,
+         "entity_type": "lead"|"customer"|..., "entity_id": int|None,
+         "actor_id": int|None, "actor_name": str}
+    """
+    from django.utils import timezone as dj_timezone
+
+    from apps.accounts.models import User as UserModel
+    from apps.accounts.permissions import is_super_admin
+    from apps.attendance.models import AttendanceSession
+    from apps.communications.models import CommunicationLog
+    from apps.crm.models import Customer, Lead
+    from apps.sales.models import Invoice, PaymentTransaction
+
+    now = now or dj_timezone.now()
+    since = now - timedelta(days=days)
+    entries = []
+
+    def _name(person):
+        if person is None:
+            return "System"
+        return person.full_name or person.email
+
+    # Leads converted / assigned. `updated_at` is when the conversion or
+    # (re)assignment was written — Lead has no separate event table.
+    leads = scope_queryset_for_user(
+        Lead.active_objects.filter(updated_at__gte=since).select_related("owner", "converted_customer"),
+        user,
+        owner_field="owner",
+    )
+    for lead in leads[: limit * 2]:
+        if lead.converted_customer_id:
+            entries.append(
+                {
+                    "kind": "LEAD_CONVERTED",
+                    "timestamp": lead.updated_at,
+                    "title": f"Lead converted: {lead.company_name}",
+                    "description": f"{lead.company_name} became a customer.",
+                    "entity_type": "lead",
+                    "entity_id": lead.id,
+                    "actor_id": lead.owner_id,
+                    "actor_name": _name(lead.owner),
+                }
+            )
+        elif lead.owner_id:
+            entries.append(
+                {
+                    "kind": "LEAD_ASSIGNED",
+                    "timestamp": lead.updated_at,
+                    "title": f"Lead assigned: {lead.company_name}",
+                    "description": f"Assigned to {_name(lead.owner)}.",
+                    "entity_type": "lead",
+                    "entity_id": lead.id,
+                    "actor_id": lead.owner_id,
+                    "actor_name": _name(lead.owner),
+                }
+            )
+
+    customers = scope_queryset_for_user(
+        Customer.objects.filter(is_deleted=False, created_at__gte=since).select_related("owner"),
+        user,
+        owner_field="owner",
+    )
+    for customer in customers[:limit]:
+        entries.append(
+            {
+                "kind": "CUSTOMER_CREATED",
+                "timestamp": customer.created_at,
+                "title": f"New customer: {customer.name}",
+                "description": f"Owned by {_name(customer.owner)}.",
+                "entity_type": "customer",
+                "entity_id": customer.id,
+                "actor_id": customer.owner_id,
+                "actor_name": _name(customer.owner),
+            }
+        )
+
+    payments = scope_queryset_for_user(
+        PaymentTransaction.active_objects.filter(paid_at__gte=since).select_related("invoice", "invoice__owner"),
+        user,
+        owner_field="invoice__owner",
+    )
+    for payment in payments[:limit]:
+        entries.append(
+            {
+                "kind": "PAYMENT_RECEIVED",
+                "timestamp": payment.paid_at,
+                "title": f"Payment received: {payment.amount}",
+                "description": f"Invoice {payment.invoice.invoice_number}.",
+                "entity_type": "invoice",
+                "entity_id": payment.invoice_id,
+                "actor_id": payment.invoice.owner_id,
+                "actor_name": _name(payment.invoice.owner),
+            }
+        )
+
+    overdue = scope_queryset_for_user(
+        Invoice.active_objects.overdue().select_related("owner"), user, owner_field="owner"
+    )
+    for invoice in overdue.order_by("due_date")[:limit]:
+        entries.append(
+            {
+                "kind": "PAYMENT_OVERDUE",
+                "timestamp": now,
+                "title": f"Invoice overdue: {invoice.invoice_number}",
+                "description": f"Due {invoice.due_date}.",
+                "entity_type": "invoice",
+                "entity_id": invoice.id,
+                "actor_id": invoice.owner_id,
+                "actor_name": _name(invoice.owner),
+            }
+        )
+
+    follow_ups = scope_queryset_for_user(
+        Task.active_objects.filter(created_at__gte=since).select_related("owner", "assigned_to"),
+        user,
+        owner_field="owner",
+    )
+    for task in follow_ups[:limit]:
+        entries.append(
+            {
+                "kind": "FOLLOW_UP_SCHEDULED",
+                "timestamp": task.created_at,
+                "title": f"Follow-up scheduled: {task.title}",
+                "description": f"Due {task.due_date}." if task.due_date else "No due date set.",
+                "entity_type": "task",
+                "entity_id": task.id,
+                "actor_id": task.owner_id,
+                "actor_name": _name(task.owner),
+            }
+        )
+
+    interactions = scope_queryset_for_user(
+        CommunicationLog.active_objects.filter(occurred_at__gte=since).select_related("actor"),
+        user,
+        owner_field="actor",
+    )
+    for log in interactions[:limit]:
+        entries.append(
+            {
+                "kind": "INTERACTION_LOGGED",
+                "timestamp": log.occurred_at,
+                "title": f"{log.channel.title()} interaction",
+                "description": log.summary,
+                "entity_type": "communication_log",
+                "entity_id": log.id,
+                "actor_id": log.actor_id,
+                "actor_name": _name(log.actor),
+            }
+        )
+
+    reminders = Reminder.active_objects.filter(created_at__gte=since).select_related("task__owner", "event__owner")
+    reminders = _scope_reminders(reminders, user)
+    for reminder in reminders[:limit]:
+        owner = reminder.owner
+        entries.append(
+            {
+                "kind": "REMINDER_GENERATED",
+                "timestamp": reminder.created_at,
+                "title": "Reminder generated",
+                "description": reminder.message or f"Reminder at {reminder.remind_at}.",
+                "entity_type": "reminder",
+                "entity_id": reminder.id,
+                "actor_id": getattr(owner, "id", None),
+                "actor_name": _name(owner),
+            }
+        )
+
+    sessions = scope_queryset_for_user(
+        AttendanceSession.active_objects.filter(login_at__gte=since).select_related("employee"),
+        user,
+        owner_field="employee",
+    )
+    for session in sessions[:limit]:
+        entries.append(
+            {
+                "kind": "CHECKED_IN",
+                "timestamp": session.login_at,
+                "title": f"{_name(session.employee)} checked in",
+                "description": "",
+                "entity_type": "attendance_session",
+                "entity_id": session.id,
+                "actor_id": session.employee_id,
+                "actor_name": _name(session.employee),
+            }
+        )
+        if session.logout_at is not None:
+            entries.append(
+                {
+                    "kind": "CHECKED_OUT",
+                    "timestamp": session.logout_at,
+                    "title": f"{_name(session.employee)} checked out",
+                    "description": "",
+                    "entity_type": "attendance_session",
+                    "entity_id": session.id,
+                    "actor_id": session.employee_id,
+                    "actor_name": _name(session.employee),
+                }
+            )
+
+    # Staff creation is an org-wide administrative event: Super Admin only.
+    if is_super_admin(user):
+        for account in UserModel.objects.filter(date_joined__gte=since).order_by("-date_joined")[:limit]:
+            entries.append(
+                {
+                    "kind": "USER_CREATED",
+                    "timestamp": account.date_joined,
+                    "title": f"{account.role.replace('_', ' ').title()} created",
+                    "description": _name(account),
+                    "entity_type": "user",
+                    "entity_id": account.id,
+                    "actor_id": account.id,
+                    "actor_name": _name(account),
+                }
+            )
+
+    entries.sort(key=lambda entry: entry["timestamp"], reverse=True)
+    return entries[:limit]
+
+
+def _scope_reminders(queryset, user):
+    """`Reminder` has no owner column of its own — ownership is whichever
+    of ``task``/``event`` it belongs to (see ``models.py``), the same shape
+    ``ReminderViewSet.get_queryset()`` already handles with a Q expression.
+    Mirrors that rule rather than inventing a second one.
+    """
+    from django.db.models import Q as DjangoQ
+
+    from apps.accounts.permissions import is_super_admin, user_has_role_at_least
+    from apps.accounts.models import User as UserModel
+
+    if user is None or not getattr(user, "is_authenticated", False):
+        return queryset.none()
+    if is_super_admin(user):
+        return queryset
+    if user_has_role_at_least(user, UserModel.Role.MANAGER):
+        ids = managed_user_ids(user)
+        return queryset.filter(DjangoQ(task__owner_id__in=ids) | DjangoQ(event__owner_id__in=ids))
+    return queryset.filter(DjangoQ(task__owner=user) | DjangoQ(event__owner=user))
+
+
 __all__ = [
     "managed_user_ids",
     "scope_queryset_for_user",
+    "RECENT_ACTIVITY_KINDS",
+    "RECENT_ACTIVITY_DEFAULT_DAYS",
+    "RECENT_ACTIVITY_DEFAULT_LIMIT",
+    "get_recent_activity",
     "create_task",
     "reassign_task",
     "complete_task",

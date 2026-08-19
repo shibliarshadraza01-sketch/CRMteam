@@ -44,7 +44,7 @@ from .filters import (
     WhatsAppMessageFilterSet,
 )
 from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification, WhatsAppMessage
-from .permissions import EmailTemplateWritePermission
+from .permissions import EmailTemplateWritePermission, NotificationWritePermission
 from .providers.a1routes import verify_webhook_signature as verify_a1routes_signature
 from .providers.inbound_email import verify_webhook_signature as verify_inbound_email_signature
 from .providers.whatsapp import (
@@ -219,6 +219,27 @@ class EmailMessageViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
 
 
 class NotificationViewSet(_CrmModelViewSet):
+    """Staff-management pass: only a SUPER ADMIN may create, edit, schedule
+    or delete notifications through the API.
+
+    Every role still LISTS and RETRIEVES their own notifications (scoped
+    by ``owner_field = "recipient"``, unchanged) and still marks them
+    read/unread — receiving and triaging notifications is not the same
+    thing as authoring them, and the spec explicitly allows the former for
+    Manager/Employee while forbidding the latter.
+
+    Mechanics: ``NotificationWritePermission`` (this app's alias for CP6's
+    ``ReadOnlyOrSuperAdmin``) is added for the write actions only.
+    ``mark-read``/``mark-unread`` are POSTs but are NOT authoring actions,
+    so ``get_permissions()`` deliberately leaves them on the inherited
+    owner-scoped permission set.
+
+    Automatic, system-generated notifications are unaffected: they are
+    written by ``services.create_notification()`` from internal code paths
+    (task due, payment overdue, follow-up scheduled, ...) that never pass
+    through a DRF permission class.
+    """
+
     base_manager = Notification.objects
     base_active_manager = Notification.active_objects
     serializer_class = NotificationSerializer
@@ -227,6 +248,15 @@ class NotificationViewSet(_CrmModelViewSet):
     search_fields = ["title", "message"]
     ordering_fields = ["created_at", "is_read"]
     ordering = ["-created_at"]
+
+    #: Actions that AUTHOR or destroy a notification record — Super Admin only.
+    authoring_actions = ("create", "update", "partial_update", "destroy", "restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.authoring_actions:
+            permissions = permissions + [NotificationWritePermission()]
+        return permissions
 
     def get_queryset(self):
         return super().get_queryset().select_related("recipient", "content_type")

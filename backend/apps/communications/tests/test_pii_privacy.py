@@ -274,24 +274,36 @@ def test_manager_can_still_search_by_email_value_within_their_scope(
 # --------------------------------------------------------------------------
 
 
-def test_employee_lead_export_omits_pii_columns(employee_client, pii_lead):
+def test_employee_lead_export_is_refused_entirely(employee_client, pii_lead):
+    """Staff-management pass STRENGTHENED this: an Employee no longer gets
+    a PII-stripped export, they get no export at all (the spec's
+    "Employees cannot export/import"). Refusing the endpoint is a strictly
+    stronger PII guarantee than filtering its columns.
+    """
     response = employee_client.get(f"{LEADS_URL}export/?export_format=csv")
 
-    assert response.status_code == 200
-    assert_no_pii(response, context="employee CSV export")
-    header = response.content.decode().splitlines()[0]
-    assert "email" not in header
-    assert "phone" not in header
+    assert response.status_code == 403
 
 
-def test_employee_lead_export_xlsx_omits_pii(employee_client, pii_lead):
+def test_employee_lead_export_xlsx_is_refused_entirely(employee_client, pii_lead):
     response = employee_client.get(f"{LEADS_URL}export/?export_format=xlsx")
 
+    assert response.status_code == 403
+
+
+def test_manager_lead_export_omits_no_contact_columns(api_client, manager, pii_lead):
+    """A Manager's export is unchanged — contact columns still present.
+    Only Lead Source was removed for them (see
+    apps/crm/tests/test_lead_source_visibility.py).
+    """
+    api_client.force_authenticate(manager)
+
+    response = api_client.get(f"{LEADS_URL}export/?export_format=csv")
+
     assert response.status_code == 200
-    # An .xlsx is a zip of XML: the sentinel would appear verbatim in the
-    # shared-strings part if it were exported, so a raw byte scan is a
-    # genuine check here, not a formality.
-    assert_no_pii(response, context="employee XLSX export")
+    header = response.content.decode().splitlines()[0]
+    assert "email" in header
+    assert "phone" in header
 
 
 def test_super_admin_lead_export_still_includes_contact_columns(api_client, super_admin, pii_lead):
@@ -741,7 +753,10 @@ def test_negative_pii_sweep_across_every_employee_facing_endpoint(
         f"{LEADS_URL}?search=PII",
         f"{LEADS_URL}{pii_lead.pk}/",
         f"{LEADS_URL}{pii_lead.pk}/duplicates/",
-        f"{LEADS_URL}export/?export_format=csv",
+        # The lead export is deliberately absent from this sweep: an
+        # Employee is now refused it outright (403), so asserting a 200 +
+        # no-PII body no longer applies — see
+        # test_employee_lead_export_is_refused_entirely above.
         CONTACTS_URL,
         f"{CONTACTS_URL}{pii_contact.pk}/",
         EMAIL_MESSAGES_URL,

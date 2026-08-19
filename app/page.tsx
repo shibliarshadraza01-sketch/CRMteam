@@ -21,7 +21,6 @@ import {
   EyeOff,
   FileSpreadsheet,
   Filter,
-  History,
   ListChecks,
   Loader2,
   Lock,
@@ -160,16 +159,21 @@ const modules: ModuleConfig[] = [
   {
     key: "team",
     title: "Team Management",
-    subtitle: "View your team's employees, assign or reassign leads, and track employee performance.",
+    subtitle: "View your team, assign or reassign leads, and open a team member to see their performance.",
     icon: Users,
     accent: "from-teal-700 to-indigo-500",
     columns: ["Name", "Role", "Status"],
     rows: [],
     filters: ["All employees", "Active", "Inactive"],
     actions: [
+      // "View Performance" used to sit here and fell through every branch
+      // of handleModuleAction() into openCreateModal(), so it silently
+      // opened the lead-assignment form instead. A team member's
+      // performance already lives in their full profile, which opens by
+      // clicking their name in the table below - so the misleading button
+      // is gone rather than rewired to a second copy of that view.
       { label: "Assign Lead", icon: UserCheck, primary: true },
-      { label: "Reassign Lead", icon: RefreshCw },
-      { label: "View Performance", icon: Eye }
+      { label: "Reassign Lead", icon: RefreshCw }
     ],
     formTitle: "Assign or Reassign Lead",
   },
@@ -180,12 +184,7 @@ const modules: ModuleConfig[] = [
     icon: Activity,
     accent: "from-teal-700 to-sky-500",
     columns: ["Item", "Type", "Status", "Updated"],
-    rows: [
-      { Item: "Priya Sharma", Type: "Lead", Status: "Hot", Updated: "Today" },
-      { Item: "Acme Learning", Type: "Customer", Status: "Active", Updated: "Yesterday" },
-      { Item: "Call hot leads", Type: "Task", Status: "Open", Updated: "Today" },
-      { Item: "Payment follow-up", Type: "Follow-up", Status: "Scheduled", Updated: "Aug 03" }
-    ],
+    rows: [],
     filters: ["All items", "Leads", "Customers", "Tasks", "Follow-ups"],
     actions: [{ label: "Refresh Report", icon: RefreshCw, primary: true }],
     formTitle: "Log Personal Activity",
@@ -197,7 +196,7 @@ const modules: ModuleConfig[] = [
     icon: CalendarDays,
     accent: "from-teal-700 to-violet-500",
     columns: ["Event", "Type", "Date", "Priority"],
-    rows: [{ Event: "Team pipeline review", Type: "Meeting", Date: "Today", Priority: "Medium" }],
+    rows: [],
     filters: ["All events"],
     actions: [{ label: "Refresh Report", icon: RefreshCw }],
     formTitle: "Add Calendar Event",
@@ -221,12 +220,7 @@ const modules: ModuleConfig[] = [
     icon: UserCog,
     accent: "from-teal-700 to-rose-500",
     columns: ["Name", "Role", "Email", "Phone", "Status", "Password"],
-    rows: [
-      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Phone: "", Status: "Active" },
-      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Phone: "", Status: "Active" },
-      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Phone: "", Status: "Inactive" },
-      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Phone: "", Status: "Active" }
-    ],
+    rows: [],
     filters: ["All roles", "Manager", "Employee", "Active", "Inactive"],
     actions: [
       { label: "Create User", icon: Plus, primary: true }
@@ -240,12 +234,7 @@ const modules: ModuleConfig[] = [
     icon: Sparkles,
     accent: "from-teal-700 to-orange-500",
     columns: ["Lead", "Source", "Owner", "Status"],
-    rows: [
-      { Lead: "Priya Sharma", Source: "Meta Lead Ads", Owner: "Aarav Mehta", Status: "Hot" },
-      { Lead: "Rahul Verma", Source: "CSV Import", Owner: "Unassigned", Status: "New" },
-      { Lead: "Maya Iyer", Source: "Website", Owner: "Nisha Rao", Status: "Warm" },
-      { Lead: "Omar Ali", Source: "Referral", Owner: "Kabir Sethi", Status: "Converted" }
-    ],
+    rows: [],
     filters: ["All owners", "Unassigned", "New", "Hot", "Warm", "Cold", "Converted"],
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
@@ -263,17 +252,15 @@ const modules: ModuleConfig[] = [
     icon: Users,
     accent: "from-teal-700 to-pink-500",
     columns: ["Customer", "Industry", "Owner", "Status"],
-    rows: [
-      { Customer: "Acme Learning", Industry: "Education", Owner: "Aarav Mehta", Status: "Active" },
-      { Customer: "Bright Path", Industry: "Retail", Owner: "Nisha Rao", Status: "Prospect" },
-      { Customer: "Northstar Labs", Industry: "Technology", Owner: "Kabir Sethi", Status: "Active" },
-      { Customer: "Urban Study", Industry: "Education", Owner: "Zoya Khan", Status: "Inactive" }
-    ],
+    rows: [],
     filters: ["All customers", "Prospect", "Active", "Inactive", "Churned"],
     actions: [
-      { label: "Convert Lead", icon: Check, primary: true },
-      { label: "View Profile", icon: Eye },
-      { label: "Interaction History", icon: History }
+      // "View Profile" and "Interaction History" used to live here and
+      // opened whichever customer happened to be first in the list, which
+      // is not a thing a user can mean. Both are now reached the only way
+      // that makes sense - opening a specific customer from the table,
+      // which shows the full profile with its interaction history inside.
+      { label: "Convert Lead", icon: Check, primary: true }
     ],
     formTitle: "Customer Profile",
   },
@@ -298,9 +285,7 @@ const modules: ModuleConfig[] = [
     icon: MessageCircle,
     accent: "from-teal-700 to-cyan-500",
     columns: ["Recipient", "Subject", "Message", "Status"],
-    rows: [
-      { Recipient: "priya@example.com", Subject: "Proposal", Message: "Proposal sent", Status: "Sent" }
-    ],
+    rows: [],
     filters: ["All channels", "Queued", "Sent", "Failed"],
     actions: [
       { label: "Send Email", icon: Mail, primary: true }
@@ -314,12 +299,7 @@ const modules: ModuleConfig[] = [
     icon: ListChecks,
     accent: "from-teal-700 to-violet-500",
     columns: ["Task", "Priority", "Status", "Due"],
-    rows: [
-      { Task: "Call hot leads", Priority: "High", Status: "Pending", Due: "" },
-      { Task: "Send onboarding plan", Priority: "Medium", Status: "In Progress", Due: "" },
-      { Task: "Payment follow-up", Priority: "High", Status: "Pending", Due: "" },
-      { Task: "Manager pipeline review", Priority: "Low", Status: "Completed", Due: "" }
-    ],
+    rows: [],
     filters: ["All tasks", "Pending", "In Progress", "Completed", "Cancelled"],
     actions: [
       { label: "Assign Task", icon: Plus, primary: true },
@@ -330,19 +310,17 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "audit",
-    title: "Audit Logs - Super Admin Only",
-    subtitle: "A protected log of who did what and when, visible only to Super Admins.",
+    title: "Activity Log",
+    subtitle: "A protected record of who did what, and when.",
     icon: ShieldCheck,
     accent: "from-teal-700 to-slate-600",
     columns: ["Actor", "Action", "Description", "Time", "IP"],
-    rows: [
-      { Actor: "—", Action: "Create", Description: "—", Time: "—", IP: "—" }
-    ],
-    filters: ["All actions", "Create", "Update", "Delete", "Login", "Other"],
+    rows: [],
+    filters: ["All actions", "Created", "Updated", "Removed", "Signed in", "Other"],
     actions: [
       { label: "Filter Events", icon: Filter }
     ],
-    formTitle: "Audit Log Filter",
+    formTitle: "Activity Log Filter",
   },
   {
     key: "settings",
@@ -351,14 +329,12 @@ const modules: ModuleConfig[] = [
     icon: Settings,
     accent: "from-teal-700 to-zinc-600",
     columns: ["Setting", "Value", "Description", "Status"],
-    rows: [
-      { Setting: "example_setting", Value: "example_value", Description: "Example description", Status: "Active" }
-    ],
+    rows: [],
     filters: ["All settings", "Active", "Inactive"],
     actions: [
-      { label: "Org Settings", icon: Building2, primary: true }
+      { label: "Add Setting", icon: Building2, primary: true }
     ],
-    formTitle: "Create or Update Setting",
+    formTitle: "Organization Setting",
   }
 ];
 
@@ -390,12 +366,19 @@ const ROLE_AVATAR: Record<Role, string> = {
   employee: "E"
 };
 
+// Spec 2/33: the ban list includes an unnecessary "Assigned to Me". An
+// Employee's panel only ever contains their own records, so tagging every
+// module title with "Assigned to Me" / "Assigned Customers" / "My
+// Activity" restated the obvious. The titles are now the plain module
+// names - identical to what a Manager and a Super Admin see, which is the
+// point of "the same CRM at three permission levels" - and the subtitle
+// is what carries the role-appropriate description.
 const EMPLOYEE_MODULE_COPY: Partial<Record<ModuleKey, { title: string; subtitle: string }>> = {
-  leads: { title: "Leads - Assigned to Me", subtitle: "View leads assigned to you, add new leads manually, update status, and edit lead details." },
-  customers: { title: "Customers - Assigned to Me", subtitle: "View your assigned customers, convert leads where permitted, and review each customer's profile and history." },
-  payments: { title: "Payments - Assigned Customers", subtitle: "Add payments for your customers, track partial payments, and view their payment history." },
-  communication: { title: "Communication - My Activity", subtitle: "Send email, WhatsApp, and calls to your leads and customers, and view your own communication history." },
-  tasks: { title: "My Tasks & Follow-ups", subtitle: "View tasks assigned to you, schedule follow-ups, set reminders, and mark tasks complete." }
+  leads: { title: "Leads", subtitle: "View leads assigned to you, add new leads manually, update status, and edit lead details." },
+  customers: { title: "Customers", subtitle: "View your customers, convert leads where permitted, and review each customer's profile and history." },
+  payments: { title: "Payments", subtitle: "Add payments for your customers, track partial payments, and view their payment history." },
+  communication: { title: "Communication", subtitle: "Send email, WhatsApp, and calls to your leads and customers, and view your own communication history." },
+  tasks: { title: "Tasks & Follow-ups", subtitle: "View tasks assigned to you, schedule follow-ups, set reminders, and mark tasks complete." }
 };
 
 // ---- Smart Calendar -------------------------------------------------------
@@ -518,10 +501,22 @@ function scopeRowsForCalendar(rows: RowRecord[]): RowRecord[] {
   return rows;
 }
 
-function pseudoDateForRow(id: string): string {
-  const seed = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const offset = (seed % 41) - 20;
-  return toDateKey(addDays(new Date(), offset));
+// Spec 19/35 (no fake data): this used to be `pseudoDateForRow(id)`, which
+// hashed a record's id into a date somewhere in a +/-20 day window and
+// pinned the record to the calendar there. Every lead, customer, payment
+// and task on the calendar was therefore sitting on an INVENTED date that
+// changed nothing in the backend and matched nothing real.
+//
+// Records now appear on the date the data layer actually gives them - the
+// task's due date, the lead/customer/invoice's creation date, the
+// message's timestamp. A record with no usable date simply does not
+// appear on the grid, which is the honest empty state.
+function realDateKeyForRow(row: RowRecord): string | null {
+  const raw = row._dueDate || row._createdAt || "";
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return toDateKey(parsed);
 }
 
 function canSeeReminder(reminder: Reminder, role: Role, currentUserName: string, teamNames: string[]): boolean {
@@ -555,37 +550,57 @@ function createInitialNotes(): CalendarNote[] {
   return [];
 }
 
+// Spec 23 (dark-mode audit): every badge tint carries a matching dark
+// ring as well as a dark background/text. Without `dark:ring-*` the light
+// 200-level ring stayed on the dark badge, which read as a bright halo.
 const badgeStyles: Record<string, string> = {
-  Active: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  Invited: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
-  Inactive: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200",
-  Hot: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200",
-  Warm: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
-  New: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200",
-  Converted: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  Partial: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
-  Open: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200",
-  Done: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  Connected: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  Configured: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200"
+  Active: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Invited: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  Inactive: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Hot: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
+  Warm: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
+  Cold: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-900",
+  Lost: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  New: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Converted: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Prospect: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Churned: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Draft: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Sent: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Paid: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Cancelled: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Queued: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  Failed: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
+  Pending: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  "In Progress": "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  High: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
+  Medium: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Partial: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  Open: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
+  Done: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Connected: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Configured: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900"
 };
 
 const CHART_PALETTE = ["#0F766E", "#14B8A6", "#F97316", "#0EA5E9", "#8B5CF6", "#F59E0B"];
 
 const REMINDER_PRIORITY_STYLES: Record<ReminderPriority, string> = {
-  Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200",
-  Medium: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200",
-  High: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
-  Urgent: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200"
+  Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
+  Medium: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  High: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
+  Urgent: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900"
 };
 
-const CALENDAR_ITEM_DOTS: Array<{ key: "leads" | "customers" | "calls" | "tasks" | "reminders" | "notes"; label: string; color: string }> = [
-  { key: "leads", label: "Leads", color: "bg-orange-500" },
-  { key: "customers", label: "Customers", color: "bg-pink-500" },
-  { key: "calls", label: "Calls", color: "bg-sky-500" },
+// Customers and notes are deliberately absent here: on the calendar grid a
+// customer is drawn as an initials chip and a note as a sticky-note icon
+// (spec 12/17), so only these four still render as a labelled count.
+const CALENDAR_ITEM_DOTS: Array<{ key: "leads" | "calls" | "tasks" | "reminders"; label: string; color: string }> = [
+  { key: "reminders", label: "Follow-ups", color: "bg-red-500" },
   { key: "tasks", label: "Tasks", color: "bg-violet-500" },
-  { key: "reminders", label: "Reminders", color: "bg-red-500" },
-  { key: "notes", label: "Notes", color: "bg-amber-500" }
+  { key: "calls", label: "Calls", color: "bg-sky-500" },
+  { key: "leads", label: "Leads", color: "bg-orange-500" }
 ];
 
 // Spec 19/35: no seeded activity, follow-up, or "today" figures live here
@@ -622,7 +637,13 @@ function recentActivityToEntry(entry: RecentActivityEntry, index: number): Activ
 
 function createInitialRecords(): RecordsByModule {
   return modules.reduce((records, module) => {
-    records[module.key] = module.rows.map((row, index) => ({ id: `${module.key}-${index}`, ...row }));
+    // Spec 19/35 (no fake data): modules start EMPTY and stay empty until
+    // the real API responds. They used to be seeded with hand-written demo
+    // rows ("Priya Sharma / Meta Lead Ads", "Acme Learning", ...), which
+    // meant every table rendered invented records on first paint and kept
+    // showing them if the request failed. An honest empty state is the
+    // correct answer to "no data yet" and to "the API is unreachable".
+    records[module.key] = [];
     return records;
   }, {} as RecordsByModule);
 }
@@ -1046,15 +1067,26 @@ function rowToUserUpdatePayload(formData: Record<string, string>): Record<string
 }
 
 // ---- Audit logs <-> backend system API (read-only) --------------------
+// Spec 33: the backend's raw action enum (CREATE/UPDATE/DELETE/LOGIN) is
+// internal vocabulary. The log shows what happened in plain words.
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  CREATE: "Created",
+  UPDATE: "Updated",
+  DELETE: "Removed",
+  LOGIN: "Signed in",
+  OTHER: "Other"
+};
+
 function auditLogToRow(entry: Record<string, unknown>): RowRecord {
   const actor = entry.actor;
   const createdAt = typeof entry.created_at === "string" ? entry.created_at : "";
   return {
     id: String(entry.id),
     Actor: typeof actor === "number" ? `User #${actor}` : "System",
-    Action: String(entry.action ?? "OTHER"),
+    Action: AUDIT_ACTION_LABELS[String(entry.action ?? "OTHER")] ?? "Other",
     Description: String(entry.description ?? ""),
     Time: createdAt ? new Date(createdAt).toLocaleString() : "",
+    _createdAt: createdAt,
     IP: String(entry.ip_address ?? "") || "—"
   };
 }
@@ -1103,7 +1135,10 @@ function taskToRow(task: Record<string, unknown>): RowRecord {
     Task: String(task.title ?? ""),
     Priority: TASK_PRIORITY_LABELS[priority] ?? priority,
     Status: TASK_STATUS_LABELS[status] ?? status,
-    Due: dueDate ? new Date(dueDate).toLocaleDateString() : ""
+    Due: dueDate ? new Date(dueDate).toLocaleDateString() : "",
+    // Raw ISO date, kept hidden — the calendar places a task on its real
+    // due date (see realDateKeyForRow).
+    _dueDate: dueDate
   };
 }
 
@@ -1135,7 +1170,13 @@ function emailMessageToRow(message: Record<string, unknown>): RowRecord {
     Recipient: String(message.recipient_label ?? message.to_email ?? ""),
     Subject: String(message.subject ?? ""),
     Message: String(message.body ?? ""),
-    Status: EMAIL_STATUS_LABELS[status] ?? status
+    Status: EMAIL_STATUS_LABELS[status] ?? status,
+    // Hidden — lets the calendar place a message on the day it was
+    // actually sent/queued rather than on an invented date.
+    _createdAt:
+      (typeof message.sent_at === "string" && message.sent_at) ||
+      (typeof message.created_at === "string" && message.created_at) ||
+      ""
   };
 }
 
@@ -1238,7 +1279,6 @@ const VIEW_ACTION_LABELS = new Set([
   "Interaction History",
   "Call Logs",
   "WhatsApp",
-  "Team Calendar",
   "View Log"
 ]);
 
@@ -1294,7 +1334,14 @@ const FORM_ONLY_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
   users: ["Password"]
 };
 
+// Spec 13/33: the payments grid shows the customer's NAME and the due
+// date, not the raw internal customer id — an end user should never be
+// asked to read a database key. Both values are derived in
+// `activeRecords` below from records already loaded for this role.
+const PAYMENT_TABLE_COLUMNS = ["Invoice", "Customer", "Total", "Paid", "Balance", "Due", "Status"];
+
 function tableColumnsForRole(module: ModuleConfig, role: Role): string[] {
+  if (module.key === "payments") return PAYMENT_TABLE_COLUMNS;
   let base = role === "employee" ? employeeSafeColumns(module) : module.columns;
   // Spec 11: lead source is Super-Admin-only. The backend already omits
   // `source` from a Manager's lead payloads, so rendering the column for
@@ -1304,6 +1351,28 @@ function tableColumnsForRole(module: ModuleConfig, role: Role): string[] {
   }
   const formOnly = FORM_ONLY_COLUMNS[module.key];
   return formOnly ? base.filter((column) => !formOnly.includes(column)) : base;
+}
+
+// Spec 15/26 - what a search box is allowed to match on.
+//
+// Search must never widen what a role can see. Matching a query against
+// every value on a row (including columns hidden from this role, and the
+// internal `_`-prefixed keys the API mappers attach) means a Manager can
+// type a lead source and watch the list filter, learning a value the
+// backend deliberately withheld. So both the module search and the global
+// search match ONLY the columns this role is actually shown, plus a small
+// allow-list of extra fields that are meaningful to search but not worth
+// a column of their own.
+const EXTRA_SEARCHABLE_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
+  payments: ["Invoice", "Customer", "Due"],
+  users: ["Email"],
+  team: ["Email"]
+};
+
+function searchableColumnsFor(module: ModuleConfig, role: Role): string[] {
+  const visible = tableColumnsForRole(module, role);
+  const extra = (EXTRA_SEARCHABLE_COLUMNS[module.key] ?? []).filter((column) => !visible.includes(column));
+  return [...visible, ...extra];
 }
 
 // Spec 8/23: columns whose value set is a real enum render as a <select>,
@@ -1344,9 +1413,15 @@ const FIELD_OPTIONS: Partial<Record<ModuleKey, Record<string, string[]>>> = {
 };
 
 // Fields a form may legitimately leave blank. A password is only set at
-// creation time; an edit that leaves it empty keeps the existing one.
+// creation time; an edit that leaves it empty keeps the existing one — so
+// Password is NOT listed here (this list applies to every mode), and the
+// create/edit distinction is made by isFieldRequired() below instead.
+// Listing it here made it optional at CREATE too, which let the form
+// submit `password: ""` and bounce off the backend's required, min-length-8
+// `password` field (UserCreateSerializer) as a server error, instead of
+// being caught by the form's own inline validation.
 const OPTIONAL_FIELDS: Partial<Record<ModuleKey, string[]>> = {
-  users: ["Password", "Phone"],
+  users: ["Phone"],
   leads: ["Owner"],
   reports: ["Description"]
 };
@@ -1380,10 +1455,20 @@ const EMPLOYEE_BLOCKED_ACTION_PATTERN =
 // export until a real permission concept exists (do not invent one here).
 const EXPORT_ACTION_PATTERN = /export|download|google sheets/i;
 
+// The generic "Send Email" header action opened the shared RecordModal
+// with a free-text Recipient field — a second, weaker compose box beside
+// the Communication Center's entity-addressed one, which every role now
+// has. It is dropped for all three roles rather than only for Employees
+// (spec: no duplicate components for existing functionality). The
+// underlying queue/send capability is untouched; it is reached through
+// the Email workspace.
+const DUPLICATE_COMPOSE_ACTION_PATTERN = /^send email$/i;
+
 function visibleActionsForRole(actions: ModuleConfig["actions"], role: Role): ModuleConfig["actions"] {
-  if (role === "superadmin") return actions;
-  if (role === "employee") return actions.filter((action) => !EMPLOYEE_BLOCKED_ACTION_PATTERN.test(action.label));
-  return actions.filter((action) => !EXPORT_ACTION_PATTERN.test(action.label));
+  const base = actions.filter((action) => !DUPLICATE_COMPOSE_ACTION_PATTERN.test(action.label));
+  if (role === "superadmin") return base;
+  if (role === "employee") return base.filter((action) => !EMPLOYEE_BLOCKED_ACTION_PATTERN.test(action.label));
+  return base.filter((action) => !EXPORT_ACTION_PATTERN.test(action.label));
 }
 
 function backendRoleToRole(role: BackendRole): Role {
@@ -1875,6 +1960,17 @@ function SuperAdminPage({
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
   const [dark, setDark] = useState(false);
+  // Spec 23 (dark-mode audit): the `dark` class has to live on <html>, not
+  // on <main>. Two surfaces render through createPortal(document.body) -
+  // the DataTable row menu and the calendar's date-details panel - so with
+  // the class scoped to <main> they escaped it and painted light-on-light
+  // while the rest of the app was dark. Hoisting it also lets the body
+  // background and the `color-scheme` declaration in globals.css apply.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("dark", dark);
+    return () => root.classList.remove("dark");
+  }, [dark]);
   const [mobileNav, setMobileNav] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [reminders, setReminders] = useState<Reminder[]>(() => createInitialReminders());
@@ -1886,7 +1982,13 @@ function SuperAdminPage({
   // written to the URL, localStorage, or sessionStorage.
   const [commFocus, setCommFocus] = useState<CommFocus | null>(null);
 
-  const attendanceTracking = useAttendanceTracking(role !== "superadmin", onLogout);
+  // Spec 7: "Super Admin sees org-wide records (INCLUDING THEIR OWN)".
+  // Tracking was previously switched off for Super Admin, so their own
+  // working time was never recorded and the org-wide report could not
+  // contain it. The backend session/heartbeat endpoints are per-user with
+  // no role restriction, and every call here is best-effort, so this is
+  // simply the same treatment the other two roles already had.
+  const attendanceTracking = useAttendanceTracking(true, onLogout);
 
   const currentUserName = displayNameFor(currentUser);
   const teamNames = useMemo(
@@ -1949,9 +2051,40 @@ function SuperAdminPage({
 
     accounts
       .listUsers()
-      .then((page) => {
+      .then(async (page) => {
         if (cancelled) return;
-        const rows = page.results.map(userToRow);
+        let results = page.results;
+        // Spec 3/12: `GET /auth/users/` is deliberately org-wide on the
+        // backend ("the org chart is visible to everyone" — see
+        // UserListCreateView), but a Manager's panel must only ever
+        // contain their OWN team. Narrow it here, at the single source
+        // every downstream surface reads, using the same real
+        // `managed_employees` list the assignment modal already trusts —
+        // so the Team table, the lead-assignment target list and the
+        // calendar's assignee options are all scoped once rather than
+        // each re-deriving (or forgetting) the rule.
+        //
+        // Without this a Manager was offered every employee in the
+        // organization as an assignment target, which the backend then
+        // refused (services.assign_leads() restricts a Manager to their
+        // own managed_user_ids()) — the UI was advertising a permission
+        // that does not exist.
+        if (role === "manager" && currentUser?.id) {
+          const selfId = String(currentUser.id);
+          let allowed: Set<string>;
+          try {
+            const profile = await accounts.getStaffProfile(currentUser.id);
+            allowed = new Set([selfId, ...(profile.managed_employees ?? []).map((member) => String(member.id))]);
+          } catch {
+            // Team membership could not be confirmed. Fall back to the
+            // manager alone rather than to the whole organization —
+            // failing closed is the only safe direction here.
+            allowed = new Set([selfId]);
+          }
+          if (cancelled) return;
+          results = results.filter((user) => allowed.has(String(user.id)));
+        }
+        const rows = results.map(userToRow);
         setRecordsByModule((current) => ({ ...current, users: rows, team: rows }));
       })
       .catch((err) => {
@@ -2074,18 +2207,60 @@ function SuperAdminPage({
   const notifiedReminderIds = useRef<Set<string>>(new Set());
 
   const activeModule = modules.find((module) => module.key === activeKey) ?? modules[0];
-  const activeRecords = useMemo(() => recordsByModule[activeKey] ?? [], [recordsByModule, activeKey]);
+  // Spec 13/14 - payment prioritisation, for EVERY role (this previously
+  // existed only inside the Employee-only payments view, so a Manager or
+  // Super Admin got an unordered ledger with no overdue signal at all).
+  // Each invoice is decorated with the customer's display name, its due
+  // date, an overdue flag, and a priority band; the sort below then puts
+  // overdue first, then the rest of the outstanding balances by due date,
+  // then everything already settled. Nothing is filtered out — the full
+  // ledger and all of its row actions are still there, just ordered.
+  const activeRecords = useMemo<RowRecord[]>(() => {
+    const base = recordsByModule[activeKey] ?? [];
+    if (activeKey !== "payments") return base;
+    const nameById = new Map((recordsByModule.customers ?? []).map((customer) => [customer.id, customer.Customer]));
+    const today = toDateKey(new Date());
+    return base.map((row) => {
+      const settled = row.Status === "Paid" || row.Status === "Cancelled";
+      const overdue = Boolean(row._dueDate) && row._dueDate < today && !settled;
+      const outstanding = !settled && parseCurrency(row.Balance) > 0;
+      return {
+        ...row,
+        Customer: nameById.get(row["Customer ID"]) ?? `Customer #${row["Customer ID"]}`,
+        Due: row._dueDate || "—",
+        _overdue: overdue ? "1" : "",
+        _priority: overdue ? "0" : outstanding ? "1" : "2"
+      };
+    });
+  }, [recordsByModule, activeKey]);
   const Icon = activeModule.icon;
   const employeeCopy = role === "employee" ? EMPLOYEE_MODULE_COPY[activeModule.key] : undefined;
   const displayModuleTitle = employeeCopy?.title ?? activeModule.title;
   const displayModuleSubtitle = employeeCopy?.subtitle ?? activeModule.subtitle;
 
   const rows = useMemo(() => {
-    const lowerQuery = query.toLowerCase();
+    const lowerQuery = query.trim().toLowerCase();
+    // Spec 15/26: module search filters on the fields this ROLE can
+    // actually see. Matching on Object.values() also searched columns the
+    // role is not shown (a Manager's hidden lead Source) and internal
+    // `_`-prefixed keys, which let a search confirm the existence of a
+    // value the user is not permitted to read.
+    const searchable = searchableColumnsFor(activeModule, role);
     const filtered = activeRecords.filter((row) => {
-      const matchesQuery = !lowerQuery || Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
+      const matchesQuery =
+        !lowerQuery || searchable.some((column) => (row[column] ?? "").toLowerCase().includes(lowerQuery));
       return matchesQuery && rowMatchesFilter(row, filter);
     });
+
+    // Payments default to the priority order above until the user picks a
+    // column to sort by; every other module keeps its API order.
+    if (!sort && activeKey === "payments") {
+      return [...filtered].sort(
+        (a, b) =>
+          (a._priority ?? "9").localeCompare(b._priority ?? "9") ||
+          (a._dueDate || "9999-99-99").localeCompare(b._dueDate || "9999-99-99")
+      );
+    }
 
     if (!sort) return filtered;
 
@@ -2099,7 +2274,7 @@ function SuperAdminPage({
       return sort.direction === "asc" ? comparison : -comparison;
     });
     return sorted;
-  }, [activeRecords, query, filter, sort]);
+  }, [activeRecords, query, filter, sort, activeKey, activeModule, role]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pagedRows = useMemo(() => rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [rows, page]);
@@ -2149,16 +2324,19 @@ function SuperAdminPage({
     const results: Array<{ moduleKey: ModuleKey; moduleTitle: string; row: RowRecord; label: string }> = [];
     for (const mod of visibleModules) {
       const moduleRows = recordsByModule[mod.key] ?? [];
+      // Same RBAC rule as the module search: only the columns this role is
+      // shown, so a global search can never surface a withheld value.
+      const searchable = searchableColumnsFor(mod, role);
       for (const row of moduleRows) {
-        const matches = Object.values(row).some((value) => value.toLowerCase().includes(lowerQuery));
+        const matches = searchable.some((column) => (row[column] ?? "").toLowerCase().includes(lowerQuery));
         if (matches) {
-          results.push({ moduleKey: mod.key, moduleTitle: mod.title, row, label: row[mod.columns[0]] ?? row.id });
+          results.push({ moduleKey: mod.key, moduleTitle: mod.title, row, label: row[searchable[0]] ?? row.id });
           if (results.length >= 8) return results;
         }
       }
     }
     return results;
-  }, [recordsByModule, globalQuery, visibleModules]);
+  }, [recordsByModule, globalQuery, visibleModules, role]);
 
   useEffect(() => {
     setPage(1);
@@ -2317,8 +2495,8 @@ function SuperAdminPage({
       ...current,
       [moduleKey]: (current[moduleKey] ?? []).filter((item) => item.id !== row.id)
     }));
-    showToast({ type: "success", message: `${targetModule.title} record deleted.` });
-    logActivity(`Deleted a ${targetModule.title} record.`, moduleKey, null);
+    showToast({ type: "success", message: `Removed from ${targetModule.title}.` });
+    logActivity(`Entry removed from ${targetModule.title}.`, moduleKey, null);
   }
 
   function openCreateModal() {
@@ -2580,8 +2758,8 @@ function SuperAdminPage({
         ...current,
         [activeKey]: [newRecord, ...(current[activeKey] ?? [])]
       }));
-      showToast({ type: "success", message: `${activeModule.title} record created.` });
-      logActivity(`Created a new ${activeModule.title} record.`, activeKey, newRecord);
+      showToast({ type: "success", message: "Changes saved." });
+      logActivity(`New entry added in ${activeModule.title}.`, activeKey, newRecord);
       setModalOpen(false);
       return;
     }
@@ -2791,8 +2969,8 @@ function SuperAdminPage({
       ...current,
       [activeKey]: (current[activeKey] ?? []).map((row) => (row.id === editingRecord.id ? updatedRecord : row))
     }));
-    showToast({ type: "success", message: `${activeModule.title} record updated.` });
-    logActivity(`Updated a ${activeModule.title} record.`, activeKey, updatedRecord);
+    showToast({ type: "success", message: "Changes saved." });
+    logActivity(`Entry updated in ${activeModule.title}.`, activeKey, updatedRecord);
     setModalOpen(false);
     setEditingRecord(null);
   }
@@ -2941,8 +3119,8 @@ function SuperAdminPage({
       ...current,
       [activeKey]: (current[activeKey] ?? []).filter((item) => item.id !== row.id)
     }));
-    showToast({ type: "success", message: `${activeModule.title} record deleted.` });
-    logActivity(`Deleted a ${activeModule.title} record.`, activeKey, null);
+    showToast({ type: "success", message: `Removed from ${activeModule.title}.` });
+    logActivity(`Entry removed from ${activeModule.title}.`, activeKey, null);
   }
 
   function duplicateRecord(row: RowRecord) {
@@ -2952,7 +3130,7 @@ function SuperAdminPage({
       [activeKey]: [clone, ...(current[activeKey] ?? [])]
     }));
     showToast({ type: "success", message: `${activeModule.title} record duplicated.` });
-    logActivity(`Duplicated a ${activeModule.title} record.`, activeKey, clone);
+    logActivity(`Entry duplicated in ${activeModule.title}.`, activeKey, clone);
   }
 
   function cycleFilter() {
@@ -3132,6 +3310,16 @@ function SuperAdminPage({
       return;
     }
 
+    // "Team Calendar" used to fall into the generic view branch and open
+    // whichever task happened to be first in the list. It now does what it
+    // says: switches to the Calendar module, which is already scoped per
+    // role. (Employees never see this action - see
+    // EMPLOYEE_BLOCKED_ACTION_PATTERN.)
+    if (label === "Team Calendar") {
+      selectModule("calendar");
+      return;
+    }
+
     if (VIEW_ACTION_LABELS.has(label)) {
       if (activeRecords[0]) {
         openViewModal(activeRecords[0]);
@@ -3275,7 +3463,7 @@ function SuperAdminPage({
 
   return (
     <AttendanceContext.Provider value={attendanceTracking}>
-    <main className={cn(dark && "dark")}>
+    <main>
       <div className="min-h-screen bg-background text-foreground transition-colors">
         <TopNavbar
           role={role}
@@ -3327,7 +3515,7 @@ function SuperAdminPage({
             <div className="border-b bg-background/60 px-4 py-4 xl:px-8">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600 dark:text-teal-300">
                     Qualify Learn | {ROLE_LABEL[role]}
                   </p>
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
@@ -3472,8 +3660,19 @@ function SuperAdminPage({
                         customers={recordsByModule.customers ?? []}
                         onSendReminder={sendPaymentReminderForCustomer}
                       />
-                    ) : role === "employee" && activeKey === "communication" ? (
-                      <EmployeeCommunicationCenter
+                    ) : activeKey === "communication" ? (
+                      // Spec 14/36: one Communication Center for all three
+                      // roles instead of the Employee getting the real
+                      // workspace and Manager/Super Admin a raw
+                      // Recipient/Subject/Message/Status grid. The contact
+                      // list is built from the leads/customers already
+                      // scoped for this role and every send is addressed by
+                      // entity id, so the RBAC boundary is unchanged; this
+                      // is presentation consistency only. It also makes the
+                      // Email/Call/WhatsApp buttons on a customer profile
+                      // land somewhere real for Manager/Super Admin, which
+                      // they previously did not.
+                      <CommunicationCenter
                         leads={recordsByModule.leads ?? []}
                         customers={recordsByModule.customers ?? []}
                         focus={commFocus}
@@ -3571,8 +3770,9 @@ function SuperAdminPage({
       </div>
 
       <AnimatePresence>
-        {modalOpen && role === "employee" && activeKey === "customers" && modalMode === "view" && editingRecord ? (
-          <EmployeeCustomerProfileModal
+        {modalOpen && activeKey === "customers" && modalMode === "view" && editingRecord ? (
+          <CustomerProfileModal
+            role={role}
             customer={editingRecord}
             payments={recordsByModule.payments ?? []}
             communicationRows={recordsByModule.communication ?? []}
@@ -3601,6 +3801,7 @@ function SuperAdminPage({
           <LeadAssignmentModal
             leads={recordsByModule.leads ?? []}
             users={recordsByModule.users ?? []}
+            role={role}
             onClose={() => setAssignmentOpen(false)}
             onAssigned={applyLeadAssignment}
             onError={(message) => showToast({ type: "error", message })}
@@ -3775,7 +3976,7 @@ function TopNavbar({
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
-        {role !== "superadmin" ? <AttendanceNavbarWidget /> : null}
+        <AttendanceNavbarWidget />
 
         <div className="relative">
           <button
@@ -3810,7 +4011,7 @@ function TopNavbar({
                                   if (item.row) onViewActivity(item.moduleKey, item.row);
                                   setNotifOpen(false);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                               >
                                 <Eye className="size-3" />
                                 View
@@ -3820,7 +4021,7 @@ function TopNavbar({
                                   if (item.row) onEditActivity(item.moduleKey, item.row);
                                   setNotifOpen(false);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                               >
                                 <Pencil className="size-3" />
                                 Edit
@@ -3830,7 +4031,7 @@ function TopNavbar({
                                   if (item.row) onDeleteActivity(item.moduleKey, item.row);
                                   setNotifOpen(false);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                               >
                                 <Trash2 className="size-3" />
                                 Delete
@@ -3843,7 +4044,7 @@ function TopNavbar({
                                 onCreateForModule(item.moduleKey);
                                 setNotifOpen(false);
                               }}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950"
                             >
                               <Plus className="size-3" />
                               New
@@ -3889,7 +4090,7 @@ function TopNavbar({
                     setProfileOpen(false);
                     onLogout();
                   }}
-                  className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                  className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                 >
                   <LogOut className="size-4" />
                   Logout
@@ -4377,7 +4578,10 @@ function MyAttendanceRecord() {
 function AttendanceModule({ role }: { role: Role }) {
   return (
     <div className="space-y-4">
-      {role !== "superadmin" ? <MyAttendanceRecord /> : null}
+      {/* Own record first for every role, then whatever wider scope the
+          role is permitted: Manager -> their team, Super Admin -> the
+          organisation (which now includes the Super Admin's own day). */}
+      <MyAttendanceRecord />
       {role === "manager" ? <ManagerTeamAttendanceSection /> : null}
       {role === "superadmin" ? <SuperAdminAttendanceSection /> : null}
     </div>
@@ -4735,14 +4939,22 @@ function LeadAssignmentModal({
   users,
   onClose,
   onAssigned,
-  onError
+  onError,
+  role
 }: {
   leads: RowRecord[];
   users: RowRecord[];
   onClose: () => void;
   onAssigned: (updated: Array<Record<string, unknown>>, targetLabel: string) => void;
   onError: (message: string) => void;
+  role: Role;
 }) {
+  // RBAC: routing a lead TO a manager is a Super Admin action. A Manager
+  // assigns within their own team only, so they never see the
+  // manager/employee switch or the "via manager" step at all - the modal
+  // opens straight onto their employees. (The backend enforces this too;
+  // this stops the UI from offering something it would reject.)
+  const canTargetManagers = role === "superadmin";
   const [query, setQuery] = useState("");
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -4856,7 +5068,9 @@ function LeadAssignmentModal({
           <div>
             <h3 className="text-xl font-bold">Assign Leads</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              Choose the leads to route, then the manager or employee who should own them.
+              {canTargetManagers
+                ? "Choose the leads to route, then the manager or employee who should own them."
+                : "Choose the leads to route, then the employee on your team who should own them."}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="inline-flex size-9 items-center justify-center rounded-lg border">
@@ -4923,8 +5137,8 @@ function LeadAssignmentModal({
           <section className="space-y-4 rounded-xl border bg-background p-4">
             <div>
               <p className="text-sm font-semibold">Assign to</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {(["manager", "employee"] as const).map((option) => (
+              <div className={cn("mt-2 grid gap-2", canTargetManagers ? "grid-cols-2" : "grid-cols-1")}>
+                {(canTargetManagers ? (["manager", "employee"] as const) : (["employee"] as const)).map((option) => (
                   <button
                     key={option}
                     onClick={() => {
@@ -4944,7 +5158,7 @@ function LeadAssignmentModal({
               </div>
             </div>
 
-            {targetType === "employee" ? (
+            {targetType === "employee" && canTargetManagers ? (
               <label className="block space-y-1.5">
                 <span className="text-sm font-semibold">Via manager (optional)</span>
                 <select
@@ -4972,7 +5186,7 @@ function LeadAssignmentModal({
             <label className="block space-y-1.5">
               <span className="text-sm font-semibold">
                 {targetType === "manager" ? "Manager" : "Employee"}
-                <span className="ml-0.5 text-red-600">*</span>
+                <span className="ml-0.5 text-red-600 dark:text-red-400">*</span>
               </span>
               <select
                 value={targetUserId}
@@ -5177,7 +5391,7 @@ function AnalyticsDashboard({
             <Star className={cn("size-4", favorited ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
           </button>
           <button onClick={onRefresh} aria-label="Refresh dashboard">
-            <RefreshCw className="size-4 text-muted-foreground transition hover:text-teal-600" />
+            <RefreshCw className="size-4 text-muted-foreground transition hover:text-teal-600 dark:hover:text-teal-300" />
           </button>
         </div>
       </div>
@@ -5401,14 +5615,14 @@ function AnalyticsDashboard({
                     </span>
                     <button
                       onClick={() => onCompleteReminder(reminder.id)}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                       aria-label="Mark reminder complete"
                     >
                       <Check className="size-4" />
                     </button>
                     <button
                       onClick={() => onSnoozeReminder(reminder.id)}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                       aria-label="Snooze reminder"
                     >
                       <BellRing className="size-4" />
@@ -5551,7 +5765,7 @@ function EmployeePaymentsView({
 }
 
 // ===========================================================================
-// Employee Communication Center — Email / Calling / WhatsApp
+// Communication Center — Email / Calling / WhatsApp
 // ===========================================================================
 //
 // Replaces the old EmployeeCommunicationView, which was built before the
@@ -5562,9 +5776,10 @@ function EmployeePaymentsView({
 // value: every action names the ENTITY (`{ lead: id }` / `{ customer: id }`)
 // and the backend resolves the address/number server-side.
 //
-// Rendered only for `role === "employee" && activeKey === "communication"`
-// (same one-branch-per-role convention as SuperAdminCommunicationAuditSection
-// in the `audit` module). Manager/Super Admin keep the generic module view.
+// Rendered for the `communication` module at all three roles. The contact
+// list is built from the leads/customers already scoped for the logged-in
+// user, and every list endpoint it reads is server-scoped, so the role
+// boundary is the backend's - this component adds none of its own.
 //
 // Three channels, three genuinely separate full-width workspaces behind one
 // channel switcher — never mixed into a single list. There is no backend
@@ -5825,7 +6040,7 @@ function CommContactPicker({
   );
 }
 
-function EmployeeCommunicationCenter({
+function CommunicationCenter({
   leads,
   customers,
   focus,
@@ -6935,7 +7150,22 @@ function CommQuickActions({
 // canSeeReminder/canSeeNote before they reach this component). No Owner
 // field is ever rendered here. Visual language matches RecordModal
 // (same backdrop, card chrome, DetailRow list style).
-function EmployeeCustomerProfileModal({
+// Spec 13/27 - the full customer profile. This started life as an
+// Employee-only view; Manager and Super Admin were left with the plain
+// record form, which meant the LOWEST-privilege role had the DEEPEST
+// customer view. It is now the customer profile for every role, and the
+// role only decides how much of it is filled in:
+//   * Employee  - contact detail stays a capability label ("On file
+//                 (protected)"), because the backend sends them no
+//                 address/number at all; no Owner.
+//   * Manager   - real contact detail where the API returned it, plus the
+//                 owning team member.
+//   * Super Admin - the same, org-wide.
+// Call recordings are listed in the spec as "where available"; this
+// backend stores no recording URL on any communication model, so nothing
+// is rendered for them rather than a fake player (see the final report).
+function CustomerProfileModal({
+  role,
   customer,
   payments,
   communicationRows,
@@ -6945,6 +7175,7 @@ function EmployeeCustomerProfileModal({
   onOpenChannel,
   onClose
 }: {
+  role: Role;
   customer: RowRecord;
   payments: RowRecord[];
   communicationRows: RowRecord[];
@@ -6980,6 +7211,12 @@ function EmployeeCustomerProfileModal({
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   const pendingBalance = custPayments.reduce((sum, row) => sum + parseCurrency(row.Balance), 0);
   const todayKey = toDateKey(new Date());
+  // Only Manager/Super Admin ever receive a raw address or number from the
+  // API; for an Employee `_email`/`_phone` are simply absent, so the
+  // capability label is the honest thing to show.
+  const emailLine = role === "employee" ? contactCapabilityLabel(customer._canEmail) : customer._email || contactCapabilityLabel(customer._canEmail);
+  const phoneLine = role === "employee" ? contactCapabilityLabel(customer._canCall) : customer._phone || contactCapabilityLabel(customer._canCall);
+  const ownerLine = customer.Owner && customer.Owner !== "Unassigned" ? customer.Owner : "Unassigned";
 
   return (
     <motion.div
@@ -7010,10 +7247,13 @@ function EmployeeCustomerProfileModal({
           <section>
             <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Basic Details</h4>
             <div className="grid gap-3 sm:grid-cols-2">
-              <DetailRow title="Email" subtitle={contactCapabilityLabel(customer._canEmail)} />
-              <DetailRow title="Phone" subtitle={contactCapabilityLabel(customer._canCall)} />
+              <DetailRow title="Email" subtitle={emailLine} />
+              <DetailRow title="Phone" subtitle={phoneLine} />
               <DetailRow title="Industry / Category" subtitle={customer.Industry || "—"} />
               <DetailRow title="Status" subtitle={customer.Status || "—"} badge={customer.Status || undefined} />
+              {/* Spec 10: an Employee never sees who else a record belongs
+                  to; Manager/Super Admin do, within their own scope. */}
+              {role !== "employee" ? <DetailRow title="Owner" subtitle={ownerLine} /> : null}
             </div>
           </section>
 
@@ -7143,7 +7383,7 @@ function ManagerTeamAttendanceSection() {
         <p className="text-sm text-muted-foreground">Live working hours for everyone on your team, today.</p>
       </div>
       {error ? (
-        <p className="py-6 text-center text-sm text-red-600">{error}</p>
+        <p className="py-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : rows === null ? (
         <div className="flex h-32 items-center justify-center">
           <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -7307,7 +7547,7 @@ function SuperAdminAttendanceSection() {
           </div>
         </div>
         {error ? (
-          <p className="py-6 text-center text-sm text-red-600">{error}</p>
+          <p className="py-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
         ) : rows === null ? (
           <div className="flex h-32 items-center justify-center">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -7428,7 +7668,7 @@ function SuperAdminAttendanceSection() {
 // Deliberately NO new backend aggregation endpoint: the per-channel list
 // endpoints are individually filterable (owner / direction / status / date
 // range / entity), so one cross-channel thread is assembled here by merging
-// them on timestamp — the same client-side merge EmployeeCustomerProfileModal's
+// them on timestamp — the same client-side merge the customer profile's
 // Interaction History already does, and one less privileged surface to secure.
 
 type CommAuditChannel = "Email" | "Call" | "WhatsApp";
@@ -7474,16 +7714,16 @@ const COMM_AUDIT_CHANNEL_ICON: Record<CommAuditChannel, React.ElementType> = {
 // communication statuses are UPPER_SNAKE. Keeping them here avoids widening a
 // map other modules depend on.
 const COMM_AUDIT_STATUS_STYLES: Record<string, string> = {
-  SENT: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200",
-  DELIVERED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  READ: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200",
-  FAILED: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200",
-  NO_ANSWER: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
-  BUSY: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200",
-  QUEUED: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
-  RINGING: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200",
-  IN_PROGRESS: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200"
+  SENT: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  DELIVERED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  READ: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  FAILED: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
+  NO_ANSWER: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
+  BUSY: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
+  QUEUED: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  RINGING: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
+  IN_PROGRESS: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900"
 };
 
 function commAuditStatusClass(value: string) {
@@ -7746,7 +7986,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
       </div>
 
       {error ? (
-        <p className="py-10 text-center text-sm text-red-600">{error}</p>
+        <p className="py-10 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : events === null ? (
         <div className="flex h-40 items-center justify-center">
           <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -7958,17 +8198,23 @@ function SmartCalendarModule({
       if (!map.has(key)) map.set(key, emptyDayData());
       return map.get(key)!;
     }
-    scopeRowsForCalendar(recordsByModule.leads ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).leads.push(row));
-    scopeRowsForCalendar(recordsByModule.customers ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).customers.push(row));
-    scopeRowsForCalendar(recordsByModule.payments ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).payments.push(row));
-    scopeRowsForCalendar(recordsByModule.tasks ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).tasks.push(row));
-    scopeRowsForCalendar(recordsByModule.communication ?? []).forEach((row) => {
-      const bucket = ensure(pseudoDateForRow(row.id));
+    function place(rows: RowRecord[], onto: (bucket: CalendarDayData, row: RowRecord) => void) {
+      for (const row of scopeRowsForCalendar(rows)) {
+        const key = realDateKeyForRow(row);
+        if (!key) continue;
+        onto(ensure(key), row);
+      }
+    }
+    place(recordsByModule.leads ?? [], (bucket, row) => bucket.leads.push(row));
+    place(recordsByModule.customers ?? [], (bucket, row) => bucket.customers.push(row));
+    place(recordsByModule.payments ?? [], (bucket, row) => bucket.payments.push(row));
+    place(recordsByModule.tasks ?? [], (bucket, row) => bucket.tasks.push(row));
+    place(recordsByModule.communication ?? [], (bucket, row) => {
       bucket.communication.push(row);
       if (row.Channel === "Call") bucket.calls.push(row);
     });
     if (role === "superadmin") {
-      (recordsByModule.audit ?? []).forEach((row) => ensure(pseudoDateForRow(row.id)).audit.push(row));
+      place(recordsByModule.audit ?? [], (bucket, row) => bucket.audit.push(row));
     }
     visibleReminders.forEach((reminder) => ensure(reminder.date).reminders.push(reminder));
     visibleNotes.forEach((note) => ensure(note.date).notes.push(note));
@@ -8019,68 +8265,69 @@ function SmartCalendarModule({
     return Array.from({ length: 7 }, (_, index) => addDays(start, index));
   }, [cursor]);
 
+  // Spec 12/17 - one day-preview treatment for ALL THREE roles (this was
+  // previously an Employee-only component sitting next to a numeric-dot
+  // version for Manager/Super Admin, which is exactly the inconsistency
+  // the spec calls out):
+  //   * customers with something scheduled that day render as INITIALS
+  //     chips, never as an unexplained number;
+  //   * notes render as a single sticky-note icon, and icon + count when
+  //     there is more than one;
+  //   * every other item type (leads / calls / tasks / reminders) renders
+  //     as a labelled chip - "3 Tasks", not a bare "3" - so no marker on
+  //     the grid is unexplained for any role.
+  // The data is the same already-RBAC-scoped `dayMap`, so an Employee
+  // still only ever sees their own day, a Manager their permitted scope,
+  // and a Super Admin the organisation.
   function DayBadges({ dateKey }: { dateKey: string }) {
     const day = dayMap.get(dateKey);
     if (!day) return null;
+    const customerChips = day.customers.slice(0, 3);
+    const extraCustomers = day.customers.length - customerChips.length;
+    const noteCount = day.notes.length;
     const counts: Record<string, number> = {
       leads: day.leads.length,
-      customers: day.customers.length,
       calls: day.calls.length,
       tasks: day.tasks.length,
-      reminders: day.reminders.length,
-      notes: day.notes.length
+      reminders: day.reminders.length
     };
-    const active = CALENDAR_ITEM_DOTS.filter((item) => counts[item.key] > 0);
-    if (active.length === 0) return null;
-    return (
-      <div className="mt-1 flex flex-wrap gap-1">
-        {active.slice(0, 4).map((item) => (
-          <span
-            key={item.key}
-            title={`${counts[item.key]} ${item.label}`}
-            className={cn("inline-flex min-w-4 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white", item.color)}
-          >
-            {counts[item.key]}
-          </span>
-        ))}
-      </div>
-    );
-  }
-
-  // Employee-only date preview (spec section 9): customer initials chips
-  // for that day's follow-up-linked customers, and a StickyNote icon (with
-  // a count bubble when there's more than one note) instead of the
-  // generic numeric-count dots Manager/Super Admin still see via
-  // DayBadges above — reads from the same already-scoped `dayMap`.
-  function EmployeeDayBadges({ dateKey }: { dateKey: string }) {
-    const day = dayMap.get(dateKey);
-    if (!day) return null;
-    const initials = (name: string) =>
-      name
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase() ?? "")
-        .join("") || "?";
-    const customerChips = day.customers.slice(0, 3);
-    const noteCount = day.notes.length;
-    if (customerChips.length === 0 && noteCount === 0) return null;
+    const labelled = CALENDAR_ITEM_DOTS.filter((item) => (counts[item.key] ?? 0) > 0);
+    if (customerChips.length === 0 && noteCount === 0 && labelled.length === 0) return null;
     return (
       <div className="mt-1 flex flex-wrap items-center gap-1">
         {customerChips.map((row) => (
           <span
             key={row.id}
+            title={row.Customer || "Customer"}
             className="inline-flex min-w-5 items-center justify-center rounded-full bg-pink-500 px-1.5 py-0.5 text-[10px] font-bold text-white"
           >
-            {initials(row.Customer ?? "")}
+            {initialsFor(row.Customer ?? "")}
           </span>
         ))}
+        {extraCustomers > 0 ? (
+          <span className="inline-flex items-center rounded-full bg-pink-500/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
+            +{extraCustomers}
+          </span>
+        ) : null}
         {noteCount > 0 ? (
-          <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+          <span
+            title={noteCount === 1 ? "1 note" : `${noteCount} notes`}
+            className="inline-flex items-center gap-0.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white"
+          >
             <StickyNote className="size-3" />
             {noteCount > 1 ? noteCount : ""}
           </span>
         ) : null}
+        {labelled.slice(0, 3).map((item) => (
+          <span
+            key={item.key}
+            title={`${counts[item.key]} ${item.label}`}
+            className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold text-white", item.color)}
+          >
+            {counts[item.key]}
+            <span className="hidden sm:inline">{item.label}</span>
+          </span>
+        ))}
       </div>
     );
   }
@@ -8172,7 +8419,7 @@ function SmartCalendarModule({
                   <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs font-bold", isToday && "bg-teal-600 text-white")}>
                     {date.getDate()}
                   </span>
-                  {role === "employee" ? <EmployeeDayBadges dateKey={key} /> : <DayBadges dateKey={key} />}
+                  <DayBadges dateKey={key} />
                 </button>
               );
             })}
@@ -8291,25 +8538,30 @@ function DateDetailsPanel({
   onDeleteNote: (id: string) => void;
   onToggleNotePin: (id: string) => void;
 }) {
+  // Spec 4/36: the last right-side sliding panel in the app. Every other
+  // detail surface (customer profile, staff profile, record form) is a
+  // centred, full-width-on-mobile modal, so this one is too - same
+  // component language, more reading width for a busy day, and nothing
+  // pinned to the edge of the screen.
   return createPortal(
-    <>
+    <motion.div
+      className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
       <motion.div
-        className="fixed inset-0 z-[70] bg-black/40"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-      />
-      <motion.aside
-        className="glass-scrollbar fixed right-0 top-0 z-[80] h-full w-full max-w-md overflow-y-auto border-l bg-card p-5 shadow-soft"
-        initial={{ x: 420 }}
-        animate={{ x: 0 }}
-        exit={{ x: 420 }}
-        transition={{ type: "tween", duration: 0.25 }}
+        className="glass-scrollbar max-h-[88vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card p-5 shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        transition={{ type: "tween", duration: 0.22 }}
+        onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Date Details</p>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600 dark:text-teal-300">Date Details</p>
             <h3 className="text-lg font-bold">{parseDateKey(dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
           </div>
           <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border" aria-label="Close">
@@ -8331,8 +8583,8 @@ function DateDetailsPanel({
           onDeleteNote={onDeleteNote}
           onToggleNotePin={onToggleNotePin}
         />
-      </motion.aside>
-    </>,
+      </motion.div>
+    </motion.div>,
     document.body
   );
 }
@@ -8485,7 +8737,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-600">{title}</h4>
+      <h4 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-600 dark:text-teal-300">{title}</h4>
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -8586,28 +8838,28 @@ function ReminderSection({
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               onClick={() => onToggleComplete(reminder.id)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
             >
               <Check className="size-3" />
               {reminder.completed ? "Completed" : "Mark Complete"}
             </button>
             <button
               onClick={() => onSnooze(reminder.id)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
             >
               <AlarmClock className="size-3" />
               Snooze
             </button>
             <button
               onClick={() => startEdit(reminder)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
             >
               <Pencil className="size-3" />
               Edit
             </button>
             <button
               onClick={() => onDelete(reminder.id)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
             >
               <Trash2 className="size-3" />
               Delete
@@ -8750,7 +9002,7 @@ function NoteSection({
               {note.author} - {new Date(note.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} -{" "}
               {note.visibility}
             </p>
-            <button onClick={() => onDelete(note.id)} className="text-xs font-semibold text-red-600 hover:underline">
+            <button onClick={() => onDelete(note.id)} className="text-xs font-semibold text-red-600 dark:text-red-400 hover:underline">
               Delete
             </button>
           </div>
@@ -9040,21 +9292,21 @@ function TimelineCard({
                   <>
                     <button
                       onClick={() => item.row && onView(item.moduleKey, item.row)}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                     >
                       <Eye className="size-3" />
                       View
                     </button>
                     <button
                       onClick={() => item.row && onEdit(item.moduleKey, item.row)}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600"
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                     >
                       <Pencil className="size-3" />
                       Edit
                     </button>
                     <button
                       onClick={() => item.row && onDelete(item.moduleKey, item.row)}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                     >
                       <Trash2 className="size-3" />
                       Delete
@@ -9063,7 +9315,7 @@ function TimelineCard({
                 ) : null}
                 <button
                   onClick={() => onCreate(item.moduleKey)}
-                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-teal-600 hover:bg-teal-50 dark:hover:bg-teal-950"
+                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-teal-600 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950"
                 >
                   <Plus className="size-3" />
                   New
@@ -9180,7 +9432,16 @@ function DataTable({
                 return (
                   <td key={column} className="px-4 py-4 text-sm">
                     {isBadge ? (
-                      <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", statusClass(value))}>{value}</span>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", statusClass(value))}>{value}</span>
+                        {/* Spec 13/14: overdue is called out in plain
+                            words on the row itself, for every role. */}
+                        {column === "Status" && row._overdue ? (
+                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700 ring-1 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900">
+                            Overdue
+                          </span>
+                        ) : null}
+                      </span>
                     ) : isProfileLink ? (
                       <button
                         onClick={() => onOpenProfile?.(row)}
@@ -9197,7 +9458,7 @@ function DataTable({
               <td className="px-4 py-4">
                 <div className="relative flex justify-end gap-2">
                   <button
-                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                     aria-label="View record"
                     onClick={() => onView(row)}
                   >
@@ -9205,7 +9466,7 @@ function DataTable({
                   </button>
                   {!isEmployeeViewOnly || allowEdit ? (
                     <button
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                       aria-label="Edit record"
                       onClick={() => onEdit(row)}
                     >
@@ -9214,7 +9475,7 @@ function DataTable({
                   ) : null}
                   {!isEmployeeViewOnly ? (
                     <button
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
                       aria-label="More actions"
                       onClick={(event) => toggleMenu(row.id, event)}
                     >
@@ -9252,7 +9513,7 @@ function DataTable({
                     onDelete(openMenuRow);
                     setOpenMenuId(null);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950"
                 >
                   <Trash2 className="size-4" />
                   {isStaffTable ? "Deactivate" : "Delete"}
@@ -9342,10 +9603,10 @@ function RecordModal({
   const title = mode === "edit" ? `Edit ${module.title}` : mode === "view" ? module.title : module.formTitle;
   const subtitle =
     mode === "edit"
-      ? `Update this ${module.title} record.`
+      ? `Update this entry in ${module.title}.`
       : mode === "view"
-      ? `Details for this ${module.title} record.`
-      : `Add a new ${module.title} record.`;
+      ? `Details for this entry in ${module.title}.`
+      : `Add a new entry to ${module.title}.`;
 
   function handleSave() {
     setSubmitAttempted(true);
@@ -9406,7 +9667,7 @@ function RecordModal({
               <label key={column} className="space-y-1.5">
                 <span className="text-sm font-semibold">
                   {column}
-                  {required ? <span className="ml-0.5 text-red-600">*</span> : null}
+                  {required ? <span className="ml-0.5 text-red-600 dark:text-red-400">*</span> : null}
                 </span>
                 {options && !isView ? (
                   <select

@@ -22,14 +22,50 @@ class CustomerFilterSet(django_filters.FilterSet):
 
 
 class LeadFilterSet(django_filters.FilterSet):
+    """Lead-assignment-panel filters (staff-management pass) on top of the
+    original ``status``/``owner``/``source``/``converted`` set:
+
+    - ``unassigned=true|false`` — leads with no owner at all.
+    - ``owner_role=MANAGER|EMPLOYEE|SUPER_ADMIN`` — "assigned to a manager"
+      vs. "assigned to an employee", without the caller needing to know
+      which user ids hold which role.
+    - ``created_from``/``created_to`` — date bounds, each independently
+      optional (same shape ``OpportunityFilterSet`` already uses).
+
+    ``source`` (Lead Source) stays declared here but is REMOVED from the
+    available filters for anyone below Super Admin — see
+    ``__init__()``. Leaving it filterable would let a Manager or Employee
+    recover, one query at a time, exactly the field
+    ``LeadSerializer.super_admin_only_fields`` hides from them.
+    """
+
     converted = django_filters.BooleanFilter(method="filter_converted", label="Converted")
+    unassigned = django_filters.BooleanFilter(
+        field_name="owner", lookup_expr="isnull", label="Unassigned (no owner)"
+    )
+    owner_role = django_filters.CharFilter(method="filter_owner_role", label="Owner role")
+    created_from = django_filters.DateFilter(field_name="created_at", lookup_expr="date__gte")
+    created_to = django_filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
 
     class Meta:
         model = Lead
         fields = ["status", "owner", "source"]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.accounts.permissions import is_super_admin
+
+        request = getattr(self, "request", None)
+        if request is not None and not is_super_admin(getattr(request, "user", None)):
+            self.filters.pop("source", None)
+
     def filter_converted(self, queryset, name, value):
         return queryset.converted() if value else queryset.unconverted()
+
+    def filter_owner_role(self, queryset, name, value):
+        if not value:
+            return queryset
+        return queryset.filter(owner__role=value.upper())
 
 
 class ContactPersonFilterSet(django_filters.FilterSet):

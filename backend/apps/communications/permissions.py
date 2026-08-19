@@ -16,4 +16,20 @@ from apps.accounts.permissions import IsManagerOrSuperAdmin, IsOwnerOrSuperAdmin
 
 EmailTemplateWritePermission = ReadOnlyOrSuperAdmin | IsManagerOrSuperAdmin
 
-__all__ = ["IsOwnerOrSuperAdmin", "EmailTemplateWritePermission"]
+#: Staff-management pass: notification RULES are a Super Admin concern.
+#:
+#: Every role RECEIVES notifications and manages their own read state, so
+#: safe methods and the ``mark-read``/``mark-unread`` actions stay open to
+#: everyone (still scoped to their own rows by ``owner_field="recipient"``);
+#: creating, editing, or deleting a `Notification` through the API is
+#: Super-Admin-only. Reuses CP6's existing ``ReadOnlyOrSuperAdmin``
+#: unchanged rather than introducing a new comparison — the class already
+#: means exactly "everyone reads, only Super Admin writes".
+#:
+#: This restricts the CLIENT-FACING endpoint only. System-generated
+#: notifications are created by ``services.create_notification()`` from
+#: internal code paths that never pass through DRF permissions, so
+#: automatic CRM notifications are entirely unaffected.
+NotificationWritePermission = ReadOnlyOrSuperAdmin
+
+__all__ = ["IsOwnerOrSuperAdmin", "EmailTemplateWritePermission", "NotificationWritePermission"]

@@ -157,19 +157,110 @@ def import_leads(rows, *, default_owner=None, created_by=None):
     }
 
 
+#: How many normalized rows a preview echoes back. A preview is meant to
+#: let a human eyeball what they're about to import, not to stream an
+#: entire spreadsheet through a JSON response.
+PREVIEW_SAMPLE_SIZE = 20
+
+
+def preview_leads(rows, *, sample_size=PREVIEW_SAMPLE_SIZE):
+    """Staff-management pass: the PREVIEW stage of
+    source -> adapter -> validation -> preview -> confirm -> CRM records.
+
+    Runs the exact same per-row validation ``import_leads()`` does — the
+    required-field check, the ``_normalize_choice()`` fallbacks, and Django's
+    own ``full_clean()`` — but creates NOTHING. Read-only by construction:
+    every candidate ``Lead`` is built unsaved and validated in memory, so
+    there is no transaction to roll back and no id to leak.
+
+    Returns::
+
+        {"total": int, "valid": int, "invalid": int, "warnings": int,
+         "errors": [{"row": int, "message": str}],
+         "sample": [{...normalized row...}, ...]}
+
+    ``sample`` holds the first ``sample_size`` rows AS THEY WOULD BE
+    CREATED (post-normalization), which is what makes the preview useful:
+    a user sees that "Cold Call" became ``COLD_CALL`` before confirming.
+    """
+    errors = []
+    warnings_count = 0
+    valid_count = 0
+    sample = []
+
+    for index, row in enumerate(rows, start=1):
+        company_name = row.get("company_name", "").strip()
+        contact_name = row.get("contact_name", "").strip()
+
+        if not company_name or not contact_name:
+            errors.append({"row": index, "message": "company_name and contact_name are both required."})
+            continue
+
+        source, source_unrecognized = _normalize_choice(row.get("source", ""), Lead.Source, Lead.Source.OTHER)
+        status, status_unrecognized = _normalize_choice(row.get("status", ""), Lead.Status, Lead.Status.NEW)
+        if source_unrecognized or status_unrecognized:
+            warnings_count += 1
+
+        candidate = {
+            "company_name": company_name,
+            "contact_name": contact_name,
+            "email": row.get("email", "").strip(),
+            "phone": row.get("phone", "").strip(),
+            "source": source,
+            "status": status,
+            "notes": row.get("notes", "").strip(),
+        }
+
+        try:
+            Lead(**candidate).full_clean(exclude=["converted_customer", "owner"])
+        except ValidationError as exc:
+            errors.append(
+                {
+                    "row": index,
+                    "message": "; ".join(
+                        f"{field}: {', '.join(msgs)}" for field, msgs in exc.message_dict.items()
+                    ),
+                }
+            )
+            continue
+
+        valid_count += 1
+        if len(sample) < sample_size:
+            sample.append({"row": index, **candidate})
+
+    return {
+        "total": len(rows),
+        "valid": valid_count,
+        "invalid": len(errors),
+        "warnings": warnings_count,
+        "errors": errors,
+        "sample": sample,
+    }
+
+
 #: Export columns that carry the LEAD's own contact PII. Omitted
 #: entirely (header row included) from an employee-facing export — see
 #: ``export_leads_csv()``'s ``include_pii`` argument.
 PII_EXPORT_COLUMNS = ("email", "phone")
 
 
-def _export_columns(include_pii):
-    if include_pii:
-        return list(EXPORT_COLUMNS)
-    return [column for column in EXPORT_COLUMNS if column not in PII_EXPORT_COLUMNS]
+#: Export columns only a SUPER ADMIN may receive. "source" (Lead Source)
+#: is hidden from BOTH Manager and Employee — a stricter, separate rule
+#: from PII_EXPORT_COLUMNS above (which a Manager still sees). See
+#: ``apps.core.serializers.SuperAdminOnlyFieldsMixin``.
+SUPER_ADMIN_ONLY_EXPORT_COLUMNS = ("source",)
 
 
-def export_leads_csv(queryset, *, include_pii=True):
+def _export_columns(include_pii, include_source=True):
+    columns = list(EXPORT_COLUMNS)
+    if not include_pii:
+        columns = [column for column in columns if column not in PII_EXPORT_COLUMNS]
+    if not include_source:
+        columns = [column for column in columns if column not in SUPER_ADMIN_ONLY_EXPORT_COLUMNS]
+    return columns
+
+
+def export_leads_csv(queryset, *, include_pii=True, include_source=True):
     """Return CSV file bytes for ``queryset`` (already ownership/filter
     scoped by the caller).
 
@@ -180,34 +271,40 @@ def export_leads_csv(queryset, *, include_pii=True):
     ``apps.crm.views.LeadViewSet.export_leads_action()``) decides, from
     the requesting user's role; the default stays ``True`` so every
     existing non-HTTP caller keeps its current behavior.
+
+    ``include_source=False`` likewise drops the ``source`` (Lead Source)
+    column for any reader below Super Admin — the same reasoning applied
+    to a stricter field. Defaults stay ``True`` for both so every existing
+    non-HTTP caller keeps its current behavior.
     """
-    columns = _export_columns(include_pii)
+    columns = _export_columns(include_pii, include_source)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(columns)
     for lead in queryset.select_related("owner"):
-        writer.writerow(_export_row(lead, include_pii=include_pii))
+        writer.writerow(_export_row(lead, include_pii=include_pii, include_source=include_source))
     return buffer.getvalue().encode("utf-8")
 
 
-def export_leads_xlsx(queryset, *, include_pii=True):
+def export_leads_xlsx(queryset, *, include_pii=True, include_source=True):
     """Return XLSX file bytes for ``queryset`` (already ownership/filter
-    scoped by the caller) — see ``export_leads_csv()`` for ``include_pii``.
+    scoped by the caller) — see ``export_leads_csv()`` for ``include_pii``
+    and ``include_source``.
     """
-    columns = _export_columns(include_pii)
+    columns = _export_columns(include_pii, include_source)
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Leads"
     sheet.append(columns)
     for lead in queryset.select_related("owner"):
-        sheet.append(_export_row(lead, include_pii=include_pii))
+        sheet.append(_export_row(lead, include_pii=include_pii, include_source=include_source))
 
     buffer = io.BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()
 
 
-def _export_row(lead, *, include_pii=True):
+def _export_row(lead, *, include_pii=True, include_source=True):
     values = {
         "id": lead.id,
         "company_name": lead.company_name,
@@ -221,4 +318,4 @@ def _export_row(lead, *, include_pii=True):
         "created_at": lead.created_at.isoformat(),
         "updated_at": lead.updated_at.isoformat(),
     }
-    return [values[column] for column in _export_columns(include_pii)]
+    return [values[column] for column in _export_columns(include_pii, include_source)]

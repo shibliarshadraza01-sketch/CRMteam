@@ -279,6 +279,52 @@ def calculate_earnings(active_seconds, *, config=None):
     }
 
 
+def build_time_logs(sessions):
+    """Staff-management pass: the flat "Time Logs" list a Check In /
+    Check Out UI renders — every discrete clock event from a day's
+    sessions, deduplicated and sorted chronologically.
+
+    One entry per segment boundary, each tagged with what happened, so a
+    frontend can print a plain list of times without re-deriving anything
+    from the segment ledger:
+
+        [{"at": <datetime>, "type": "CHECK_IN"|"CHECK_OUT"|"WORK_START"
+                                   |"WORK_END"|"BREAK_START"|"BREAK_END"
+                                   |"IDLE_START"|"IDLE_END"}]
+
+    Purely a presentation shape over data ``TimeSegment`` already holds —
+    nothing new is stored, and no existing total changes.
+    """
+    boundary_labels = {
+        TimeSegment.SegmentType.WORK: ("WORK_START", "WORK_END"),
+        TimeSegment.SegmentType.BREAK: ("BREAK_START", "BREAK_END"),
+        TimeSegment.SegmentType.IDLE: ("IDLE_START", "IDLE_END"),
+    }
+
+    entries = []
+    for session in sessions:
+        entries.append({"at": session.login_at, "type": "CHECK_IN"})
+        for segment in session.segments.active().order_by("started_at"):
+            start_label, end_label = boundary_labels.get(
+                segment.segment_type, ("SEGMENT_START", "SEGMENT_END")
+            )
+            entries.append({"at": segment.started_at, "type": start_label})
+            if segment.ended_at is not None:
+                entries.append({"at": segment.ended_at, "type": end_label})
+        if session.logout_at is not None:
+            entries.append({"at": session.logout_at, "type": "CHECK_OUT"})
+
+    seen = set()
+    unique = []
+    for entry in sorted(entries, key=lambda item: item["at"]):
+        key = (entry["at"], entry["type"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    return unique
+
+
 def compute_daily_summary(employee, date, *, config=None, now=None):
     """Aggregates every session for ``employee`` on ``date`` (matched by
     ``login_at``'s own date — a session that spans midnight is
@@ -327,9 +373,25 @@ def compute_daily_summary(employee, date, *, config=None, now=None):
     return {
         "employee_id": employee.id,
         "employee_name": f"{employee.first_name} {employee.last_name}".strip() or employee.email,
+        # Staff-management pass: the Check In / Check Out presentation
+        # fields. Every value below is read from the SAME ledger the
+        # existing totals come from — nothing is stored twice.
+        #   check_in_time  == login_time  (kept under both names so the
+        #                     original response shape is unchanged)
+        #   check_out_time == logout_time
+        #   gross_seconds  == session_seconds
+        #   effective_seconds == active_working_seconds
+        "employee_role": employee.role,
         "date": date,
         "login_time": login_time,
         "logout_time": logout_time,
+        "check_in_time": login_time,
+        "check_out_time": logout_time,
+        "gross_seconds": totals["session_seconds"],
+        "effective_seconds": totals["active_working_seconds"],
+        "shift_start_time": config.shift_start_time,
+        "shift_end_time": config.shift_end_time,
+        "time_logs": build_time_logs(sessions),
         "session_seconds": totals["session_seconds"],
         "active_working_seconds": totals["active_working_seconds"],
         "break_seconds": totals["break_seconds"],
@@ -355,5 +417,6 @@ __all__ = [
     "compute_session_totals",
     "compute_display_state",
     "calculate_earnings",
+    "build_time_logs",
     "compute_daily_summary",
 ]

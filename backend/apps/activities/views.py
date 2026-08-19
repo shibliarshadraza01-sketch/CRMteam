@@ -42,10 +42,13 @@ from .serializers import (
     TaskSerializer,
 )
 from .services import (
+    RECENT_ACTIVITY_DEFAULT_DAYS,
+    RECENT_ACTIVITY_DEFAULT_LIMIT,
     cancel_task,
     complete_task,
     create_reminder,
     generate_occurrences,
+    get_recent_activity,
     get_timeline,
     managed_user_ids,
     mark_reminder_sent,
@@ -297,3 +300,45 @@ class TimelineView(APIView):
                 for entry in timeline
             ]
         )
+
+
+class RecentActivityView(APIView):
+    """``GET /api/v1/activities/recent/?limit=&days=`` — the Recent
+    Activities panel's data, built from REAL CRM state (leads converted/
+    assigned, new customers, payments received/overdue, follow-ups
+    scheduled, interactions logged, reminders generated, check-ins/outs,
+    and — for a Super Admin — staff accounts created).
+
+    Read-only and role-scoped by ``services.get_recent_activity()``, which
+    applies the same ``scope_queryset_for_user()`` boundary as every list
+    endpoint: Super Admin org-wide, Manager their own team, Employee their
+    own records only. No new model backs this — see that function's
+    docstring for why.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("limit", int, required=False, description="Max entries (default 25, max 100)."),
+            OpenApiParameter("days", int, required=False, description="Look-back window in days (default 7, max 90)."),
+        ],
+        responses={200: None},
+    )
+    def get(self, request, *args, **kwargs):
+        def _bounded(name, default, maximum):
+            raw = request.query_params.get(name)
+            if raw is None:
+                return default
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                return default
+            return max(1, min(value, maximum))
+
+        entries = get_recent_activity(
+            request.user,
+            limit=_bounded("limit", RECENT_ACTIVITY_DEFAULT_LIMIT, 100),
+            days=_bounded("days", RECENT_ACTIVITY_DEFAULT_DAYS, 90),
+        )
+        return Response(entries, status=status.HTTP_200_OK)

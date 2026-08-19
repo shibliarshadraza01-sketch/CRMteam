@@ -64,6 +64,57 @@ class PiiMaskedSerializerMixin(serializers.Serializer):
         return data
 
 
+def super_admin_only_masking_required(request):
+    """True when the response being built must NOT carry Super-Admin-only
+    fields (today: a `Lead`'s ``source``).
+
+    A STRICTER, deliberately SEPARATE threshold from
+    ``pii_masking_required()`` above — do not merge the two:
+
+    - ``pii_masking_required()``          -> hides contact PII from an
+      EMPLOYEE; a Manager keeps full visibility (a decision made in this
+      project's PII-privacy pass and unchanged here).
+    - ``super_admin_only_masking_required()`` -> hides the field from BOTH
+      Manager AND Employee; only a SUPER_ADMIN ever sees it.
+
+    Same fail-closed rules otherwise: an anonymous or unrecognized-role
+    request is masked. ``request is None`` means the serializer is being
+    used internally (a service function, a management command, a direct
+    unit test) rather than across a trust boundary, so nothing is masked
+    there — identical reasoning to ``pii_masking_required()``.
+    """
+    if request is None:
+        return False
+
+    from apps.accounts.permissions import is_super_admin
+
+    return not is_super_admin(getattr(request, "user", None))
+
+
+class SuperAdminOnlyFieldsMixin(serializers.Serializer):
+    """Removes every field named in ``super_admin_only_fields`` from the
+    serialized output unless the reader is a SUPER_ADMIN.
+
+    Same ``to_representation()``-stripping mechanism as
+    ``PiiMaskedSerializerMixin`` (so it applies to list, retrieve, create/
+    update echoes, custom actions, and nested representations alike) but
+    gated on a different, stricter question — see
+    ``super_admin_only_masking_required()``. Kept as its own mixin rather
+    than a second attribute on the PII mixin so a serializer can mix in
+    either, both, or neither without the two rules ever being conflated.
+    """
+
+    #: Names of output fields only a Super Admin may see.
+    super_admin_only_fields = ()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if self.super_admin_only_fields and super_admin_only_masking_required(self.context.get("request")):
+            for field_name in self.super_admin_only_fields:
+                data.pop(field_name, None)
+        return data
+
+
 class ContactCapabilityMixin(serializers.Serializer):
     """Adds the read-only ``can_email``/``can_call``/``can_whatsapp``
     booleans that replace raw contact details for an Employee.

@@ -53,6 +53,27 @@ body {
   background: rgba(13, 148, 136, 0.18);
 }
 
+/* Spec 23 (dark-mode audit): the browser-drawn parts of date/time inputs
+   and the native select arrow are painted from the UA colour scheme, not
+   from our tokens - without this they stay black-on-dark and become
+   invisible in dark mode. Declaring the scheme also makes the native
+   date-picker popup and select option list render dark. */
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="time"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(1.6);
+  opacity: 0.85;
+  cursor: pointer;
+}
+
 .glass-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(13, 148, 136, 0.4) transparent;

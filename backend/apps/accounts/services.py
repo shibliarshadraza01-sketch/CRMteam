@@ -21,7 +21,19 @@ from .session_utils import build_device_name, get_client_ip, parse_user_agent
 User = get_user_model()
 
 
-def create_managed_user(email, password, *, role, first_name="", last_name=""):
+def create_managed_user(
+    email,
+    password,
+    *,
+    role,
+    first_name="",
+    last_name="",
+    username=None,
+    phone="",
+    department="",
+    date_joined=None,
+    is_active=True,
+):
     """Create a user account via the admin-facing Users management API
     (final-completion-pass — see ``views.py``'s ``UserViewSet``).
 
@@ -34,9 +46,28 @@ def create_managed_user(email, password, *, role, first_name="", last_name=""):
     row; it just means that account cannot complete a real login until
     ``set_access_code()`` is used to configure one (no API surface for
     that exists yet — a deliberate, documented gap, not an oversight).
+
+    Staff-management pass: also accepts the profile-only fields the Super
+    Admin's staff-creation form collects (``username`` — a DISPLAY handle,
+    never an authentication credential, see ``apps/accounts/models.py`` —
+    plus ``phone``, ``department``, ``date_joined``, ``is_active``).
+    ``date_joined`` defaults to the model's own ``timezone.now`` when not
+    supplied, so an omitted joining date behaves exactly as before.
     """
+    extra = {}
+    if date_joined is not None:
+        extra["date_joined"] = date_joined
     return User.objects.create_user(
-        email=email, password=password, role=role, first_name=first_name, last_name=last_name
+        email=email,
+        password=password,
+        role=role,
+        first_name=first_name,
+        last_name=last_name,
+        username=username or None,
+        phone=phone,
+        department=department,
+        is_active=is_active,
+        **extra,
     )
 
 
@@ -59,6 +90,45 @@ def activate_user(user):
     user.is_active = True
     user.save(update_fields=["is_active"])
     return user
+
+
+def apply_security_settings(
+    user, *, username=None, new_password=None, new_access_code=None, change_username=False
+):
+    """Write the security-sensitive settings a user changed on themselves.
+
+    Called ONLY after ``apps.accounts.verification.verify_security_change()``
+    has already approved the change (see ``views.SecuritySettingsView``) —
+    this function performs no verification of its own on purpose, so
+    "was this verified?" has exactly one answer in exactly one place.
+
+    Returns the list of field names actually changed. Never returns or logs
+    any secret value.
+    """
+    updated = []
+    fields = []
+
+    if change_username:
+        user.username = username or None
+        updated.append("username")
+        fields.append("username")
+
+    if new_password:
+        user.set_password(new_password)
+        updated.append("password")
+        fields.append("password")
+
+    if new_access_code:
+        user.set_access_code(new_access_code)
+        updated.append("access_code")
+        fields.append("super_admin_access_code_hash")
+
+    if fields:
+        # save() enforces the model's own invariants (email lowercasing,
+        # blank-username -> NULL, access-code clearing for non-Super-Admins),
+        # so a full save is deliberate here rather than update_fields alone.
+        user.save()
+    return updated
 
 
 def create_session(user, refresh_token, request):

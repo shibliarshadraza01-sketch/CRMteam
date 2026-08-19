@@ -66,17 +66,44 @@ class EarningsSerializer(serializers.Serializer):
     currency = serializers.CharField()
 
 
+class TimeLogEntrySerializer(serializers.Serializer):
+    """One discrete clock event from a day's attendance — see
+    ``services.build_time_logs()``. Presentation-only: derived from the
+    existing ``TimeSegment`` ledger, never stored separately.
+    """
+
+    at = serializers.DateTimeField()
+    type = serializers.CharField()
+
+
 class DailyAttendanceSerializer(serializers.Serializer):
     """One employee's attendance record for one day — the exact shape
     Part 7 of the spec describes, computed by
     ``services.compute_daily_summary()``.
+
+    Staff-management pass added the Check In / Check Out presentation
+    fields (``check_in_time``/``check_out_time``/``gross_seconds``/
+    ``effective_seconds``/``shift_start_time``/``shift_end_time``/
+    ``time_logs``/``employee_role``). The original field names
+    (``login_time``/``logout_time``/``session_seconds``/
+    ``active_working_seconds``) are all still emitted unchanged — the new
+    names are aliases over the same values, so no existing consumer
+    breaks.
     """
 
     employee_id = serializers.IntegerField()
     employee_name = serializers.CharField()
+    employee_role = serializers.CharField(required=False, allow_null=True)
     date = serializers.DateField()
     login_time = serializers.DateTimeField(allow_null=True)
     logout_time = serializers.DateTimeField(allow_null=True)
+    check_in_time = serializers.DateTimeField(allow_null=True, required=False)
+    check_out_time = serializers.DateTimeField(allow_null=True, required=False)
+    gross_seconds = serializers.IntegerField(required=False)
+    effective_seconds = serializers.IntegerField(required=False)
+    shift_start_time = serializers.TimeField(allow_null=True, required=False)
+    shift_end_time = serializers.TimeField(allow_null=True, required=False)
+    time_logs = TimeLogEntrySerializer(many=True, required=False)
     session_seconds = serializers.IntegerField()
     active_working_seconds = serializers.IntegerField()
     break_seconds = serializers.IntegerField()

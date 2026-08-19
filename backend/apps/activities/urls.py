@@ -19,7 +19,14 @@ router-registrable).
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import ActivityLogViewSet, EventViewSet, ReminderViewSet, TaskViewSet, TimelineView
+from .views import (
+    ActivityLogViewSet,
+    EventViewSet,
+    RecentActivityView,
+    ReminderViewSet,
+    TaskViewSet,
+    TimelineView,
+)
 
 app_name = "activities"
 
@@ -31,4 +38,6 @@ router.register("reminders", ReminderViewSet, basename="reminder")
 
 urlpatterns = [
     path("timeline/", TimelineView.as_view(), name="timeline"),
+    # Staff-management pass: the role-scoped Recent Activities feed.
+    path("recent/", RecentActivityView.as_view(), name="recent-activity"),
 ] + router.urls

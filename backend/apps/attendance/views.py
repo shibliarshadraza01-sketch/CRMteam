@@ -249,16 +249,26 @@ class AttendanceSessionViewSet(
 
         summary = compute_daily_summary(employee, target_date)
         if summary is None:
+            config = get_active_shift_configuration()
             return Response(
                 {
                     "employee_id": employee.id,
                     "employee_name": f"{employee.first_name} {employee.last_name}".strip() or employee.email,
+                    "employee_role": employee.role,
                     "date": target_date, "login_time": None, "logout_time": None,
+                    # Staff-management pass: the Check In / Check Out aliases
+                    # are present even on a no-record day, so a UI never has
+                    # to branch on whether the employee worked.
+                    "check_in_time": None, "check_out_time": None,
+                    "gross_seconds": 0, "effective_seconds": 0,
+                    "shift_start_time": config.shift_start_time,
+                    "shift_end_time": config.shift_end_time,
+                    "time_logs": [],
                     "session_seconds": 0, "active_working_seconds": 0, "break_seconds": 0, "idle_seconds": 0,
                     "number_of_breaks": 0, "number_of_sessions": 0, "status": "No Record",
-                    "shift_minutes": get_active_shift_configuration().shift_duration_minutes,
+                    "shift_minutes": config.shift_duration_minutes,
                     "overtime_minutes": 0, "short_minutes": 0, "is_open": False,
-                    "earnings": {"regular_minutes": 0, "overtime_minutes": 0, "regular_earnings": 0, "overtime_earnings": 0, "total_earnings": 0, "currency": get_active_shift_configuration().currency},
+                    "earnings": {"regular_minutes": 0, "overtime_minutes": 0, "regular_earnings": 0, "overtime_earnings": 0, "total_earnings": 0, "currency": config.currency},
                 }
             )
         return Response(DailyAttendanceSerializer(summary).data)

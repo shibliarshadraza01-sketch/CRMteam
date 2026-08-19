@@ -25,7 +25,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
-from apps.core.serializers import pii_masking_required
+from apps.core.serializers import pii_masking_required, super_admin_only_masking_required
 from apps.core.utils import stamp_audit_fields
 from apps.core.views import PiiSafeSearchMixin, SoftDeleteAuditModelViewSetMixin
 
@@ -36,15 +36,23 @@ from .filters import (
     LeadFilterSet,
     OpportunityFilterSet,
 )
-from .imports import export_leads_csv, export_leads_xlsx, import_leads, parse_rows_from_file
+from .imports import export_leads_csv, export_leads_xlsx, import_leads, parse_rows_from_file, preview_leads
 from .models import Address, ContactPerson, Customer, Lead
 from .opportunities import Opportunity, OpportunityActivity, OpportunityNote
-from .permissions import IsOwnerOrSuperAdmin, assert_object_accessible
+from .permissions import IsManager, IsOwnerOrSuperAdmin, assert_object_accessible
+from .providers.google_sheets import (
+    GoogleSheetsError,
+    GoogleSheetsNotConfigured,
+    fetch_rows as fetch_google_sheet_rows,
+    provider_status as google_sheets_status,
+)
 from .serializers import (
     AddressSerializer,
     ContactPersonSerializer,
     CustomerDetailSerializer,
     CustomerSerializer,
+    LeadAssignmentSerializer,
+    GoogleSheetImportSerializer,
     LeadDetailSerializer,
     LeadSerializer,
     OpportunityActivitySerializer,
@@ -59,6 +67,7 @@ from .services import (
     add_contact,
     add_note,
     advance_stage,
+    assign_leads,
     assign_owner,
     create_customer,
     create_opportunity,
@@ -187,12 +196,37 @@ class LeadViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
             return LeadDetailSerializer
         return LeadSerializer
 
+    #: Staff-management pass: bulk data-movement actions. The spec is
+    #: explicit that an Employee can never export or import — enforced here
+    #: at the endpoint, not by hiding a button. Manager-or-above may use
+    #: them, still limited to their own scope by ``get_queryset()``
+    #: (Super Admin's is the only unrestricted scope).
+    data_movement_actions = (
+        "import_leads_action",
+        "import_preview_action",
+        "import_google_sheet_action",
+        "google_sheet_status_action",
+        "export_leads_action",
+    )
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.data_movement_actions:
+            permissions = permissions + [IsManager()]
+        return permissions
+
     def get_throttles(self):
         # Rate-limited: merge/import/export are all real, comparatively
         # expensive bulk operations — see config/settings/base.py's
         # "expensive_operation" scope docstring. Ordinary list/create/
         # retrieve/duplicates on this viewset are unaffected.
-        if self.action in ("merge", "import_leads_action", "export_leads_action"):
+        if self.action in (
+            "merge",
+            "import_leads_action",
+            "export_leads_action",
+            "import_preview_action",
+            "import_google_sheet_action",
+        ):
             self.throttle_scope = "expensive_operation"
             return [ScopedRateThrottle()]
         return super().get_throttles()
@@ -271,6 +305,114 @@ class LeadViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
         summary = import_leads(rows, default_owner=request.user, created_by=request.user)
         return Response(summary, status=status.HTTP_200_OK)
 
+    @extend_schema(request=LeadAssignmentSerializer, responses={200: LeadSerializer(many=True)})
+    @action(detail=False, methods=["post"], url_path="assign")
+    def assign(self, request, *args, **kwargs):
+        """``POST /leads/assign/`` — bulk (re)assign leads.
+
+        Body::
+
+            {"lead_ids": [1, 2], "target_type": "manager"|"employee",
+             "target_user_id": 7}
+
+        Authorization is entirely ``services.assign_leads()``'s (see its
+        docstring): Super Admin may assign any visible lead to any
+        Manager/Employee; a Manager may assign only leads already in
+        their own scope, and only to themselves or someone in their own
+        ``managed_user_ids()``; an Employee is always refused (403).
+        Unknown/out-of-scope lead ids return 404 rather than being
+        silently skipped.
+
+        Returns the updated leads, serialized exactly like ``list`` (so
+        ``source`` is still stripped for a Manager — assignment does not
+        widen anyone's field visibility).
+        """
+        serializer = LeadAssignmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        from apps.accounts.models import User as UserModel
+
+        target_user = UserModel.objects.filter(pk=data["target_user_id"]).first()
+        try:
+            leads = assign_leads(request.user, data["lead_ids"], data["target_type"], target_user)
+        except Lead.DoesNotExist as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(self.get_serializer(leads, many=True).data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: dict})
+    @action(detail=False, methods=["post"], url_path="import-preview")
+    def import_preview_action(self, request, *args, **kwargs):
+        """``POST /leads/import-preview/`` — the PREVIEW stage of the
+        import workflow (multipart field ``file``, same formats as
+        ``import``). Validates every row and returns what WOULD be
+        created; writes nothing. See ``imports.preview_leads()``.
+        """
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file is None:
+            return Response(
+                {"detail": "A file is required (multipart field 'file')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            rows = parse_rows_from_file(uploaded_file)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(preview_leads(rows), status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: dict})
+    @action(detail=False, methods=["get"], url_path="google-sheet-status")
+    def google_sheet_status_action(self, request, *args, **kwargs):
+        """``GET /leads/google-sheet-status/`` — whether a Google Sheets
+        import can currently run on this deployment. Never returns any
+        credential value; safe to call with nothing configured (that is
+        exactly what it reports).
+        """
+        return Response(google_sheets_status(), status=status.HTTP_200_OK)
+
+    @extend_schema(request=GoogleSheetImportSerializer, responses={200: dict})
+    @action(detail=False, methods=["post"], url_path="import-google-sheet")
+    def import_google_sheet_action(self, request, *args, **kwargs):
+        """``POST /leads/import-google-sheet/`` — the full
+        source -> adapter -> validation -> preview -> confirm pipeline for
+        a Google-Sheets-sourced lead import.
+
+        Body: ``{"spreadsheet_id": "...", "sheet_range": "Sheet1!A:G",
+        "confirm": false}``. ``confirm=false`` (default) returns the same
+        preview payload as ``import-preview``; ``confirm=true`` runs the
+        SAME ``imports.import_leads()`` pipeline the file upload uses —
+        one import path, two sources, no parallel implementation.
+
+        If Google Sheets credentials are absent this returns **503 with
+        ``"configured": false``** — never a fabricated success. Nothing
+        about this endpoint (or its module import) affects startup.
+        """
+        serializer = GoogleSheetImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        try:
+            rows = fetch_google_sheet_rows(data["spreadsheet_id"], data.get("sheet_range") or None)
+        except GoogleSheetsNotConfigured as exc:
+            return Response(
+                {"detail": str(exc), "configured": False, **google_sheets_status()},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except GoogleSheetsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if not data.get("confirm"):
+            return Response(
+                {"stage": "preview", "source": "google_sheets", **preview_leads(rows)},
+                status=status.HTTP_200_OK,
+            )
+
+        summary = import_leads(rows, default_owner=request.user, created_by=request.user)
+        return Response(
+            {"stage": "imported", "source": "google_sheets", **summary}, status=status.HTTP_200_OK
+        )
+
     @extend_schema(request=None, responses={200: bytes})
     @action(detail=False, methods=["get"], url_path="export")
     def export_leads_action(self, request, *args, **kwargs):
@@ -296,13 +438,18 @@ class LeadViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
         # rather than handing over in a spreadsheet what the API refuses
         # to return in JSON.
         include_pii = not pii_masking_required(request)
+        # Lead Source is Super-Admin-only (see LeadSerializer's
+        # super_admin_only_fields). An export is just another response
+        # body, so a Manager's/Employee's download must not carry the
+        # column the JSON API strips for them.
+        include_source = not super_admin_only_masking_required(request)
 
         if export_format == "xlsx":
-            content = export_leads_xlsx(queryset, include_pii=include_pii)
+            content = export_leads_xlsx(queryset, include_pii=include_pii, include_source=include_source)
             content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = "leads.xlsx"
         else:
-            content = export_leads_csv(queryset, include_pii=include_pii)
+            content = export_leads_csv(queryset, include_pii=include_pii, include_source=include_source)
             content_type = "text/csv"
             filename = "leads.csv"
 
