@@ -216,18 +216,18 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "leads",
-    title: "Leads - Full Access",
+    title: "Leads",
     subtitle: "View every lead, assign ownership, import files, capture Meta leads, update status, and merge duplicates.",
     icon: Sparkles,
     accent: "from-teal-700 to-orange-500",
-    columns: ["Lead", "Source", "Owner", "Status", "Duplicate"],
+    columns: ["Lead", "Source", "Owner", "Status"],
     rows: [
-      { Lead: "Priya Sharma", Source: "Meta Lead Ads", Owner: "Aarav Mehta", Status: "Hot", Duplicate: "No" },
-      { Lead: "Rahul Verma", Source: "CSV Import", Owner: "Unassigned", Status: "New", Duplicate: "Possible" },
-      { Lead: "Maya Iyer", Source: "Website", Owner: "Nisha Rao", Status: "Warm", Duplicate: "No" },
-      { Lead: "Omar Ali", Source: "Referral", Owner: "Kabir Sethi", Status: "Converted", Duplicate: "Merged" }
+      { Lead: "Priya Sharma", Source: "Meta Lead Ads", Owner: "Aarav Mehta", Status: "Hot" },
+      { Lead: "Rahul Verma", Source: "CSV Import", Owner: "Unassigned", Status: "New" },
+      { Lead: "Maya Iyer", Source: "Website", Owner: "Nisha Rao", Status: "Warm" },
+      { Lead: "Omar Ali", Source: "Referral", Owner: "Kabir Sethi", Status: "Converted" }
     ],
-    filters: ["All owners", "Unassigned", "New", "Hot", "Warm", "Cold", "Converted", "Duplicates"],
+    filters: ["All owners", "Unassigned", "New", "Hot", "Warm", "Cold", "Converted"],
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
       { label: "Bulk Import", icon: Upload },
@@ -238,7 +238,7 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "customers",
-    title: "Customers - Full Access",
+    title: "Customers",
     subtitle: "View all customers, convert qualified leads, and review complete profiles with interaction history.",
     icon: Users,
     accent: "from-teal-700 to-pink-500",
@@ -259,7 +259,7 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "payments",
-    title: "Payments - Full Access",
+    title: "Payments",
     subtitle: "See all customer payments, add or edit payments, track partials, set reminders, and review company revenue.",
     icon: CircleDollarSign,
     accent: "from-teal-700 to-amber-500",
@@ -273,7 +273,7 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "communication",
-    title: "Communication - Full Access",
+    title: "Communication",
     subtitle: "Send email, send or view WhatsApp messages, inspect call logs, and open a unified communication timeline.",
     icon: MessageCircle,
     accent: "from-teal-700 to-cyan-500",
@@ -883,7 +883,6 @@ function leadToRow(lead: Record<string, unknown>): RowRecord {
     Source: LEAD_SOURCE_LABELS[source] ?? source,
     Owner: typeof owner === "number" ? `User #${owner}` : "Unassigned",
     Status: LEAD_STATUS_LABELS[status] ?? status,
-    Duplicate: "—",
     // Hidden (not in this module's `columns`, so never rendered as a
     // table cell) — used only by AnalyticsDashboard's real charts to
     // group/bucket by actual owner and creation month, and by the
@@ -1195,7 +1194,7 @@ const PAGE_SIZE = 6;
 // Employee-safe column set for a given module — reused by every place a
 // modal/form needs to know which fields to show/collect for the current
 // role (the main record table, the global-search "view" jump, etc.) so
-// Owner/Source/Duplicate/etc. can never leak through a code path that
+// Owner/Source/etc. can never leak through a code path that
 // forgot to re-derive it locally.
 function employeeSafeColumns(module: ModuleConfig): string[] {
   if (module.key === "leads") return ["Lead", "Email", "Phone", "Category"];
@@ -1240,8 +1239,7 @@ function employeeSafeRow(module: ModuleConfig, row: RowRecord): RowRecord {
 // tasks to someone else, bulk import, duplicate merging, adding payments,
 // converting/creating customers, or a team-wide calendar) anywhere in
 // their panel — filter these out of a module's action list before it's
-// rendered, for both the header buttons and the Detail Drawer (both draw
-// from the same ModuleConfig.actions array).
+// rendered — the module header action bar reads this filtered list.
 //
 // "Send Email" is blocked for Employees too, but for a different reason:
 // that generic header action opens the shared RecordModal with a free-text
@@ -1716,7 +1714,6 @@ function SuperAdminPage({
     recentActivities.map((message, index) => ({ id: `seed-${index}`, message, moduleKey: "reports", row: null }))
   );
   const [toast, setToast] = useState<ToastState>(null);
-  const [drawerOpen, setDrawerOpen] = useState(role !== "employee");
   const [dark, setDark] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -2170,7 +2167,7 @@ function SuperAdminPage({
     setModalMode("view");
     // Employee Leads/Customers must only ever surface the masked, reduced
     // column set here too — never the full admin column list (Source,
-    // Owner, Duplicate, etc.) that a raw `activeModule.columns` read would
+    // Owner, etc.) that a raw `activeModule.columns` read would
     // leak through the "View" action.
     const safeViewRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
     setFormData(Object.fromEntries(employeeTableModule.columns.map((column) => [column, safeViewRow[column] ?? ""])));
@@ -3058,15 +3055,6 @@ function SuperAdminPage({
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
                 </div>
                 <div className="flex items-center gap-2">
-                  {role !== "employee" ? (
-                    <button
-                      className="hidden items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm font-medium shadow-sm sm:inline-flex"
-                      onClick={() => setDrawerOpen(true)}
-                    >
-                      <Activity className="size-4 text-teal-600" />
-                      Live Detail
-                    </button>
-                  ) : null}
                   <button
                     className="inline-flex size-10 items-center justify-center rounded-lg border bg-card shadow-sm"
                     onClick={refreshCurrentModule}
@@ -3078,7 +3066,9 @@ function SuperAdminPage({
               </div>
             </div>
 
-            <div className={cn("grid gap-6 px-4 py-5 xl:px-8", role === "employee" ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_360px]")}>
+            {/* Spec 4: no persistent side detail panel for any role — page
+                content always uses the full available width. */}
+            <div className="grid grid-cols-1 gap-6 px-4 py-5 xl:px-8">
               <div className="min-w-0 space-y-6">
                 <motion.section
                   key={activeModule.key}
@@ -3285,24 +3275,6 @@ function SuperAdminPage({
                 )}
               </div>
 
-              <AnimatePresence>
-                {drawerOpen && role !== "employee" ? (
-                  <motion.aside
-                    initial={{ opacity: 0, x: 26 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 26 }}
-                    className="h-fit rounded-2xl border bg-card shadow-soft xl:sticky xl:top-24"
-                  >
-                    <DetailDrawer
-                      role={role}
-                      module={activeModule}
-                      moduleTitle={displayModuleTitle}
-                      onClose={() => setDrawerOpen(false)}
-                      onAction={handleModuleAction}
-                    />
-                  </motion.aside>
-                ) : null}
-              </AnimatePresence>
             </div>
           </section>
         </div>
@@ -5614,8 +5586,8 @@ function CommQuickActions({
 // Activities for one customer, using only data already scoped to this
 // employee (recordsByModule + the reminders/notes already filtered by
 // canSeeReminder/canSeeNote before they reach this component). No Owner
-// field is ever rendered here. Visual language matches RecordModal/
-// DetailDrawer (same backdrop, card chrome, DetailRow list style).
+// field is ever rendered here. Visual language matches RecordModal
+// (same backdrop, card chrome, DetailRow list style).
 function EmployeeCustomerProfileModal({
   customer,
   payments,
@@ -7971,7 +7943,7 @@ function DataTable({
             <tr key={row.id} className="transition hover:bg-muted/40">
               {module.columns.map((column) => {
                 const value = row[column] ?? "-";
-                const isBadge = ["Status", "Duplicate", "Priority", "Outcome", "Export"].includes(column);
+                const isBadge = ["Status", "Priority", "Outcome", "Export"].includes(column);
                 return (
                   <td key={column} className="px-4 py-4 text-sm">
                     {isBadge ? (
@@ -8086,80 +8058,6 @@ function Toast({ toast }: { toast: { type: "success" | "error"; message: string 
       {isSuccess ? <Check className="size-4" /> : <X className="size-4" />}
       {toast.message}
     </motion.div>
-  );
-}
-
-function DetailDrawer({
-  role,
-  module,
-  moduleTitle,
-  onClose,
-  onAction
-}: {
-  role: Role;
-  module: ModuleConfig;
-  moduleTitle: string;
-  onClose: () => void;
-  onAction: (action: { label: string; icon: React.ElementType; primary?: boolean }) => void;
-}) {
-  const Icon = module.icon;
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-4 border-b p-5">
-        <div>
-          <div className="mb-3 flex size-10 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
-            <Icon className="size-5" />
-          </div>
-          <h3 className="text-lg font-bold">{ROLE_LABEL[role]} Detail Drawer</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Quick actions and permission summary for {moduleTitle}.</p>
-        </div>
-        <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border">
-          <X className="size-4" />
-        </button>
-      </div>
-
-      <div className="space-y-4 p-5">
-        <div className="rounded-xl border bg-background p-4">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600">Permissions</p>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {role === "manager"
-              ? "Manager can view, create, update, and assign this module for their own team only. Audit Logs and other teams' data stay hidden."
-              : role === "employee"
-              ? "Employee can view, create, and update records assigned to them only. Other employees' data, reports, audit logs, and settings stay hidden."
-              : "Super Admin can view, create, update, assign, configure, and audit this module with no restrictions."}
-          </p>
-        </div>
-        <div className="space-y-2">
-          {visibleActionsForRole(module.actions, role).map((action) => {
-            const ActionIcon = action.icon;
-            return (
-              <button
-                key={action.label}
-                onClick={() => onAction(action)}
-                className="flex w-full items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm font-semibold"
-              >
-                <span className="flex items-center gap-2">
-                  <ActionIcon className="size-4 text-teal-600" />
-                  {action.label}
-                </span>
-                <ChevronRight className="size-4 text-muted-foreground" />
-              </button>
-            );
-          })}
-        </div>
-        <div className="rounded-xl bg-muted p-4">
-          <p className="text-sm font-bold">Unified Timeline Preview</p>
-          <div className="mt-3 space-y-3">
-            {["Permission checked", "Record updated", "Audit entry saved"].map((item) => (
-              <div key={item} className="flex gap-3 text-sm">
-                <span className="mt-1 size-2 rounded-full bg-teal-600" />
-                <span className="text-muted-foreground">{item}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
