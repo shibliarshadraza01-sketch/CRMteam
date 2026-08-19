@@ -79,8 +79,7 @@ import {
   type BackendRole,
   type BackendUser,
   type CurrentAttendance,
-  type DailyAttendance,
-  type ShiftConfig
+  type DailyAttendance
 } from "@/lib/api";
 
 type ModuleKey =
@@ -89,31 +88,48 @@ type ModuleKey =
   | "dashboard"
   | "calendar"
   | "leads"
+  | "assignments"
   | "customers"
   | "payments"
   | "communication"
   | "tasks"
+  | "attendance"
+  | "notifications"
   | "reports"
   | "audit"
   | "settings";
 
 type Role = "superadmin" | "manager" | "employee";
 
+// Redesign pass — four things left this shape deliberately:
+//
+//   * `features` (the bulleted "Create new Manager and Employee users" /
+//     "Change any user's role" capability lists) and their FeatureCards
+//     renderer are gone. Those read as a component demo's permission
+//     manifest, not as a production CRM screen.
+//   * `stats` (hardcoded "$842K"/"4,892"/"248 total users" header cards)
+//     are gone. The two screens that legitimately show figures (the
+//     Employee "dashboard" and the Manager/Super-Admin "reports" home)
+//     derive them from real records via computeModuleStats(); every
+//     other screen is a table/list and shows no stat strip at all.
+//   * `chart` is gone with it: bar graphs now live only on the Dashboard
+//     and Analytics/Reports screens, never on Leads/Customers/Payments/
+//     Tasks/Communication/Settings.
+//   * `formFields` (per-module placeholder form scaffolding) is gone —
+//     every real create/edit form is driven by the module's `columns`
+//     through RecordModal, so this second, drifting field list only
+//     ever described forms nothing rendered.
 type ModuleConfig = {
   key: ModuleKey;
   title: string;
   subtitle: string;
   icon: React.ElementType;
   accent: string;
-  features: string[];
-  stats: Array<{ label: string; value: string; change: string }>;
   columns: string[];
   rows: Array<Record<string, string>>;
   filters: string[];
   actions: Array<{ label: string; icon: React.ElementType; primary?: boolean }>;
   formTitle: string;
-  formFields: Array<{ label: string; type: "text" | "email" | "select" | "date" | "number"; placeholder: string }>;
-  chart?: { title: string; subtitle: string; column: string; mode: "count" | "sum"; labelColumn?: string; prefix?: string; suffix?: string };
 };
 
 type RowRecord = Record<string, string> & { id: string };
@@ -128,27 +144,11 @@ const modules: ModuleConfig[] = [
     subtitle: "Monitor full company performance, revenue, and lead conversion rates.",
     icon: FileSpreadsheet,
     accent: "from-teal-700 to-emerald-500",
-    features: [
-      "Full company dashboard for all team performance",
-      "Revenue reports and lead conversion rates"
-    ],
-    stats: [
-      { label: "Team performance", value: "91%", change: "+6.4%" },
-      { label: "Lead conversion", value: "18.7%", change: "+2.1%" },
-      { label: "Revenue report", value: "$842K", change: "Company total" },
-      { label: "Saved reports", value: "12", change: "Active reports" }
-    ],
     columns: ["Report", "Type", "Description", "Status"],
     rows: [],
     filters: ["All reports", "Productivity", "Lead Conversion", "Sales Pipeline", "Customer Activity", "Custom"],
     actions: [{ label: "Refresh Report", icon: RefreshCw, primary: true }],
     formTitle: "Create Saved Report",
-    formFields: [
-      { label: "Report", type: "text", placeholder: "Report name" },
-      { label: "Type", type: "select", placeholder: "Productivity / Lead Conversion / Sales Pipeline / Customer Activity / Custom" },
-      { label: "Description", type: "text", placeholder: "What this report covers" },
-      { label: "Status", type: "select", placeholder: "Active / Inactive" }
-    ]
   },
   {
     key: "team",
@@ -156,17 +156,6 @@ const modules: ModuleConfig[] = [
     subtitle: "View your team's employees, assign or reassign leads, and track employee performance.",
     icon: Users,
     accent: "from-teal-700 to-indigo-500",
-    features: [
-      "View employees on your team",
-      "Assign or reassign leads to your employees",
-      "Track employee performance"
-    ],
-    stats: [
-      { label: "Team members", value: "5", change: "1 pending invite" },
-      { label: "Leads assigned", value: "117", change: "This month" },
-      { label: "Avg. performance", value: "83.6%", change: "+4.1%" },
-      { label: "Top performer", value: "Aarav", change: "92% completion" }
-    ],
     columns: ["Name", "Role", "Status"],
     rows: [],
     filters: ["All employees", "Active", "Inactive"],
@@ -175,21 +164,7 @@ const modules: ModuleConfig[] = [
       { label: "Reassign Lead", icon: RefreshCw },
       { label: "View Performance", icon: Eye }
     ],
-    chart: {
-      title: "Employee Performance",
-      subtitle: "Completion score per team member",
-      column: "Performance",
-      mode: "sum",
-      labelColumn: "Employee",
-      suffix: "%"
-    },
     formTitle: "Assign or Reassign Lead",
-    formFields: [
-      { label: "Employee", type: "select", placeholder: "Select team member" },
-      { label: "Lead", type: "select", placeholder: "Select lead to assign" },
-      { label: "Priority", type: "select", placeholder: "High / Medium / Low" },
-      { label: "Note", type: "text", placeholder: "Assignment note" }
-    ]
   },
   {
     key: "dashboard",
@@ -197,17 +172,6 @@ const modules: ModuleConfig[] = [
     subtitle: "Track your assigned leads, customers, tasks, and personal performance.",
     icon: Activity,
     accent: "from-teal-700 to-sky-500",
-    features: [
-      "Personal performance dashboard",
-      "Assigned lead status overview",
-      "Pending follow-ups and task summary"
-    ],
-    stats: [
-      { label: "My Leads", value: "18", change: "5 new this week" },
-      { label: "My Customers", value: "6", change: "2 active" },
-      { label: "My Revenue", value: "$12.4K", change: "Collected to date" },
-      { label: "My Conversion Rate", value: "22.0%", change: "+3.1%" }
-    ],
     columns: ["Item", "Type", "Status", "Updated"],
     rows: [
       { Item: "Priya Sharma", Type: "Lead", Status: "Hot", Updated: "Today" },
@@ -217,14 +181,7 @@ const modules: ModuleConfig[] = [
     ],
     filters: ["All items", "Leads", "Customers", "Tasks", "Follow-ups"],
     actions: [{ label: "Refresh Report", icon: RefreshCw, primary: true }],
-    chart: { title: "My Activity Overview", subtitle: "Status mix across my leads, customers, and tasks", column: "Type", mode: "count" },
     formTitle: "Log Personal Activity",
-    formFields: [
-      { label: "Item", type: "text", placeholder: "Lead, customer, or task name" },
-      { label: "Type", type: "select", placeholder: "Lead / Customer / Task / Follow-up" },
-      { label: "Status", type: "select", placeholder: "Current status" },
-      { label: "Note", type: "text", placeholder: "Add a note" }
-    ]
   },
   {
     key: "calendar",
@@ -232,28 +189,11 @@ const modules: ModuleConfig[] = [
     subtitle: "Month, week, and day views with reminders, notes, and a full activity timeline for every date.",
     icon: CalendarDays,
     accent: "from-teal-700 to-violet-500",
-    features: [
-      "Month, week, and day calendar views",
-      "Per-date activity previews for leads, customers, calls, tasks, and reminders",
-      "Role-based reminders and notes with priorities and repeats"
-    ],
-    stats: [
-      { label: "Today's Events", value: "-", change: "Live" },
-      { label: "This Week", value: "-", change: "Live" },
-      { label: "Overdue Reminders", value: "-", change: "Live" },
-      { label: "Pinned Notes", value: "-", change: "Live" }
-    ],
     columns: ["Event", "Type", "Date", "Priority"],
     rows: [{ Event: "Team pipeline review", Type: "Meeting", Date: "Today", Priority: "Medium" }],
     filters: ["All events"],
     actions: [{ label: "Refresh Report", icon: RefreshCw }],
     formTitle: "Add Calendar Event",
-    formFields: [
-      { label: "Title", type: "text", placeholder: "Event title" },
-      { label: "Date", type: "date", placeholder: "Choose date" },
-      { label: "Priority", type: "select", placeholder: "Low / Medium / High / Urgent" },
-      { label: "Note", type: "text", placeholder: "Add a note" }
-    ]
   },
   {
     key: "users",
@@ -261,19 +201,6 @@ const modules: ModuleConfig[] = [
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
     icon: UserCog,
     accent: "from-teal-700 to-rose-500",
-    features: [
-      "Create new Manager and Employee users",
-      "Invite users by sending email invite links",
-      "Change any user's role",
-      "Activate or deactivate users",
-      "Set every user's permissions, including what Managers can and cannot see"
-    ],
-    stats: [
-      { label: "Total users", value: "248", change: "+18 this month" },
-      { label: "Active accounts", value: "231", change: "93.1% active" },
-      { label: "Pending invites", value: "12", change: "4 expiring soon" },
-      { label: "Permission sets", value: "17", change: "6 manager views" }
-    ],
     columns: ["Name", "Role", "Email", "Status", "Password"],
     rows: [
       { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Status: "Active", Password: "••••••••" },
@@ -285,14 +212,7 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Create User", icon: Plus, primary: true }
     ],
-    chart: { title: "User Status Breakdown", subtitle: "Active and inactive accounts", column: "Status", mode: "count" },
     formTitle: "Create User",
-    formFields: [
-      { label: "Full name", type: "text", placeholder: "Manager or employee name" },
-      { label: "Work email", type: "email", placeholder: "name@company.com" },
-      { label: "Role", type: "select", placeholder: "Manager / Employee" },
-      { label: "Password", type: "text", placeholder: "Initial password (min 8 characters)" }
-    ]
   },
   {
     key: "leads",
@@ -300,20 +220,6 @@ const modules: ModuleConfig[] = [
     subtitle: "View every lead, assign ownership, import files, capture Meta leads, update status, and merge duplicates.",
     icon: Sparkles,
     accent: "from-teal-700 to-orange-500",
-    features: [
-      "View all leads from any employee or manager",
-      "Assign leads to any employee or manager",
-      "Bulk import leads from CSV or Excel",
-      "View auto-captured leads from Meta Lead Ads",
-      "Change lead status: new -> hot -> warm -> cold -> converted",
-      "Detect and merge duplicate leads"
-    ],
-    stats: [
-      { label: "All leads", value: "4,892", change: "+426 this week" },
-      { label: "Meta captured", value: "681", change: "Auto sync on" },
-      { label: "Hot leads", value: "316", change: "+11.4%" },
-      { label: "Duplicates", value: "28", change: "Ready to merge" }
-    ],
     columns: ["Lead", "Source", "Owner", "Status", "Duplicate"],
     rows: [
       { Lead: "Priya Sharma", Source: "Meta Lead Ads", Owner: "Aarav Mehta", Status: "Hot", Duplicate: "No" },
@@ -328,14 +234,7 @@ const modules: ModuleConfig[] = [
       { label: "Merge Duplicates", icon: RefreshCw },
       { label: "Export Leads (CSV)", icon: FileSpreadsheet }
     ],
-    chart: { title: "Leads by Status", subtitle: "Pipeline distribution across stages", column: "Status", mode: "count" },
     formTitle: "Create or Update Lead",
-    formFields: [
-      { label: "Lead name", type: "text", placeholder: "Contact name" },
-      { label: "Lead source", type: "select", placeholder: "Meta / CSV / Website / Referral" },
-      { label: "Assign to", type: "select", placeholder: "Employee or manager" },
-      { label: "Status", type: "select", placeholder: "New / Hot / Warm / Cold / Converted" }
-    ]
   },
   {
     key: "customers",
@@ -343,17 +242,6 @@ const modules: ModuleConfig[] = [
     subtitle: "View all customers, convert qualified leads, and review complete profiles with interaction history.",
     icon: Users,
     accent: "from-teal-700 to-pink-500",
-    features: [
-      "View all customers",
-      "Convert a lead into a customer",
-      "View full customer profile and interaction history"
-    ],
-    stats: [
-      { label: "Customers", value: "1,284", change: "+73 converted" },
-      { label: "Profiles complete", value: "94%", change: "+3.2%" },
-      { label: "Open histories", value: "217", change: "Updated today" },
-      { label: "Conversion queue", value: "42", change: "Lead-ready" }
-    ],
     columns: ["Customer", "Industry", "Owner", "Status"],
     rows: [
       { Customer: "Acme Learning", Industry: "Education", Owner: "Aarav Mehta", Status: "Active" },
@@ -367,14 +255,7 @@ const modules: ModuleConfig[] = [
       { label: "View Profile", icon: Eye },
       { label: "Interaction History", icon: History }
     ],
-    chart: { title: "Customers by Status", subtitle: "Active, onboarding, and at-risk accounts", column: "Status", mode: "count" },
     formTitle: "Customer Profile",
-    formFields: [
-      { label: "Customer name", type: "text", placeholder: "Company or person" },
-      { label: "Converted lead", type: "select", placeholder: "Select qualified lead" },
-      { label: "Owner", type: "select", placeholder: "Assign owner" },
-      { label: "Profile note", type: "text", placeholder: "Interaction summary" }
-    ]
   },
   {
     key: "payments",
@@ -382,33 +263,13 @@ const modules: ModuleConfig[] = [
     subtitle: "See all customer payments, add or edit payments, track partials, set reminders, and review company revenue.",
     icon: CircleDollarSign,
     accent: "from-teal-700 to-amber-500",
-    features: [
-      "View every customer's payments",
-      "Add and edit payments",
-      "Track partial payments",
-      "Set payment reminders",
-      "View revenue reports for the full company"
-    ],
-    stats: [
-      { label: "Revenue", value: "$842K", change: "+12.8%" },
-      { label: "Partial payments", value: "86", change: "$91K pending" },
-      { label: "Reminders set", value: "144", change: "21 due today" },
-      { label: "Paid invoices", value: "1,029", change: "97.4% success" }
-    ],
     columns: ["Invoice", "Customer ID", "Total", "Paid", "Balance", "Status"],
     rows: [],
     filters: ["All payments", "Draft", "Sent", "Partial", "Paid", "Cancelled"],
     actions: [
       { label: "Add Payment", icon: Plus, primary: true }
     ],
-    chart: { title: "Invoices by Status", subtitle: "Draft, sent, partial, paid, and cancelled invoices", column: "Status", mode: "count" },
     formTitle: "Create Invoice",
-    formFields: [
-      { label: "Invoice number", type: "text", placeholder: "INV-1001" },
-      { label: "Customer ID", type: "number", placeholder: "Numeric customer ID (see Customers tab)" },
-      { label: "Total", type: "number", placeholder: "Invoice amount" },
-      { label: "Due date", type: "date", placeholder: "Choose due date" }
-    ]
   },
   {
     key: "communication",
@@ -416,18 +277,6 @@ const modules: ModuleConfig[] = [
     subtitle: "Send email, send or view WhatsApp messages, inspect call logs, and open a unified communication timeline.",
     icon: MessageCircle,
     accent: "from-teal-700 to-cyan-500",
-    features: [
-      "Send email to any lead or customer",
-      "View and send WhatsApp messages",
-      "View call logs",
-      "View complete communication history in a unified timeline"
-    ],
-    stats: [
-      { label: "Emails sent", value: "2,408", change: "+334 this week" },
-      { label: "WhatsApp threads", value: "936", change: "128 unread" },
-      { label: "Call logs", value: "1,762", change: "88 today" },
-      { label: "Timeline events", value: "8,914", change: "Unified view" }
-    ],
     columns: ["Recipient", "Subject", "Message", "Status"],
     rows: [
       { Recipient: "priya@example.com", Subject: "Proposal", Message: "Proposal sent", Status: "Sent" }
@@ -436,13 +285,7 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Send Email", icon: Mail, primary: true }
     ],
-    chart: { title: "Messages by Status", subtitle: "Queued, sent, and failed emails", column: "Status", mode: "count" },
     formTitle: "Send Email",
-    formFields: [
-      { label: "Recipient", type: "email", placeholder: "name@example.com" },
-      { label: "Subject", type: "text", placeholder: "Message subject" },
-      { label: "Message", type: "text", placeholder: "Write a professional message" }
-    ]
   },
   {
     key: "tasks",
@@ -450,17 +293,6 @@ const modules: ModuleConfig[] = [
     subtitle: "Assign tasks to any employee or manager, view the full team's follow-up calendar, and set reminders.",
     icon: ListChecks,
     accent: "from-teal-700 to-violet-500",
-    features: [
-      "Assign a task to any employee or manager",
-      "View the full team's follow-up calendar",
-      "Set reminders"
-    ],
-    stats: [
-      { label: "Open tasks", value: "356", change: "74 due today" },
-      { label: "Assigned users", value: "62", change: "Team-wide" },
-      { label: "Follow-ups", value: "219", change: "This week" },
-      { label: "Reminders", value: "188", change: "Synced" }
-    ],
     columns: ["Task", "Priority", "Status", "Due"],
     rows: [
       { Task: "Call hot leads", Priority: "High", Status: "Pending", Due: "" },
@@ -474,14 +306,7 @@ const modules: ModuleConfig[] = [
       { label: "Team Calendar", icon: CalendarDays },
       { label: "Set Reminder", icon: Bell }
     ],
-    chart: { title: "Tasks by Priority", subtitle: "Open workload split by priority", column: "Priority", mode: "count" },
     formTitle: "Assign Task or Follow-up",
-    formFields: [
-      { label: "Task title", type: "text", placeholder: "Follow-up action" },
-      { label: "Assign to", type: "select", placeholder: "Employee or manager" },
-      { label: "Due date", type: "date", placeholder: "Choose due date" },
-      { label: "Reminder", type: "select", placeholder: "Before due date" }
-    ]
   },
   {
     key: "audit",
@@ -489,16 +314,6 @@ const modules: ModuleConfig[] = [
     subtitle: "A protected log of who did what and when, visible only to Super Admins.",
     icon: ShieldCheck,
     accent: "from-teal-700 to-slate-600",
-    features: [
-      "Log who performed each action and when",
-      "This screen is visible only to Super Admin, not Manager or Employee"
-    ],
-    stats: [
-      { label: "Logged actions", value: "12,482", change: "Immutable trail" },
-      { label: "Today", value: "419", change: "Live capture" },
-      { label: "Sensitive events", value: "37", change: "Role and payment edits" },
-      { label: "Access scope", value: "Super Admin", change: "Restricted screen" }
-    ],
     columns: ["Actor", "Action", "Description", "Time", "IP"],
     rows: [
       { Actor: "—", Action: "Create", Description: "—", Time: "—", IP: "—" }
@@ -507,14 +322,7 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Filter Events", icon: Filter }
     ],
-    chart: { title: "Audit Events by Module", subtitle: "Where Super Admin activity is concentrated", column: "Module", mode: "count" },
     formTitle: "Audit Log Filter",
-    formFields: [
-      { label: "Actor", type: "select", placeholder: "Super Admin" },
-      { label: "Module", type: "select", placeholder: "Users / Leads / Payments / Settings" },
-      { label: "Date", type: "date", placeholder: "Choose date" },
-      { label: "Action keyword", type: "text", placeholder: "Search action text" }
-    ]
   },
   {
     key: "settings",
@@ -522,17 +330,6 @@ const modules: ModuleConfig[] = [
     subtitle: "Configure organization settings, Email, WhatsApp, Calling integrations, and system-wide rules.",
     icon: Settings,
     accent: "from-teal-700 to-zinc-600",
-    features: [
-      "Organization settings",
-      "Configure Email, WhatsApp, and Calling integrations",
-      "System-wide settings"
-    ],
-    stats: [
-      { label: "Organization", value: "Qualify Learn", change: "Active workspace" },
-      { label: "Integrations", value: "3/3", change: "Email, WhatsApp, Calling" },
-      { label: "System rules", value: "24", change: "Company-wide" },
-      { label: "Security", value: "On", change: "Super Admin managed" }
-    ],
     columns: ["Setting", "Value", "Description", "Status"],
     rows: [
       { Setting: "example_setting", Value: "example_value", Description: "Example description", Status: "Active" }
@@ -541,14 +338,7 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Org Settings", icon: Building2, primary: true }
     ],
-    chart: { title: "Setting Status", subtitle: "Active vs. inactive system settings", column: "Status", mode: "count" },
     formTitle: "Create or Update Setting",
-    formFields: [
-      { label: "Key", type: "text", placeholder: "setting_key" },
-      { label: "Value", type: "text", placeholder: "Setting value" },
-      { label: "Description", type: "text", placeholder: "What this setting controls" },
-      { label: "Status", type: "select", placeholder: "Active / Inactive" }
-    ]
   }
 ];
 
@@ -1051,25 +841,6 @@ function rowMatchesFilter(row: RowRecord, filterLabel: string): boolean {
   if (values.some((value) => value === normalized)) return true;
   const words = normalized.split(/\s+/).filter((word) => word.length > 2);
   return words.some((word) => values.some((value) => value.includes(word)));
-}
-
-function computeModuleChartData(
-  records: RowRecord[],
-  chart: { column: string; mode: "count" | "sum"; labelColumn?: string }
-): Array<{ label: string; value: number }> {
-  if (chart.mode === "sum") {
-    const labelColumn = chart.labelColumn ?? chart.column;
-    return records
-      .map((row) => ({ label: row[labelColumn] ?? row.id, value: parseCurrency(row[chart.column]) }))
-      .slice(0, 6);
-  }
-
-  const counts = new Map<string, number>();
-  records.forEach((row) => {
-    const value = row[chart.column] || "Unknown";
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  });
-  return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
 }
 
 // ---- Leads <-> backend CRM API mapping ------------------------------
@@ -2173,9 +1944,15 @@ function SuperAdminPage({
   }, [role, activeModule, pagedRows]);
 
   const kpis = useMemo(() => computeKpis(recordsByModule), [recordsByModule]);
+  // Spec 20: figures live on the Dashboard and Analytics/Reports screens
+  // only. Every other module is a records list and renders no stat strip,
+  // so computeModuleStats() is asked for numbers only on those two keys.
   const displayedStats = useMemo(
-    () => computeModuleStats(activeKey, recordsByModule, kpis, reminders, notes) ?? activeModule.stats,
-    [activeKey, recordsByModule, kpis, reminders, notes, activeModule.stats]
+    () =>
+      activeKey === "dashboard" || activeKey === "reports"
+        ? computeModuleStats(activeKey, recordsByModule, kpis, reminders, notes) ?? []
+        : [],
+    [activeKey, recordsByModule, kpis, reminders, notes]
   );
 
   const globalSearchResults = useMemo(() => {
@@ -3315,11 +3092,7 @@ function SuperAdminPage({
                       <div>
                         <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-sm font-semibold ring-1 ring-white/25">
                           <Icon className="size-4" />
-                          {role === "manager"
-                            ? "Team-level access only"
-                            : role === "employee"
-                            ? "Personal access only"
-                            : "No restriction: full system access"}
+                          {ROLE_LABEL[role]}
                         </div>
                         <h2 className="text-3xl font-bold">{displayModuleTitle}</h2>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-white/88">{displayModuleSubtitle}</p>
@@ -3345,7 +3118,12 @@ function SuperAdminPage({
                     </div>
                   </div>
 
-                  <div className="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <div
+                    className={cn(
+                      "grid gap-4 sm:grid-cols-2 xl:grid-cols-4",
+                      displayedStats.length > 0 && "p-4"
+                    )}
+                  >
                     {displayedStats.map((stat) => (
                       <article key={stat.label} className="rounded-xl border bg-background p-4">
                         <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -3403,11 +3181,7 @@ function SuperAdminPage({
                         onCompleteReminder={toggleReminderComplete}
                         onSnoozeReminder={snoozeReminder}
                       />
-                    ) : role === "employee" && (activeKey === "payments" || activeKey === "communication") ? null : (
-                      <ModuleChartSection module={activeModule} records={activeRecords} />
-                    )}
-
-                    {activeKey === "settings" && role === "superadmin" ? <ShiftConfigCard /> : null}
+                    ) : null}
 
                     {/* The generic AuditLog table below this stays exactly as
                         it was (model changes, logins, ...); this adds the
@@ -3416,8 +3190,6 @@ function SuperAdminPage({
                     {activeKey === "audit" && role === "superadmin" ? (
                       <SuperAdminCommunicationAuditSection users={recordsByModule.users ?? []} />
                     ) : null}
-
-                    {role === "employee" ? null : <FeatureCards module={activeModule} />}
 
                     {role === "employee" && activeKey === "payments" ? (
                       <EmployeePaymentsView
@@ -6923,186 +6695,6 @@ function CommunicationAuditDetailModal({
   );
 }
 
-function ShiftConfigCard() {
-  const [config, setConfig] = useState<ShiftConfig | null>(null);
-  const [form, setForm] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    attendance
-      .getShiftConfig()
-      .then((result) => {
-        if (cancelled) return;
-        setConfig(result);
-        setForm({
-          shift_duration_minutes: String(result.shift_duration_minutes),
-          allowed_break_minutes: String(result.allowed_break_minutes),
-          idle_timeout_minutes: String(result.idle_timeout_minutes),
-          overtime_threshold_minutes: String(result.overtime_threshold_minutes),
-          hourly_rate: String(result.hourly_rate),
-          overtime_multiplier: String(result.overtime_multiplier),
-          currency: result.currency,
-          shift_start_time: result.shift_start_time ?? "",
-          shift_end_time: result.shift_end_time ?? "",
-          is_salary_enabled: String(result.is_salary_enabled)
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setMessage("Could not load shift configuration.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleSave() {
-    if (!config) return;
-    setSaving(true);
-    setMessage(null);
-    try {
-      const updated = await attendance.updateShiftConfig(config.id, {
-        shift_duration_minutes: Number(form.shift_duration_minutes),
-        allowed_break_minutes: Number(form.allowed_break_minutes),
-        idle_timeout_minutes: Number(form.idle_timeout_minutes),
-        overtime_threshold_minutes: Number(form.overtime_threshold_minutes),
-        hourly_rate: form.hourly_rate,
-        overtime_multiplier: form.overtime_multiplier,
-        currency: form.currency,
-        shift_start_time: form.shift_start_time || null,
-        shift_end_time: form.shift_end_time || null,
-        is_salary_enabled: form.is_salary_enabled === "true"
-      });
-      setConfig(updated);
-      setMessage("Shift configuration saved.");
-    } catch (err) {
-      setMessage(err instanceof ApiError ? err.message : "Could not save shift configuration.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!config) {
-    return (
-      <article className="rounded-2xl border bg-card p-5 shadow-sm">
-        <div className="flex h-32 items-center justify-center">
-          <Loader2 className="size-5 animate-spin text-muted-foreground" />
-        </div>
-      </article>
-    );
-  }
-
-  return (
-    <article className="rounded-2xl border bg-card p-5 shadow-sm">
-      <div className="mb-4">
-        <h3 className="text-lg font-bold">Shift & Attendance Configuration</h3>
-        <p className="text-sm text-muted-foreground">Company-wide shift length, breaks, idle timeout, and pay rules.</p>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Shift duration (minutes)</span>
-          <input
-            type="number"
-            value={form.shift_duration_minutes ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, shift_duration_minutes: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Shift start time</span>
-          <input
-            type="time"
-            value={form.shift_start_time ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, shift_start_time: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Shift end time</span>
-          <input
-            type="time"
-            value={form.shift_end_time ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, shift_end_time: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Allowed break (minutes)</span>
-          <input
-            type="number"
-            value={form.allowed_break_minutes ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, allowed_break_minutes: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Idle timeout (minutes)</span>
-          <input
-            type="number"
-            value={form.idle_timeout_minutes ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, idle_timeout_minutes: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Overtime threshold (minutes)</span>
-          <input
-            type="number"
-            value={form.overtime_threshold_minutes ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, overtime_threshold_minutes: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm font-semibold">
-          <input
-            type="checkbox"
-            checked={form.is_salary_enabled === "true"}
-            onChange={(event) => setForm((value) => ({ ...value, is_salary_enabled: String(event.target.checked) }))}
-            className="size-4 rounded border-input accent-teal-600"
-          />
-          Enable salary calculation
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Hourly rate</span>
-          <input
-            value={form.hourly_rate ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, hourly_rate: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Overtime multiplier</span>
-          <input
-            value={form.overtime_multiplier ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, overtime_multiplier: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-sm font-semibold">Currency</span>
-          <input
-            value={form.currency ?? ""}
-            onChange={(event) => setForm((value) => ({ ...value, currency: event.target.value }))}
-            className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-          />
-        </label>
-      </div>
-      <div className="mt-4 flex items-center gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="inline-flex h-10 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {saving ? <Loader2 className="size-4 animate-spin" /> : null}
-          Save Changes
-        </button>
-        {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
-      </div>
-    </article>
-  );
-}
-
 type CalendarDayData = {
   leads: RowRecord[];
   customers: RowRecord[];
@@ -8034,24 +7626,6 @@ function ChartCard({ title, subtitle, children }: { title: string; subtitle: str
   );
 }
 
-function ModuleChartSection({ module, records }: { module: ModuleConfig; records: RowRecord[] }) {
-  if (!module.chart) return null;
-  const data = computeModuleChartData(records, module.chart);
-
-  return (
-    <ChartCard title={module.chart.title} subtitle={module.chart.subtitle}>
-      {data.length === 0 ? (
-        <div className="flex h-56 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-          <Filter className="size-6" />
-          No data available for this chart yet.
-        </div>
-      ) : (
-        <BarChart data={data} prefix={module.chart.prefix ?? ""} suffix={module.chart.suffix ?? ""} />
-      )}
-    </ChartCard>
-  );
-}
-
 function getChartPoints(data: Array<{ label: string; value: number }>, width = 320, height = 170, pad = 24) {
   const max = Math.max(...data.map((item) => item.value), 1);
   return data.map((item, index) => {
@@ -8304,27 +7878,6 @@ function TimelineCard({
         ))}
       </div>
     </article>
-  );
-}
-
-function FeatureCards({ module }: { module: ModuleConfig }) {
-  return (
-    <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-      {module.features.map((feature, index) => (
-        <motion.article
-          key={feature}
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: index * 0.025 }}
-          className="rounded-xl border bg-card p-4 shadow-sm"
-        >
-          <div className="mb-3 flex size-9 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
-            <Check className="size-4" />
-          </div>
-          <p className="text-sm font-semibold leading-6">{feature}</p>
-        </motion.article>
-      ))}
-    </section>
   );
 }
 
