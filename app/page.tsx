@@ -200,6 +200,18 @@ const modules: ModuleConfig[] = [
     formTitle: "Add Calendar Event",
   },
   {
+    key: "attendance",
+    title: "Attendance & Working Time",
+    subtitle: "Check-in and check-out records, effective and gross hours, and the day's time logs.",
+    icon: AlarmClock,
+    accent: "from-teal-700 to-sky-500",
+    columns: ["Employee", "Check In", "Check Out", "Effective", "Status"],
+    rows: [],
+    filters: ["All records"],
+    actions: [],
+    formTitle: "Attendance Record"
+  },
+  {
     key: "users",
     title: "User Management",
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
@@ -346,10 +358,14 @@ const modules: ModuleConfig[] = [
   }
 ];
 
+// Spec 7: attendance is a first-class module for every role rather than a
+// dashboard timer. Employee sees their own record, Manager also sees the
+// team records the backend permits, Super Admin sees the company report —
+// the scoping is the server's, not this list's.
 const MODULE_ACCESS: Record<Role, ModuleKey[]> = {
-  superadmin: ["reports", "calendar", "users", "leads", "customers", "payments", "communication", "tasks", "audit", "settings"],
-  manager: ["reports", "calendar", "team", "leads", "customers", "payments", "communication", "tasks"],
-  employee: ["dashboard", "calendar", "leads", "customers", "payments", "communication", "tasks"]
+  superadmin: ["reports", "calendar", "users", "leads", "customers", "payments", "communication", "tasks", "attendance", "audit", "settings"],
+  manager: ["reports", "calendar", "team", "leads", "customers", "payments", "communication", "tasks", "attendance"],
+  employee: ["dashboard", "calendar", "leads", "customers", "payments", "communication", "tasks", "attendance"]
 };
 
 const HOME_MODULE: Record<Role, ModuleKey> = {
@@ -3355,7 +3371,9 @@ function SuperAdminPage({
                   </div>
                 </motion.section>
 
-                {activeKey === "calendar" ? (
+                {activeKey === "attendance" ? (
+                  <AttendanceModule role={role} />
+                ) : activeKey === "calendar" ? (
                   <SmartCalendarModule
                     role={role}
                     recordsByModule={recordsByModule}
@@ -4206,6 +4224,120 @@ function ProfileStat({ label, value }: { label: string; value: string }) {
   );
 }
 
+// Spec 7: the dedicated Attendance / Working Time view. Attendance is a
+// RECORD of the day - Check In, Check Out, Gross Hours, Effective Hours,
+// Time Logs - not a stopwatch. The live session controls stay here (the
+// navbar keeps only the current status pill); the underlying idle/break/
+// heartbeat tracking in useAttendanceTracking is untouched.
+function MyAttendanceRecord() {
+  const attendanceTracking = useContext(AttendanceContext);
+  const [today, setToday] = useState<DailyAttendance | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const current = attendanceTracking?.current ?? null;
+
+  const loadToday = useCallback(() => {
+    attendance
+      .dailySummary()
+      .then((result) => {
+        setToday(result);
+        setError(null);
+      })
+      .catch(() => setError("Could not load today's attendance record."));
+  }, []);
+
+  useEffect(() => {
+    loadToday();
+  }, [loadToday, current?.display_state]);
+
+  async function runControl(action: () => unknown) {
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      setBusy(false);
+      loadToday();
+    }
+  }
+
+  const meta = current ? ATTENDANCE_STATUS_META[current.display_state] : null;
+  const onBreak = current?.display_state === "ON_BREAK";
+  const offline = !current || current.display_state === "OFFLINE";
+
+  return (
+    <section className="space-y-4">
+      <article className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold">Today</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {today?.date ? formatProfileDate(today.date) : "Your attendance record for today."}
+            </p>
+          </div>
+          {current && meta ? (
+            <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-sm font-semibold">
+              <AttendanceStatusDot state={current.display_state} />
+              <span className={meta.text}>{meta.label}</span>
+            </div>
+          ) : null}
+        </div>
+
+        {error ? (
+          <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <ProfileStat label="Check In" value={formatProfileTime(today?.check_in_time ?? today?.login_time)} />
+          <ProfileStat label="Check Out" value={formatProfileTime(today?.check_out_time ?? today?.logout_time)} />
+          <ProfileStat label="Gross Hours" value={formatHM(today?.gross_seconds ?? today?.session_seconds ?? 0)} />
+          <ProfileStat label="Effective Hours" value={formatHM(today?.effective_seconds ?? today?.active_working_seconds ?? 0)} />
+        </div>
+
+        {attendanceTracking ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => runControl(onBreak ? attendanceTracking.endBreak : attendanceTracking.startBreak)}
+              disabled={offline || busy}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border bg-background px-4 text-sm font-semibold shadow-sm transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Coffee className="size-4 text-amber-500" />
+              {onBreak ? "End Break" : "Start Break"}
+            </button>
+            <button
+              onClick={() => runControl(attendanceTracking.fullLogout)}
+              disabled={offline || busy}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
+              Check Out
+            </button>
+          </div>
+        ) : null}
+      </article>
+
+      <article className="rounded-2xl border bg-card p-5 shadow-sm">
+        <h3 className="text-lg font-bold">Time Logs</h3>
+        <p className="mb-4 mt-1 text-sm text-muted-foreground">Every clock event recorded through the day.</p>
+        <AttendanceTimeLogList logs={today?.time_logs ?? []} />
+      </article>
+    </section>
+  );
+}
+
+function AttendanceModule({ role }: { role: Role }) {
+  return (
+    <div className="space-y-4">
+      {role !== "superadmin" ? <MyAttendanceRecord /> : null}
+      {role === "manager" ? <ManagerTeamAttendanceSection /> : null}
+      {role === "superadmin" ? <SuperAdminAttendanceSection /> : null}
+    </div>
+  );
+}
+
 function LeadAssignmentModal({
   leads,
   users,
@@ -4591,10 +4723,9 @@ function AnalyticsDashboard({
 
   return (
     <section className="space-y-4">
-      {role !== "superadmin" ? <EmployeeAttendanceWidget /> : null}
-      {role === "manager" ? <ManagerTeamAttendanceSection /> : null}
-      {role === "superadmin" ? <SuperAdminAttendanceSection /> : null}
-
+      {/* Spec 7/28: no attendance timer or attendance tables on the
+          dashboard. The navbar keeps the live status pill; the record
+          itself lives in the dedicated Attendance module. */}
       {role !== "employee" ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
           {kpis.map((kpi) => {
@@ -6582,129 +6713,6 @@ function EmployeeCustomerProfileModal({
         </div>
       </motion.div>
     </motion.div>
-  );
-}
-
-function EmployeeAttendanceWidget() {
-  const attendanceTracking = useContext(AttendanceContext);
-  const [loggingOut, setLoggingOut] = useState(false);
-
-  if (!attendanceTracking) return null;
-  const { current, liveWorkedSeconds, startBreak, endBreak, fullLogout } = attendanceTracking;
-
-  if (!current) {
-    return (
-      <ChartCard title="Working Hours" subtitle="Loading your attendance session...">
-        <div className="flex h-32 items-center justify-center">
-          <Loader2 className="size-5 animate-spin text-muted-foreground" />
-        </div>
-      </ChartCard>
-    );
-  }
-
-  const meta = ATTENDANCE_STATUS_META[current.display_state];
-  const shiftSeconds = current.shift.shift_duration_minutes * 60;
-  const remainingSeconds = Math.max(shiftSeconds - liveWorkedSeconds, 0);
-  const overtimeSeconds = Math.max(liveWorkedSeconds - shiftSeconds, 0);
-  const shiftProgress = shiftSeconds > 0 ? Math.min((liveWorkedSeconds / shiftSeconds) * 100, 100) : 0;
-  const onBreak = current.display_state === "ON_BREAK";
-  const offline = current.display_state === "OFFLINE";
-
-  async function handleLogout() {
-    setLoggingOut(true);
-    await fullLogout();
-    setLoggingOut(false);
-  }
-
-  return (
-    <div className="grid gap-4 xl:grid-cols-4">
-      <article className="rounded-2xl border bg-card p-5 shadow-sm">
-        <div className="flex items-center gap-2">
-          <AttendanceStatusDot state={current.display_state} />
-          <span className={cn("text-sm font-bold", meta.text)}>{meta.label}</span>
-        </div>
-        <p className="mt-3 font-mono text-3xl font-bold tabular-nums">{formatHMS(liveWorkedSeconds)}</p>
-        <dl className="mt-4 space-y-1.5 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Shift</dt>
-            <dd className="font-semibold">{formatHM(shiftSeconds)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Worked</dt>
-            <dd className="font-semibold">{formatHM(liveWorkedSeconds)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Remaining</dt>
-            <dd className="font-semibold">{formatHM(remainingSeconds)}</dd>
-          </div>
-        </dl>
-        <div className="mt-4 space-y-2">
-          <button
-            onClick={onBreak ? endBreak : startBreak}
-            disabled={offline}
-            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border bg-background text-sm font-semibold shadow-sm transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Coffee className="size-4 text-amber-500" />
-            {onBreak ? "End Break" : "Start Break"}
-          </button>
-          <button
-            onClick={handleLogout}
-            disabled={offline || loggingOut}
-            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loggingOut ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
-            Logout
-          </button>
-        </div>
-      </article>
-
-      <ChartCard title="Today's Hours" subtitle="Active, break, and idle time">
-        <dl className="space-y-3 py-1 text-sm">
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Active Hours</dt>
-            <dd className="font-bold">{formatHM(current.totals.active_working_seconds)}</dd>
-          </div>
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Break Time</dt>
-            <dd className="font-bold">{formatHM(current.totals.break_seconds)}</dd>
-          </div>
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Idle Time</dt>
-            <dd className="font-bold">{formatHM(current.totals.idle_seconds)}</dd>
-          </div>
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Breaks Taken</dt>
-            <dd className="font-bold">{current.totals.break_count}</dd>
-          </div>
-        </dl>
-      </ChartCard>
-
-      <ChartCard title="Shift Progress" subtitle={`${Math.round(shiftProgress)}% of your shift complete`}>
-        <div className="flex h-32 flex-col items-center justify-center gap-3">
-          <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${shiftProgress}%` }} />
-          </div>
-          {overtimeSeconds > 0 ? (
-            <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">+{formatHM(overtimeSeconds)} overtime</p>
-          ) : (
-            <p className="text-sm text-muted-foreground">{formatHM(remainingSeconds)} remaining</p>
-          )}
-        </div>
-      </ChartCard>
-
-      {current.shift.is_salary_enabled ? (
-        <ChartCard title="Today's Earnings" subtitle={current.shift.currency}>
-          <div className="flex h-32 flex-col items-center justify-center gap-1 text-center">
-            <p className="text-3xl font-bold">
-              {current.shift.currency} {current.earnings.total_earnings.toFixed(2)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Regular {current.earnings.regular_earnings.toFixed(2)} + Overtime {current.earnings.overtime_earnings.toFixed(2)}
-            </p>
-          </div>
-        </ChartCard>
-      ) : null}
-    </div>
   );
 }
 
