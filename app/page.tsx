@@ -83,7 +83,10 @@ import {
   type DailyAttendance,
   type RecentActivityEntry,
   type StaffProfile,
-  type AttendanceTimeLog
+  type AttendanceTimeLog,
+  type GoogleSheetStatus,
+  type LeadImportPreview,
+  type SecuritySettingsInfo
 } from "@/lib/api";
 
 type ModuleKey =
@@ -247,6 +250,7 @@ const modules: ModuleConfig[] = [
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
       { label: "Bulk Import", icon: Upload },
+      { label: "Import from Google Sheets", icon: FileSpreadsheet },
       { label: "Merge Duplicates", icon: RefreshCw },
       { label: "Export Leads (CSV)", icon: FileSpreadsheet }
     ],
@@ -1362,13 +1366,13 @@ function isFieldRequired(module: ModuleConfig, column: string, mode: "create" | 
 // and duplicates the Communication Center's own entity-addressed compose
 // box. Employees use the Communication Center's Email workspace instead.
 const EMPLOYEE_BLOCKED_ACTION_PATTERN =
-  /export|download|assign (lead|task|employee|team|manager)|bulk import|merge duplicates|convert lead|add payment|team calendar|add customer|create user|send email/i;
+  /export|download|assign (lead|task|employee|team|manager)|bulk import|google sheets|merge duplicates|convert lead|add payment|team calendar|add customer|create user|send email/i;
 
 // Export (CSV/Excel/reports/data) is Super-Admin-only by default. Manager
 // export is spec'd as "only if explicitly allowed by Manager permissions" —
 // this codebase has no such permission flag today, so Manager is denied
 // export until a real permission concept exists (do not invent one here).
-const EXPORT_ACTION_PATTERN = /export|download/i;
+const EXPORT_ACTION_PATTERN = /export|download|google sheets/i;
 
 function visibleActionsForRole(actions: ModuleConfig["actions"], role: Role): ModuleConfig["actions"] {
   if (role === "superadmin") return actions;
@@ -1860,6 +1864,7 @@ function SuperAdminPage({
   const [assignmentOpen, setAssignmentOpen] = useState(false);
   // Spec 9: the staff member whose full profile is open, if any.
   const [profileTarget, setProfileTarget] = useState<{ id: string; name: string } | null>(null);
+  const [sheetImportOpen, setSheetImportOpen] = useState(false);
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
@@ -3057,6 +3062,12 @@ function SuperAdminPage({
       return;
     }
 
+    if (label === "Import from Google Sheets") {
+      if (role !== "superadmin") return;
+      setSheetImportOpen(true);
+      return;
+    }
+
     if (label === "Assign Lead" || label === "Reassign Lead") {
       if (role === "employee") return;
       setAssignmentOpen(true);
@@ -3136,6 +3147,20 @@ function SuperAdminPage({
       message: `${updatedRows.length} lead${updatedRows.length === 1 ? "" : "s"} assigned to ${targetLabel}.`
     });
     logActivity(`Assigned ${updatedRows.length} lead${updatedRows.length === 1 ? "" : "s"} to ${targetLabel}.`, "leads", null);
+  }
+
+  function applySheetImport(created: number) {
+    setSheetImportOpen(false);
+    crm
+      .listLeads()
+      .then((page) => {
+        setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+      })
+      .catch(() => {
+        // The import itself succeeded; the list refresh can be retried.
+      });
+    showToast({ type: "success", message: `${created} lead${created === 1 ? "" : "s"} imported from Google Sheets.` });
+    logActivity(`Imported ${created} lead${created === 1 ? "" : "s"} from Google Sheets.`, "leads", null);
   }
 
   function quickAddLead() {
@@ -3422,6 +3447,11 @@ function SuperAdminPage({
                         it was (model changes, logins, ...); this adds the
                         communications-specific audit trail as a second
                         section within the same Super-Admin-only module. */}
+                    {/* Spec 21: Settings keeps Account/Profile and nothing
+                        else - the graph area, shift configuration, and
+                        attendance configuration are gone. */}
+                    {activeKey === "settings" ? <AccountSecurityCard role={role} /> : null}
+
                     {activeKey === "audit" && role === "superadmin" ? (
                       <SuperAdminCommunicationAuditSection users={recordsByModule.users ?? []} />
                     ) : null}
@@ -3544,6 +3574,12 @@ function SuperAdminPage({
               setModalOpen(false);
               setEditingRecord(null);
             }}
+          />
+        ) : sheetImportOpen ? (
+          <GoogleSheetImportModal
+            onClose={() => setSheetImportOpen(false)}
+            onImported={applySheetImport}
+            onError={(message) => showToast({ type: "error", message })}
           />
         ) : profileTarget ? (
           <StaffProfileModal
@@ -4335,6 +4371,352 @@ function AttendanceModule({ role }: { role: Role }) {
       {role === "manager" ? <ManagerTeamAttendanceSection /> : null}
       {role === "superadmin" ? <SuperAdminAttendanceSection /> : null}
     </div>
+  );
+}
+
+// Spec 21: the only Settings surface that touches credentials. The
+// verification requirement is not hardcoded - GET /settings/security/
+// reports which field the backend wants (today "current_password"), and
+// that is what gets collected and posted. Nothing is verified in this
+// client, and no secret is ever echoed back after a successful save.
+const SECURITY_FIELD_LABELS: Record<string, string> = {
+  current_password: "Current password"
+};
+
+function AccountSecurityCard({ role }: { role: Role }) {
+  const [info, setInfo] = useState<SecuritySettingsInfo | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [verification, setVerification] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    accounts
+      .getSecuritySettings()
+      .then((result) => {
+        if (!cancelled) setInfo(result);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load the account security settings.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Access key is a Super-Admin-only field server-side; asking any other
+  // role for one would only produce a guaranteed 400.
+  const editableFields: Array<{ key: string; label: string; type: string }> = [
+    { key: "username", label: "Username", type: "text" },
+    { key: "new_password", label: "New password", type: "password" },
+    ...(role === "superadmin" ? [{ key: "new_access_code", label: "Access key", type: "password" }] : [])
+  ];
+
+  const changedFields = editableFields.filter((field) => (form[field.key] ?? "").trim() !== "");
+  const requiredVerification = info?.required_fields ?? [];
+  const verificationComplete = requiredVerification.every((field) => (verification[field] ?? "").trim() !== "");
+  const canSave = changedFields.length > 0 && verificationComplete && !saving;
+
+  function submit() {
+    if (!canSave) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    const body: Record<string, unknown> = {};
+    changedFields.forEach((field) => {
+      body[field.key] = form[field.key].trim();
+    });
+    requiredVerification.forEach((field) => {
+      body[field] = verification[field];
+    });
+    accounts
+      .updateSecuritySettings(body)
+      .then((result) => {
+        // Never echo the new value back - confirm which fields changed only.
+        setSuccess(`Updated: ${result.updated_fields.join(", ")}.`);
+        setForm({});
+        setVerification({});
+      })
+      .catch((err) => {
+        setError(
+          err instanceof ApiError && err.status === 403
+            ? "Verification failed. Nothing was changed."
+            : err instanceof ApiError
+            ? err.message
+            : "Could not save these changes."
+        );
+      })
+      .finally(() => setSaving(false));
+  }
+
+  return (
+    <article className="rounded-2xl border bg-card p-5 shadow-sm">
+      <h3 className="text-lg font-bold">Account &amp; Security</h3>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Update your username, password{role === "superadmin" ? ", and access key" : ""}. Changes are confirmed but never
+        displayed back to you.
+      </p>
+
+      {error ? (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+      {success ? (
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200">
+          <Check className="mt-0.5 size-4 shrink-0" />
+          <span>{success}</span>
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {editableFields.map((field) => (
+          <label key={field.key} className="space-y-1.5">
+            <span className="text-sm font-semibold">{field.label}</span>
+            <input
+              type={field.type}
+              value={form[field.key] ?? ""}
+              autoComplete="off"
+              onChange={(event) => {
+                setSuccess(null);
+                setError(null);
+                setForm((current) => ({ ...current, [field.key]: event.target.value }));
+              }}
+              placeholder="Leave blank to keep unchanged"
+              className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+            />
+          </label>
+        ))}
+      </div>
+
+      <div className="mt-4 rounded-xl border bg-background p-4">
+        <div className="flex items-center gap-2">
+          <LockKeyhole className="size-4 text-teal-600" />
+          <p className="text-sm font-bold">Verification required</p>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {info
+            ? "Confirm this change before it is saved."
+            : "Loading the verification method for this account..."}
+        </p>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          {requiredVerification.map((field) => (
+            <label key={field} className="space-y-1.5">
+              <span className="text-sm font-semibold">{SECURITY_FIELD_LABELS[field] ?? field.replace(/_/g, " ")}</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={verification[field] ?? ""}
+                onChange={(event) => {
+                  setSuccess(null);
+                  setError(null);
+                  setVerification((current) => ({ ...current, [field]: event.target.value }));
+                }}
+                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <button
+          onClick={submit}
+          disabled={!canSave}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+          Save changes
+        </button>
+      </div>
+    </article>
+  );
+}
+
+// Spec 12/32: Google Sheets import. The connection state is read from the
+// backend, never assumed - if it reports configured:false, or the import
+// endpoint answers 503, this says so plainly rather than showing a
+// successful-looking result. CSV import is unaffected either way.
+function GoogleSheetImportModal({
+  onClose,
+  onImported,
+  onError
+}: {
+  onClose: () => void;
+  onImported: (created: number) => void;
+  onError: (message: string) => void;
+}) {
+  const [status, setStatus] = useState<GoogleSheetStatus | null>(null);
+  const [spreadsheetId, setSpreadsheetId] = useState("");
+  const [sheetRange, setSheetRange] = useState("");
+  const [preview, setPreview] = useState<LeadImportPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    crm
+      .googleSheetStatus()
+      .then((result) => {
+        if (!cancelled) setStatus(result);
+      })
+      .catch(() => {
+        if (!cancelled) setStatusError("Could not reach the Google Sheets integration status endpoint.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function run(confirm: boolean) {
+    if (!spreadsheetId.trim()) return;
+    setBusy(true);
+    crm
+      .importGoogleSheet({
+        spreadsheet_id: spreadsheetId.trim(),
+        ...(sheetRange.trim() ? { sheet_range: sheetRange.trim() } : {}),
+        confirm
+      })
+      .then((result) => {
+        if (confirm) {
+          onImported(result.created ?? 0);
+        } else {
+          setPreview(result);
+        }
+      })
+      .catch((err) => {
+        onError(
+          err instanceof ApiError && err.status === 503
+            ? "Google Sheets is not configured on this deployment yet."
+            : err instanceof ApiError
+            ? err.message
+            : "Could not read that spreadsheet."
+        );
+      })
+      .finally(() => setBusy(false));
+  }
+
+  const configured = status?.configured === true;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div>
+            <h3 className="text-xl font-bold">Import Leads from Google Sheets</h3>
+            <p className="mt-1 text-sm text-muted-foreground">Preview the rows first, then confirm the import.</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="inline-flex size-9 items-center justify-center rounded-lg border">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+          {statusError ? (
+            <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <span>{statusError}</span>
+            </div>
+          ) : !status ? (
+            <div className="flex h-24 items-center justify-center">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : !configured ? (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+              <p className="font-bold">Integration not configured</p>
+              <p className="mt-1 leading-6">
+                The {status.provider} connection has no credentials on this deployment, so sheets cannot be read yet. CSV
+                import is unaffected and still works.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-background p-3 text-sm text-muted-foreground">
+              Connected to {status.provider}
+              {status.is_mock ? " (test provider)" : ""}.
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold">Spreadsheet ID</span>
+              <input
+                value={spreadsheetId}
+                disabled={!configured}
+                onChange={(event) => setSpreadsheetId(event.target.value)}
+                placeholder="Spreadsheet ID from the sheet URL"
+                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-sm font-semibold">Sheet range (optional)</span>
+              <input
+                value={sheetRange}
+                disabled={!configured}
+                onChange={(event) => setSheetRange(event.target.value)}
+                placeholder="Sheet1!A1:F500"
+                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+            </label>
+          </div>
+
+          {preview ? (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <ProfileStat label="Rows found" value={String(preview.total ?? 0)} />
+                <ProfileStat label="Valid" value={String(preview.valid ?? 0)} />
+                <ProfileStat label="Invalid" value={String(preview.invalid ?? 0)} />
+              </div>
+              {preview.errors && preview.errors.length > 0 ? (
+                <div className="max-h-40 overflow-y-auto rounded-lg border">
+                  {preview.errors.slice(0, 20).map((rowError, index) => (
+                    <p key={`${rowError.row}-${index}`} className="border-b px-3 py-2 text-xs last:border-b-0">
+                      <span className="font-bold">Row {rowError.row}:</span>{" "}
+                      <span className="text-muted-foreground">{rowError.message ?? rowError.error}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col-reverse gap-2 border-t p-5 sm:flex-row sm:justify-end">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            Cancel
+          </button>
+          <button
+            onClick={() => run(false)}
+            disabled={!configured || !spreadsheetId.trim() || busy}
+            className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Preview
+          </button>
+          <button
+            onClick={() => run(true)}
+            disabled={!configured || !preview || busy}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            Import
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
