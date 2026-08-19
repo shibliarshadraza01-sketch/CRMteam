@@ -81,7 +81,9 @@ import {
   type BackendUser,
   type CurrentAttendance,
   type DailyAttendance,
-  type RecentActivityEntry
+  type RecentActivityEntry,
+  type StaffProfile,
+  type AttendanceTimeLog
 } from "@/lib/api";
 
 type ModuleKey =
@@ -1391,6 +1393,35 @@ function AttendanceStatusDot({ state }: { state: CurrentAttendance["display_stat
   return <span className={cn("inline-block size-2.5 shrink-0 rounded-full", ATTENDANCE_STATUS_META[state].dot)} aria-hidden />;
 }
 
+// Display formatters for backend ISO timestamps. Every one of these
+// returns an honest dash for a missing value rather than inventing "now".
+function formatProfileDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function formatProfileTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatProfileDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return `${formatProfileDate(value)} ${formatProfileTime(value)}`;
+}
+
+function initialsFor(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
 function formatHMS(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const h = Math.floor(seconds / 3600);
@@ -1811,6 +1842,8 @@ function SuperAdminPage({
   // Spec 11/30: the dedicated lead-assignment workspace, opened by the
   // Leads / Team "Assign Lead" action for the roles allowed to route work.
   const [assignmentOpen, setAssignmentOpen] = useState(false);
+  // Spec 9: the staff member whose full profile is open, if any.
+  const [profileTarget, setProfileTarget] = useState<{ id: string; name: string } | null>(null);
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
@@ -3427,6 +3460,11 @@ function SuperAdminPage({
                         <DataTable
                           module={tableModule}
                           rows={tableRows}
+                          onOpenProfile={
+                            activeKey === "users" || activeKey === "team"
+                              ? (row) => setProfileTarget({ id: row.id, name: row.Name ?? row.Email ?? "" })
+                              : undefined
+                          }
                           role={role}
                           allowEdit={activeKey === "tasks"}
                           onEdit={openEditModal}
@@ -3488,6 +3526,12 @@ function SuperAdminPage({
               setModalOpen(false);
               setEditingRecord(null);
             }}
+          />
+        ) : profileTarget ? (
+          <StaffProfileModal
+            userId={profileTarget.id}
+            displayName={profileTarget.name}
+            onClose={() => setProfileTarget(null)}
           />
         ) : assignmentOpen ? (
           <LeadAssignmentModal
@@ -3888,6 +3932,280 @@ function ModuleNav({
 // team, read from that manager's real `managed_employees` on the staff
 // profile endpoint. Everything here posts to the single backend contract
 // POST /api/v1/crm/leads/assign/; nothing is assigned client-side.
+// Spec 9: the full staff profile. One backend call —
+// GET /api/v1/auth/users/<id>/profile/ — returns the whole aggregation
+// already scoped server-side (Super Admin anyone, Manager self + team,
+// Employee only themselves; out of reach is a 404), so this component
+// renders exactly what it is given and never re-filters by role itself.
+// The Manager-only blocks below appear when the backend actually sent
+// `managed_employees`/`scope_lead_stats`, i.e. when the profile IS a
+// Manager — not because of who is looking at it.
+// Spec 7: the time-log strip shared by the attendance view and the staff
+// profile. Renders the backend's `time_logs` array verbatim - check in,
+// work/break/idle transitions, check out - so attendance reads as a record
+// of the day rather than a single running number.
+const TIME_LOG_LABELS: Record<AttendanceTimeLog["type"], string> = {
+  CHECK_IN: "Checked in",
+  WORK_START: "Work resumed",
+  BREAK_START: "Break started",
+  BREAK_END: "Break ended",
+  IDLE_START: "Went idle",
+  IDLE_END: "Back from idle",
+  WORK_END: "Work paused",
+  CHECK_OUT: "Checked out"
+};
+
+function AttendanceTimeLogList({ logs }: { logs: AttendanceTimeLog[] }) {
+  if (logs.length === 0) {
+    return (
+      <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+        No time logs recorded for this day.
+      </p>
+    );
+  }
+
+  return (
+    <ol className="space-y-1.5">
+      {logs.map((log, index) => (
+        <li key={`${log.type}-${log.at}-${index}`} className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2">
+          <span className="size-2 shrink-0 rounded-full bg-teal-600" />
+          <span className="flex-1 text-sm font-semibold">{TIME_LOG_LABELS[log.type] ?? log.type}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{formatProfileTime(log.at)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function StaffProfileModal({
+  userId,
+  displayName,
+  onClose
+}: {
+  userId: string;
+  displayName: string;
+  onClose: () => void;
+}) {
+  const [profile, setProfile] = useState<StaffProfile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    accounts
+      .getStaffProfile(userId)
+      .then((result) => {
+        if (!cancelled) setProfile(result);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(
+          err instanceof ApiError && err.status === 404
+            ? "This profile is not available to you."
+            : err instanceof ApiError
+            ? err.message
+            : "Could not load this profile."
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const person = profile?.profile;
+  const leadStats = profile?.lead_performance;
+  const work = profile?.work_activity;
+  const attendanceToday = work?.attendance_today ?? null;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/45 p-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+    >
+      <motion.div
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-2xl border bg-card shadow-soft"
+        initial={{ scale: 0.96, y: 18 }}
+        animate={{ scale: 1, y: 0 }}
+        exit={{ scale: 0.96, y: 18 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+              {initialsFor(person?.full_name || displayName)}
+            </div>
+            <div className="min-w-0">
+              <h3 className="truncate text-xl font-bold">{person?.full_name || displayName}</h3>
+              <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                {person ? `${USER_ROLE_LABELS[person.role] ?? person.role} · ${person.email}` : "Loading profile..."}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="inline-flex size-9 items-center justify-center rounded-lg border">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+          {error ? (
+            <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          ) : !profile || !person ? (
+            <div className="flex h-40 items-center justify-center">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              <DetailSection title="Basic Profile">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <DetailRow title={person.email} subtitle="Email" />
+                  <DetailRow title={person.phone || "Not on file"} subtitle="Phone" />
+                  <DetailRow title={person.department || "Not assigned"} subtitle="Department" />
+                  <DetailRow title={formatProfileDate(person.date_joined)} subtitle="Joined" />
+                  <DetailRow
+                    title={person.is_active ? "Active" : "Inactive"}
+                    subtitle="Account status"
+                    badge={person.is_active ? "Active" : "Inactive"}
+                  />
+                  <DetailRow title={person.username || "Not set"} subtitle="Display username" />
+                </div>
+              </DetailSection>
+
+              {leadStats ? (
+                <DetailSection title="Work Summary">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <ProfileStat label="Leads assigned" value={leadStats.total_assigned.toLocaleString()} />
+                    <ProfileStat label="This month" value={leadStats.assigned_this_month.toLocaleString()} />
+                    <ProfileStat label="Converted" value={leadStats.converted.toLocaleString()} />
+                    <ProfileStat label="Conversion rate" value={`${leadStats.conversion_rate}%`} />
+                  </div>
+                  {work ? (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <ProfileStat label="Tasks total" value={work.task_counts.total.toLocaleString()} />
+                      <ProfileStat label="Open" value={work.task_counts.open.toLocaleString()} />
+                      <ProfileStat label="Completed" value={work.task_counts.completed.toLocaleString()} />
+                      <ProfileStat label="Overdue" value={work.task_counts.overdue.toLocaleString()} />
+                    </div>
+                  ) : null}
+                </DetailSection>
+              ) : null}
+
+              {profile.managed_employees && profile.managed_employees.length > 0 ? (
+                <DetailSection title="Team">
+                  {profile.managed_employees.map((member) => (
+                    <DetailRow
+                      key={member.id}
+                      title={member.full_name || member.email}
+                      subtitle={member.email}
+                      badge={member.is_active ? "Active" : "Inactive"}
+                    />
+                  ))}
+                  {profile.scope_lead_stats ? (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <ProfileStat label="Leads with manager" value={profile.scope_lead_stats.assigned_to_manager.toLocaleString()} />
+                      <ProfileStat label="Leads with team" value={profile.scope_lead_stats.assigned_to_team.toLocaleString()} />
+                      <ProfileStat label="Converted in scope" value={profile.scope_lead_stats.converted_in_scope.toLocaleString()} />
+                    </div>
+                  ) : null}
+                </DetailSection>
+              ) : null}
+
+              <DetailSection title="Customers Converted">
+                {profile.converted_customers.length === 0 ? (
+                  <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+                    No converted customers yet.
+                  </p>
+                ) : (
+                  profile.converted_customers.map((customer) => (
+                    <DetailRow
+                      key={`${customer.customer_id}-${customer.lead_id}`}
+                      title={customer.customer_name}
+                      subtitle={`Converted ${formatProfileDate(customer.converted_at)}`}
+                      badge={customer.payment_status || undefined}
+                    />
+                  ))
+                )}
+              </DetailSection>
+
+              <DetailSection title="Communication History">
+                {profile.interaction_history.length === 0 ? (
+                  <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+                    No recorded interactions.
+                  </p>
+                ) : (
+                  profile.interaction_history.slice(0, 12).map((interaction) => (
+                    <DetailRow
+                      key={interaction.id}
+                      title={interaction.summary || interaction.channel}
+                      subtitle={`${interaction.channel} · ${formatProfileDateTime(interaction.occurred_at)}`}
+                    />
+                  ))
+                )}
+              </DetailSection>
+
+              <DetailSection title="Scheduled Activity">
+                {work && work.upcoming_events.length > 0 ? (
+                  work.upcoming_events.map((event) => (
+                    <DetailRow
+                      key={event.id}
+                      title={event.title}
+                      subtitle={`${formatProfileDateTime(event.start_at)}${event.location ? ` · ${event.location}` : ""}`}
+                    />
+                  ))
+                ) : (
+                  <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+                    Nothing scheduled.
+                  </p>
+                )}
+              </DetailSection>
+
+              <DetailSection title="Attendance Today">
+                {attendanceToday ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <ProfileStat label="Check in" value={formatProfileTime(attendanceToday.check_in_time ?? attendanceToday.login_time)} />
+                      <ProfileStat label="Check out" value={formatProfileTime(attendanceToday.check_out_time ?? attendanceToday.logout_time)} />
+                      <ProfileStat label="Gross hours" value={formatHM(attendanceToday.gross_seconds ?? attendanceToday.session_seconds ?? 0)} />
+                      <ProfileStat
+                        label="Effective hours"
+                        value={formatHM(attendanceToday.effective_seconds ?? attendanceToday.active_working_seconds ?? 0)}
+                      />
+                    </div>
+                    <AttendanceTimeLogList logs={attendanceToday.time_logs ?? []} />
+                  </>
+                ) : (
+                  <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+                    No attendance recorded today.
+                  </p>
+                )}
+              </DetailSection>
+            </>
+          )}
+        </div>
+
+        <div className="flex justify-end border-t p-5">
+          <button onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">
+            Close
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ProfileStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <strong className="mt-1 block text-lg font-bold">{value}</strong>
+    </div>
+  );
+}
+
 function LeadAssignmentModal({
   leads,
   users,
@@ -8365,7 +8683,8 @@ function DataTable({
   sort,
   onSort,
   role,
-  allowEdit = false
+  allowEdit = false,
+  onOpenProfile
 }: {
   module: ModuleConfig;
   rows: RowRecord[];
@@ -8376,6 +8695,9 @@ function DataTable({
   sort: { column: string; direction: "asc" | "desc" } | null;
   onSort: (column: string) => void;
   role?: Role;
+  // Spec 9: on staff tables the name cell opens the full profile view.
+  // Omitted everywhere else, so no other module grows a stray link.
+  onOpenProfile?: (row: RowRecord) => void;
   // Employees are view-only everywhere except Tasks (where they may
   // update their own task's status/completion) — see the Tasks &
   // Follow-ups render branch, the only caller that passes allowEdit.
@@ -8446,10 +8768,18 @@ function DataTable({
               {module.columns.map((column) => {
                 const value = row[column] ?? "-";
                 const isBadge = ["Status", "Priority", "Outcome", "Export"].includes(column);
+                const isProfileLink = Boolean(onOpenProfile) && column === module.columns[0];
                 return (
                   <td key={column} className="px-4 py-4 text-sm">
                     {isBadge ? (
                       <span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1", statusClass(value))}>{value}</span>
+                    ) : isProfileLink ? (
+                      <button
+                        onClick={() => onOpenProfile?.(row)}
+                        className="rounded text-left font-semibold text-teal-700 underline-offset-4 hover:underline dark:text-teal-300"
+                      >
+                        {value}
+                      </button>
                     ) : (
                       <span className={column === module.columns[0] ? "font-semibold" : "text-muted-foreground"}>{value}</span>
                     )}
