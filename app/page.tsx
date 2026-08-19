@@ -80,7 +80,8 @@ import {
   type BackendRole,
   type BackendUser,
   type CurrentAttendance,
-  type DailyAttendance
+  type DailyAttendance,
+  type RecentActivityEntry
 } from "@/lib/api";
 
 type ModuleKey =
@@ -462,6 +463,20 @@ function thisMonthRows(rows: RowRecord[]): RowRecord[] {
   });
 }
 
+// Same shape as thisMonthRows(), narrowed to the current calendar day —
+// backs the dashboard's "Today" figures with loaded records rather than
+// hardcoded numbers (spec 19/35).
+function todayRows(rows: RowRecord[]): RowRecord[] {
+  const todayKey = toDateKey(new Date());
+  return rows.filter((row) => {
+    const raw = row._createdAt;
+    if (!raw) return false;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return toDateKey(parsed) === todayKey;
+  });
+}
+
 function startOfWeek(date: Date): Date {
   const next = new Date(date);
   next.setDate(next.getDate() - next.getDay());
@@ -551,25 +566,37 @@ const CALENDAR_ITEM_DOTS: Array<{ key: "leads" | "customers" | "calls" | "tasks"
   { key: "notes", label: "Notes", color: "bg-amber-500" }
 ];
 
-const recentActivities = [
-  "Aarav assigned 18 Meta leads to the north team",
-  "Super Admin merged 4 duplicate leads",
-  "Nisha converted Bright Path to customer",
-  "Payment reminder sent to Northstar Labs"
-];
+// Spec 19/35: no seeded activity, follow-up, or "today" figures live here
+// any more. Recent Activities comes from GET /api/v1/activities/recent/
+// (already role-scoped server-side); Upcoming Follow-ups was a duplicate
+// of the real Upcoming Reminders card below it; Today's Statistics is now
+// derived from the loaded records in computeTodayStats().
 
-const upcomingFollowUps = [
-  { time: "10:30 AM", title: "Call hot leads queue", owner: "Aarav Mehta" },
-  { time: "01:00 PM", title: "Partial payment reminder", owner: "Kabir Sethi" },
-  { time: "04:15 PM", title: "Customer onboarding check", owner: "Nisha Rao" }
-];
+// Maps a backend activity `kind` onto the module its record lives in, so
+// the timeline entry can still deep-link to the record it describes.
+const ACTIVITY_KIND_MODULE: Record<string, ModuleKey> = {
+  LEAD_CONVERTED: "leads",
+  LEAD_ASSIGNED: "leads",
+  CUSTOMER_CREATED: "customers",
+  PAYMENT_RECEIVED: "payments",
+  PAYMENT_OVERDUE: "payments",
+  USER_CREATED: "users",
+  FOLLOW_UP_SCHEDULED: "tasks",
+  INTERACTION_LOGGED: "communication",
+  REMINDER_GENERATED: "calendar",
+  CHECKED_IN: "attendance",
+  CHECKED_OUT: "attendance"
+};
 
-const todayStats = [
-  { label: "New Leads", value: "86" },
-  { label: "Calls Logged", value: "88" },
-  { label: "Emails Sent", value: "214" },
-  { label: "Tasks Closed", value: "57" }
-];
+function recentActivityToEntry(entry: RecentActivityEntry, index: number): ActivityEntry {
+  const detail = entry.description?.trim();
+  return {
+    id: `recent-${entry.kind}-${entry.entity_id ?? index}-${entry.timestamp}`,
+    message: detail ? `${entry.title} — ${detail}` : entry.title,
+    moduleKey: ACTIVITY_KIND_MODULE[entry.kind] ?? "reports",
+    row: null
+  };
+}
 
 function createInitialRecords(): RecordsByModule {
   return modules.reduce((records, module) => {
@@ -1782,9 +1809,7 @@ function SuperAdminPage({
   // banner and cleared the moment the user edits any field (spec 23).
   const [formServerError, setFormServerError] = useState<string | null>(null);
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
-  const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() =>
-    recentActivities.map((message, index) => ({ id: `seed-${index}`, message, moduleKey: "reports", row: null }))
-  );
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([]);
   const [toast, setToast] = useState<ToastState>(null);
   const [dark, setDark] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
@@ -1915,6 +1940,21 @@ function SuperAdminPage({
         });
       });
 
+    // Spec 19: real business events only, and never for an Employee —
+    // Recent Activities is removed from the Employee dashboard entirely,
+    // so the request is not even issued for that role.
+    if (role !== "employee") {
+      activities
+        .listRecentActivity({ limit: 25, days: 7 })
+        .then((entries) => {
+          if (cancelled) return;
+          setActivityLog(entries.map(recentActivityToEntry));
+        })
+        .catch(() => {
+          // Non-fatal: the timeline simply shows its empty state.
+        });
+    }
+
     activities
       .listTasks()
       .then((page) => {
@@ -1961,6 +2001,9 @@ function SuperAdminPage({
     return () => {
       cancelled = true;
     };
+    // `role` is fixed for the lifetime of this component (a role change
+    // means a re-login, which remounts it), so this stays a mount-time load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -3867,6 +3910,21 @@ function AnalyticsDashboard({
   const topPerformers = employeePerformanceData.slice(0, 3);
   const openRequests = paymentRows.filter((row) => row.Status !== "Cancelled" && parseCurrency(row.Balance) > 0).slice(0, 5);
 
+  // Spec 19/35: derived from the records already loaded for this role,
+  // so a quiet day honestly reads as zeroes rather than a seeded number.
+  const leadsToday = todayRows(recentLeads);
+  const customersToday = todayRows(customerRows);
+  const paymentsToday = todayRows(paymentRows);
+  const todayFigures = [
+    { label: "New Leads", value: leadsToday.length.toLocaleString() },
+    { label: "Leads Converted", value: countBy(leadsToday, "Status", "Converted").toLocaleString() },
+    { label: "New Customers", value: customersToday.length.toLocaleString() },
+    {
+      label: "Payments Collected",
+      value: formatCurrencyShort(paymentsToday.reduce((sum, row) => sum + parseCurrency(row.Paid), 0))
+    }
+  ];
+
   const upcomingReminders = reminders
     .filter((reminder) => canSeeReminder(reminder, role, currentUserName, teamNames) && !reminder.completed)
     .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
@@ -4086,7 +4144,7 @@ function AnalyticsDashboard({
           <article className="rounded-2xl border bg-card p-5 shadow-sm">
             <h3 className="text-lg font-bold">Today&apos;s Statistics</h3>
             <div className="mt-4 grid grid-cols-2 gap-3">
-              {todayStats.map((item) => (
+              {todayFigures.map((item) => (
                 <div key={item.label} className="rounded-xl border bg-background p-3">
                   <p className="text-xs text-muted-foreground">{item.label}</p>
                   <strong className="mt-1 block text-xl">{item.value}</strong>
@@ -4116,7 +4174,10 @@ function AnalyticsDashboard({
       </>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Spec 6/19/28: Recent Activities is a Manager/Super-Admin surface.
+          An Employee never sees it — the entry is not rendered and the
+          backing request is never made for that role. */}
+      {role !== "employee" ? (
         <TimelineCard
           title="Recent Activities"
           items={activityLog}
@@ -4125,23 +4186,7 @@ function AnalyticsDashboard({
           onDelete={onDeleteActivity}
           onCreate={onCreateForModule}
         />
-        {role !== "employee" ? (
-        <article className="rounded-2xl border bg-card p-5 shadow-sm">
-          <h3 className="text-lg font-bold">Upcoming Follow-ups</h3>
-          <div className="mt-4 space-y-3">
-            {upcomingFollowUps.map((item) => (
-              <div key={`${item.time}-${item.title}`} className="flex items-center gap-3 rounded-xl border bg-background p-3">
-                <div className="rounded-lg bg-teal-50 px-2 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">{item.time}</div>
-                <div>
-                  <p className="text-sm font-bold">{item.title}</p>
-                  <p className="text-xs text-muted-foreground">{item.owner}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
-        ) : null}
-      </div>
+      ) : null}
 
       <div className="grid gap-4">
         <article className="rounded-2xl border bg-card p-5 shadow-sm">
