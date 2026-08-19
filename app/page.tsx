@@ -3,6 +3,7 @@
 import {
   Activity,
   AlarmClock,
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -201,12 +202,12 @@ const modules: ModuleConfig[] = [
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
     icon: UserCog,
     accent: "from-teal-700 to-rose-500",
-    columns: ["Name", "Role", "Email", "Status", "Password"],
+    columns: ["Name", "Role", "Email", "Phone", "Status", "Password"],
     rows: [
-      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Status: "Active", Password: "••••••••" },
-      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Status: "Active", Password: "••••••••" },
-      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Status: "Inactive", Password: "••••••••" },
-      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Status: "Active", Password: "••••••••" }
+      { Name: "Aarav Mehta", Role: "Manager", Email: "aarav@qualifylearn.com", Phone: "", Status: "Active" },
+      { Name: "Nisha Rao", Role: "Employee", Email: "nisha@qualifylearn.com", Phone: "", Status: "Active" },
+      { Name: "Kabir Sethi", Role: "Manager", Email: "kabir@qualifylearn.com", Phone: "", Status: "Inactive" },
+      { Name: "Zoya Khan", Role: "Employee", Email: "zoya@qualifylearn.com", Phone: "", Status: "Active" }
     ],
     filters: ["All roles", "Manager", "Employee", "Active", "Inactive"],
     actions: [
@@ -968,8 +969,8 @@ function userToRow(user: Record<string, unknown>): RowRecord {
     Name: fullName || String(user.email ?? ""),
     Role: USER_ROLE_LABELS[role] ?? role,
     Email: String(user.email ?? ""),
-    Status: user.is_active === false ? "Inactive" : "Active",
-    Password: "••••••••"
+    Phone: String(user.phone ?? ""),
+    Status: user.is_active === false ? "Inactive" : "Active"
   };
 }
 
@@ -981,12 +982,15 @@ function rowToUserCreatePayload(formData: Record<string, string>): Record<string
     password: formData.Password ?? "",
     first_name: firstName ?? "",
     last_name: rest.join(" "),
-    role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE")
+    phone: formData.Phone?.trim() ?? "",
+    role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE"),
+    is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
   };
 }
 
 function rowToUserUpdatePayload(formData: Record<string, string>): Record<string, unknown> {
   return {
+    phone: formData.Phone?.trim() ?? "",
     role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE"),
     is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
   };
@@ -1232,6 +1236,71 @@ function employeeSafeRow(module: ModuleConfig, row: RowRecord): RowRecord {
     return { ...row, Email: contactCapabilityLabel(row._canEmail), Phone: contactCapabilityLabel(row._canCall) };
   }
   return row;
+}
+
+// Spec 8/27: credentials belong in the Create/Edit User form, never in a
+// column of the user table — not even masked. These columns are collected
+// by RecordModal but stripped before the table renders.
+const FORM_ONLY_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
+  users: ["Password"]
+};
+
+function tableColumnsForRole(module: ModuleConfig, role: Role): string[] {
+  const base = role === "employee" ? employeeSafeColumns(module) : module.columns;
+  const formOnly = FORM_ONLY_COLUMNS[module.key];
+  return formOnly ? base.filter((column) => !formOnly.includes(column)) : base;
+}
+
+// Spec 8/23: columns whose value set is a real enum render as a <select>,
+// so Role can never be typed as arbitrary text. Anything not listed here
+// stays a free-text input.
+const FIELD_OPTIONS: Partial<Record<ModuleKey, Record<string, string[]>>> = {
+  users: {
+    Role: ["Manager", "Employee"],
+    Status: ["Active", "Inactive"]
+  },
+  team: {
+    Role: ["Manager", "Employee"],
+    Status: ["Active", "Inactive"]
+  },
+  leads: {
+    Status: ["New", "Hot", "Warm", "Cold", "Converted", "Lost"]
+  },
+  customers: {
+    Status: ["Prospect", "Active", "Inactive", "Churned"]
+  },
+  payments: {
+    Status: ["Draft", "Sent", "Partial", "Paid", "Cancelled"]
+  },
+  communication: {
+    Status: ["Queued", "Sent", "Failed"]
+  },
+  tasks: {
+    Status: ["Pending", "In Progress", "Completed"],
+    Priority: ["High", "Medium", "Low"]
+  },
+  settings: {
+    Status: ["Active", "Inactive"]
+  },
+  reports: {
+    Status: ["Active", "Inactive"],
+    Type: ["Productivity", "Lead Conversion", "Sales Pipeline", "Customer Activity", "Custom"]
+  }
+};
+
+// Fields a form may legitimately leave blank. A password is only set at
+// creation time; an edit that leaves it empty keeps the existing one.
+const OPTIONAL_FIELDS: Partial<Record<ModuleKey, string[]>> = {
+  users: ["Password", "Phone"],
+  leads: ["Owner"],
+  reports: ["Description"]
+};
+
+function isFieldRequired(module: ModuleConfig, column: string, mode: "create" | "edit" | "view"): boolean {
+  if (mode === "view") return false;
+  if ((OPTIONAL_FIELDS[module.key] ?? []).includes(column)) return false;
+  if (mode === "edit" && module.key === "users" && column === "Password") return false;
+  return true;
 }
 
 // Employees must never see an export/download affordance, or any action
@@ -1709,6 +1778,9 @@ function SuperAdminPage({
   const [modalMode, setModalMode] = useState<"create" | "edit" | "view">("create");
   const [editingRecord, setEditingRecord] = useState<RowRecord | null>(null);
   const [formData, setFormData] = useState<Record<string, string>>({});
+  // Backend rejection text for the open create/edit form, shown as its own
+  // banner and cleared the moment the user edits any field (spec 23).
+  const [formServerError, setFormServerError] = useState<string | null>(null);
   const [recordsByModule, setRecordsByModule] = useState<RecordsByModule>(() => createInitialRecords());
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>(() =>
     recentActivities.map((message, index) => ({ id: `seed-${index}`, message, moduleKey: "reports", row: null }))
@@ -1930,12 +2002,21 @@ function SuperAdminPage({
   // Email / masked Phone / Category (Status) per spec section 5, and
   // Customers drops the Owner column per section 10 — both derived from
   // the same already-scoped `pagedRows`, never from a separate fetch.
-  const employeeTableModule = useMemo(() => {
+  //
+  // `formModule` is what the create/edit/view modal collects; `tableModule`
+  // is what the grid renders. They differ only by FORM_ONLY_COLUMNS, so a
+  // credential field can be entered without ever becoming a table cell.
+  const formModule = useMemo(() => {
     if (role !== "employee") return activeModule;
     return { ...activeModule, columns: employeeSafeColumns(activeModule) };
   }, [role, activeModule]);
 
-  const employeeTableRows = useMemo(() => {
+  const tableModule = useMemo(
+    () => ({ ...activeModule, columns: tableColumnsForRole(activeModule, role) }),
+    [role, activeModule]
+  );
+
+  const tableRows = useMemo(() => {
     if (role !== "employee") return pagedRows;
     return pagedRows.map((row) => employeeSafeRow(activeModule, row));
   }, [role, activeModule, pagedRows]);
@@ -1999,6 +2080,7 @@ function SuperAdminPage({
     const columns = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
     const safeRow = role === "employee" ? employeeSafeRow(targetModule, row) : row;
     setFormData(Object.fromEntries(columns.map((column) => [column, safeRow[column] ?? ""])));
+    setFormServerError(null);
     setModalOpen(true);
     setGlobalQuery("");
   }
@@ -2082,6 +2164,7 @@ function SuperAdminPage({
     const viewCols = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
     const viewRow = role === "employee" ? employeeSafeRow(targetModule, currentRow) : currentRow;
     setFormData(Object.fromEntries(viewCols.map((column) => [column, viewRow[column] ?? ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
@@ -2106,6 +2189,7 @@ function SuperAdminPage({
     const editCols = role === "employee" ? employeeSafeColumns(targetModule) : targetModule.columns;
     const editRow = role === "employee" ? employeeSafeRow(targetModule, currentRow) : currentRow;
     setFormData(Object.fromEntries(editCols.map((column) => [column, editRow[column] ?? ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
@@ -2131,6 +2215,7 @@ function SuperAdminPage({
     setEditingRecord(null);
     setModalMode("create");
     setFormData(Object.fromEntries(activeModule.columns.map((column) => [column, ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
@@ -2147,6 +2232,7 @@ function SuperAdminPage({
     setEditingRecord(null);
     setModalMode("create");
     setFormData(Object.fromEntries(targetModule.columns.map((column) => [column, ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
@@ -2155,10 +2241,11 @@ function SuperAdminPage({
     setModalMode("edit");
     // Employees only ever reach this for Tasks (DataTable hides the Edit
     // button everywhere else — see DataTable's isEmployeeViewOnly), so
-    // employeeTableModule.columns is safe here too and keeps this in sync
+    // formModule.columns is safe here too and keeps this in sync
     // with what openViewModal below shows.
     const safeEditRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
-    setFormData(Object.fromEntries(employeeTableModule.columns.map((column) => [column, safeEditRow[column] ?? ""])));
+    setFormData(Object.fromEntries(formModule.columns.map((column) => [column, safeEditRow[column] ?? ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
@@ -2170,11 +2257,13 @@ function SuperAdminPage({
     // Owner, etc.) that a raw `activeModule.columns` read would
     // leak through the "View" action.
     const safeViewRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
-    setFormData(Object.fromEntries(employeeTableModule.columns.map((column) => [column, safeViewRow[column] ?? ""])));
+    setFormData(Object.fromEntries(formModule.columns.map((column) => [column, safeViewRow[column] ?? ""])));
+    setFormServerError(null);
     setModalOpen(true);
   }
 
   function updateFormField(field: string, value: string) {
+    setFormServerError(null);
     setFormData((current) => ({ ...current, [field]: value }));
   }
 
@@ -2184,12 +2273,20 @@ function SuperAdminPage({
       return;
     }
 
-    const missingField = activeModule.columns.find((column) => !formData[column]?.trim());
+    // Backstop for the inline validation RecordModal already enforces —
+    // same isFieldRequired() rule, so the two can never disagree and
+    // report a field as required in one place but optional in the other.
+    const missingField = formModule.columns.find(
+      (column) => isFieldRequired(formModule, column, modalMode) && !formData[column]?.trim()
+    );
 
     if (missingField) {
+      setFormServerError(null);
       showToast({ type: "error", message: `${missingField} is required before saving.` });
       return;
     }
+
+    setFormServerError(null);
 
     if (modalMode === "create") {
       if (activeKey === "leads") {
@@ -2203,7 +2300,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create lead." });
+            const message = err instanceof ApiError ? err.message : "Could not create lead.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2223,7 +2322,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create customer." });
+            const message = err instanceof ApiError ? err.message : "Could not create customer.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2243,7 +2344,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create user." });
+            const message = err instanceof ApiError ? err.message : "Could not create user.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2259,7 +2362,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create setting." });
+            const message = err instanceof ApiError ? err.message : "Could not create setting.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2279,7 +2384,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create report." });
+            const message = err instanceof ApiError ? err.message : "Could not create report.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2295,7 +2402,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create task." });
+            const message = err instanceof ApiError ? err.message : "Could not create task.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2318,7 +2427,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not send email." });
+            const message = err instanceof ApiError ? err.message : "Could not send email.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2344,7 +2455,9 @@ function SuperAdminPage({
             setModalOpen(false);
           })
           .catch((err) => {
-            showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not create invoice." });
+            const message = err instanceof ApiError ? err.message : "Could not create invoice.";
+            setFormServerError(message);
+            showToast({ type: "error", message });
           });
         return;
       }
@@ -2380,7 +2493,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update customer." });
+          const message = err instanceof ApiError ? err.message : "Could not update customer.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2401,7 +2516,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update user." });
+          const message = err instanceof ApiError ? err.message : "Could not update user.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2421,7 +2538,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update setting." });
+          const message = err instanceof ApiError ? err.message : "Could not update setting.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2442,7 +2561,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update report." });
+          const message = err instanceof ApiError ? err.message : "Could not update report.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2462,7 +2583,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update task." });
+          const message = err instanceof ApiError ? err.message : "Could not update task.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2520,7 +2643,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update invoice." });
+          const message = err instanceof ApiError ? err.message : "Could not update invoice.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -2540,7 +2665,9 @@ function SuperAdminPage({
           setEditingRecord(null);
         })
         .catch((err) => {
-          showToast({ type: "error", message: err instanceof ApiError ? err.message : "Could not update lead." });
+          const message = err instanceof ApiError ? err.message : "Could not update lead.";
+          setFormServerError(message);
+          showToast({ type: "error", message });
         });
       return;
     }
@@ -3228,11 +3355,11 @@ function SuperAdminPage({
                       </div>
 
                       {isLoading ? (
-                        <LoadingSkeleton columns={employeeTableModule.columns} />
+                        <LoadingSkeleton columns={tableModule.columns} />
                       ) : (
                         <DataTable
-                          module={employeeTableModule}
-                          rows={employeeTableRows}
+                          module={tableModule}
+                          rows={tableRows}
                           role={role}
                           allowEdit={activeKey === "tasks"}
                           onEdit={openEditModal}
@@ -3297,9 +3424,11 @@ function SuperAdminPage({
           />
         ) : modalOpen ? (
           <RecordModal
-            module={employeeTableModule}
+            key={`${activeKey}-${modalMode}-${editingRecord?.id ?? "new"}`}
+            module={formModule}
             mode={modalMode}
             formData={formData}
+            serverError={formServerError}
             onChange={updateFormField}
             onSave={saveRecord}
             extraContent={
@@ -8068,6 +8197,7 @@ function RecordModal({
   onChange,
   onSave,
   onClose,
+  serverError,
   extraContent
 }: {
   module: ModuleConfig;
@@ -8076,18 +8206,39 @@ function RecordModal({
   onChange: (field: string, value: string) => void;
   onSave: () => void;
   onClose: () => void;
+  // Errors the backend rejected the submission with. Kept separate from
+  // the inline required-field messages below so a server error is never
+  // mistaken for a validation state this form owns (spec 23).
+  serverError?: string | null;
   // Optional per-record actions rendered under the field grid (used by the
   // Employee lead detail view for its Email/Call/WhatsApp quick actions).
   extraContent?: React.ReactNode;
 }) {
   const isView = mode === "view";
-  const title = mode === "edit" ? `Edit ${module.title}` : mode === "view" ? `View ${module.title}` : module.formTitle;
+  // Validation is derived from the CURRENT field values on every render —
+  // never from a snapshot taken when the modal opened — so typing into a
+  // required field clears its message immediately and a stale error can
+  // never survive valid input (spec 8/23).
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+
+  const missingFields = module.columns.filter(
+    (column) => isFieldRequired(module, column, mode) && !(formData[column] ?? "").trim()
+  );
+
+  const title = mode === "edit" ? `Edit ${module.title}` : mode === "view" ? module.title : module.formTitle;
   const subtitle =
     mode === "edit"
-      ? `Update the existing record for ${module.title}.`
+      ? `Update this ${module.title} record.`
       : mode === "view"
-      ? `Read-only details for this ${module.title} record.`
-      : `Modal form with validation for ${module.title}.`;
+      ? `Details for this ${module.title} record.`
+      : `Add a new ${module.title} record.`;
+
+  function handleSave() {
+    setSubmitAttempted(true);
+    if (missingFields.length > 0) return;
+    onSave();
+  }
 
   return (
     <motion.div
@@ -8098,7 +8249,7 @@ function RecordModal({
       onClick={onClose}
     >
       <motion.div
-        className="w-full max-w-2xl rounded-2xl border bg-card shadow-soft"
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border bg-card shadow-soft"
         initial={{ scale: 0.96, y: 18 }}
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.96, y: 18 }}
@@ -8109,29 +8260,84 @@ function RecordModal({
             <h3 className="text-xl font-bold">{title}</h3>
             <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
           </div>
-          <button onClick={onClose} className="inline-flex size-9 items-center justify-center rounded-lg border">
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="inline-flex size-9 items-center justify-center rounded-lg border"
+          >
             <X className="size-4" />
           </button>
         </div>
+
+        {serverError && !isView ? (
+          <div className="mx-5 mt-5 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>{serverError}</span>
+          </div>
+        ) : null}
+
         <div className="grid gap-4 p-5 sm:grid-cols-2">
-          {module.columns.map((column, index) => (
-            <label key={column} className="space-y-1.5">
-              <span className="text-sm font-semibold">{column}</span>
-              <input
-                type="text"
-                value={formData[column] ?? ""}
-                readOnly={isView}
-                onChange={(event) => onChange(column, event.target.value)}
-                placeholder={`Enter ${column.toLowerCase()}`}
-                className={cn(
-                  "h-11 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4",
-                  isView && "cursor-default bg-muted text-muted-foreground",
-                  !isView && index === 0 && "border-red-300"
+          {module.columns.map((column) => {
+            const value = formData[column] ?? "";
+            const required = isFieldRequired(module, column, mode);
+            const options = FIELD_OPTIONS[module.key]?.[column];
+            const showError = required && !value.trim() && (submitAttempted || touched[column]);
+            const errorId = `${module.key}-${column}-error`;
+            const fieldClass = cn(
+              "h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4",
+              isView && "cursor-default bg-muted text-muted-foreground",
+              showError && "border-red-500"
+            );
+
+            return (
+              <label key={column} className="space-y-1.5">
+                <span className="text-sm font-semibold">
+                  {column}
+                  {required ? <span className="ml-0.5 text-red-600">*</span> : null}
+                </span>
+                {options && !isView ? (
+                  <select
+                    value={value}
+                    aria-invalid={showError}
+                    aria-describedby={showError ? errorId : undefined}
+                    onChange={(event) => {
+                      setTouched((current) => ({ ...current, [column]: true }));
+                      onChange(column, event.target.value);
+                    }}
+                    onBlur={() => setTouched((current) => ({ ...current, [column]: true }))}
+                    className={fieldClass}
+                  >
+                    <option value="">{`Select ${column.toLowerCase()}`}</option>
+                    {options.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={column === "Password" ? "password" : column === "Email" ? "email" : "text"}
+                    value={value}
+                    readOnly={isView}
+                    aria-invalid={showError}
+                    aria-describedby={showError ? errorId : undefined}
+                    onChange={(event) => {
+                      setTouched((current) => ({ ...current, [column]: true }));
+                      onChange(column, event.target.value);
+                    }}
+                    onBlur={() => setTouched((current) => ({ ...current, [column]: true }))}
+                    placeholder={isView ? "" : `Enter ${column.toLowerCase()}`}
+                    className={fieldClass}
+                  />
                 )}
-              />
-              {!isView && index === 0 ? <span className="text-xs font-medium text-red-600">Required field cannot be empty.</span> : null}
-            </label>
-          ))}
+                {showError ? (
+                  <span id={errorId} className="block text-xs font-medium text-red-600 dark:text-red-400">
+                    {options ? `Select a ${column.toLowerCase()}.` : `${column} is required.`}
+                  </span>
+                ) : null}
+              </label>
+            );
+          })}
         </div>
         {extraContent ? <div className="px-5 pb-5">{extraContent}</div> : null}
         <div className="flex flex-col-reverse gap-2 border-t p-5 sm:flex-row sm:justify-end">
@@ -8140,8 +8346,8 @@ function RecordModal({
           </button>
           {!isView ? (
             <button
-              onClick={onSave}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm"
+              onClick={handleSave}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700"
             >
               <Check className="size-4" />
               {mode === "edit" ? "Save Changes" : "Save Record"}
