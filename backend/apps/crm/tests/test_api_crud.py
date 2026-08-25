@@ -164,6 +164,41 @@ def test_patch_lead(api_client, employee):
     assert lead.status == Lead.Status.QUALIFIED
 
 
+@pytest.mark.parametrize(
+    "status_value",
+    [Lead.Status.DNC, Lead.Status.NO_ANSWER, Lead.Status.NOT_INTERESTED, Lead.Status.CALL_BACK],
+)
+def test_patch_lead_accepts_call_disposition_statuses(api_client, employee, status_value):
+    """Spec 5: DNC/No Answer/Not Interested/Call Back are real, settable,
+    filterable statuses on the same `Lead.status` field — not a second
+    parallel status system.
+    """
+    lead = Lead.objects.create(company_name="Initech", contact_name="Peter", owner=employee)
+    api_client.force_authenticate(employee)
+
+    response = api_client.patch(_detail(LEADS_URL, lead.pk), {"status": status_value})
+
+    assert response.status_code == 200
+    lead.refresh_from_db()
+    assert lead.status == status_value
+
+
+@pytest.mark.parametrize(
+    "status_value",
+    [Lead.Status.DNC, Lead.Status.NO_ANSWER, Lead.Status.NOT_INTERESTED, Lead.Status.CALL_BACK],
+)
+def test_lead_list_filters_by_call_disposition_status(api_client, employee, status_value):
+    Lead.objects.create(company_name="Match Co", contact_name="A", owner=employee, status=status_value)
+    Lead.objects.create(company_name="Other Co", contact_name="B", owner=employee, status=Lead.Status.NEW)
+    api_client.force_authenticate(employee)
+
+    response = api_client.get(f"{LEADS_URL}?status={status_value}")
+
+    assert response.status_code == 200
+    names = {row["company_name"] for row in response.data["results"]}
+    assert names == {"Match Co"}
+
+
 def test_delete_lead_soft_deletes(api_client, employee):
     lead = Lead.objects.create(company_name="Initech", contact_name="Peter", owner=employee)
     api_client.force_authenticate(employee)

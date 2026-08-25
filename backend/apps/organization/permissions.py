@@ -41,6 +41,20 @@ OrganizationWritePermission = ReadOnlyOrSuperAdmin
 #: Department / Team: read — any authenticated user; write — Manager or
 #: above. Same composition CP13's ``CatalogWritePermission`` established —
 #: see that module's docstring for the truth table.
+#:
+#: PHASE 5 AUDIT — DELIBERATELY UNCHANGED. Re-examined alongside the
+#: Phase 5 tightening of ``apps.system``'s ``SystemConfigWritePermission``
+#: and ``apps.attendance``'s ``ShiftConfigurationViewSet``. The
+#: system-wide/Manager-scoped line in THIS app falls between
+#: ``Organization`` and ``Department``/``Team``, and it is already drawn
+#: correctly: ``Organization`` is the single tenant-level record and is
+#: Super-Admin-only above (``test_api.py::test_manager_cannot_create_organization``),
+#: while a ``Department``/``Team`` is one of many per-team structural rows
+#: that a Manager legitimately administers — ``Team`` even carries a
+#: ``manager`` FK naming the Manager responsible for it, and
+#: ``test_manager_can_create_department``/``_team``/``_delete_team``
+#: assert that capability today. Tightening this would remove real
+#: Manager functionality rather than close a hole.
 DepartmentTeamWritePermission = ReadOnlyOrSuperAdmin | IsManagerOrSuperAdmin
 
 __all__ = [

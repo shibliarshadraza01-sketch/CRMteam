@@ -35,9 +35,45 @@ unchanged rather than growing a parallel one.
 """
 import json
 import os
+import re
+from urllib.parse import quote
 
 DEFAULT_API_URL = "https://sheets.googleapis.com/v4/spreadsheets"
 REQUEST_TIMEOUT_SECONDS = 15
+
+# A Google Sheets URL always carries its document id in a /d/<id>/ segment,
+# e.g. https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0
+_SPREADSHEET_URL_ID = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
+# A bare id, for the case where someone pasted just that.
+_BARE_SPREADSHEET_ID = re.compile(r"^[a-zA-Z0-9-_]+$")
+
+
+def extract_spreadsheet_id(value):
+    """Accept either a bare spreadsheet id or a full Google Sheets URL.
+
+    Pasting the browser's address bar is the normal way a user identifies a
+    sheet — nobody hand-extracts the id from the middle of the URL. Feeding
+    that URL straight into the API path (as this adapter previously did)
+    produces a nonsensical request that Google rejects, surfacing to the
+    user as an opaque upstream failure for what is really a parsing gap on
+    our side.
+
+    Returns the extracted id, or raises ``GoogleSheetsError`` when the
+    input can't contain one — a clear, local error beats a confusing 502.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        raise GoogleSheetsError("spreadsheet_id is required.")
+
+    match = _SPREADSHEET_URL_ID.search(raw)
+    if match:
+        return match.group(1)
+    if _BARE_SPREADSHEET_ID.match(raw):
+        return raw
+    raise GoogleSheetsError(
+        "Could not read a spreadsheet ID from that value. Paste either the "
+        "sheet's URL or the ID from the /d/<id>/ part of it."
+    )
 
 
 class GoogleSheetsError(Exception):
@@ -83,12 +119,20 @@ class GoogleSheetsAPIProvider(BaseGoogleSheetsProvider):
                 "Google Sheets is not configured on this deployment "
                 "(set GOOGLE_SHEETS_API_KEY to enable spreadsheet imports)."
             )
-        if not spreadsheet_id:
-            raise GoogleSheetsError("spreadsheet_id is required.")
+        # Accept a pasted sheet URL as well as a bare id.
+        document_id = extract_spreadsheet_id(spreadsheet_id)
 
         import requests  # imported lazily so this module stays import-safe anywhere
 
-        url = f"{self.api_url}/{spreadsheet_id}/values/{sheet_range or 'Sheet1'}"
+        # The range goes into the URL PATH, and legitimately contains
+        # characters that are not path-safe: "!" always (Sheet1!A1:F500),
+        # plus spaces and quotes whenever the tab name has a space
+        # ('My Leads'!A:G). Interpolating it raw produced a malformed
+        # request URL for those perfectly ordinary ranges, so it is
+        # percent-encoded here. `safe=""` because none of "!'()" should
+        # survive as a literal.
+        target_range = sheet_range or "Sheet1"
+        url = f"{self.api_url}/{quote(document_id, safe='')}/values/{quote(target_range, safe='')}"
         try:
             response = requests.get(url, params={"key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS)
         except Exception as exc:  # requests.RequestException and friends
@@ -196,6 +240,7 @@ def fetch_rows(spreadsheet_id, sheet_range=None):
 
 
 __all__ = [
+    "extract_spreadsheet_id",
     "GoogleSheetsError",
     "GoogleSheetsNotConfigured",
     "BaseGoogleSheetsProvider",

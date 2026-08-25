@@ -222,6 +222,23 @@ def test_find_duplicate_leads_matches_on_phone():
 
 
 @pytest.mark.django_db
+def test_find_duplicate_leads_matches_email_case_insensitively():
+    lead = create_lead("Acme", "Jane", email="Jane@Acme.example")
+    duplicate = create_lead("Acme Inc", "Jane D", email="jane@acme.example")
+
+    assert list(find_duplicate_leads(lead)) == [duplicate]
+
+
+@pytest.mark.django_db
+def test_find_duplicate_leads_matches_phone_regardless_of_formatting():
+    lead = create_lead("Acme", "Jane", phone="(555) 010-0000")
+    duplicate = create_lead("Acme Inc", "Jane D", phone="555-010-0000")
+    create_lead("Unrelated", "Bob", phone="555-999-9999")
+
+    assert list(find_duplicate_leads(lead)) == [duplicate]
+
+
+@pytest.mark.django_db
 def test_find_duplicate_leads_excludes_converted_leads(organization):
     lead = create_lead("Acme", "Jane", email="jane@acme.example")
     converted = create_lead("Acme Inc", "Jane D", email="jane@acme.example")

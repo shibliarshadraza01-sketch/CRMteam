@@ -1,6 +1,6 @@
 # Qualify Learn CRM
 
-A CRM built on Django + Django REST Framework + PostgreSQL (backend) and Next.js (frontend), covering Authentication, Organization/Team management, Leads, Customers, Payments (with a real partial-payment ledger), Communication (email via SendGrid, telephony via A1 Routes, WhatsApp via the WhatsApp Business API), Tasks, Reports/Dashboards, Audit logging, Settings, and User/Role management. Single-company deployment — no multi-tenancy.
+A CRM built on Django + Django REST Framework + PostgreSQL (backend) and Next.js (frontend), covering Authentication, Organization/Team management, Leads, Customers, Payments (with a real partial-payment ledger), Communication (email via SendGrid, telephony via A1 Routes), Tasks, Reports/Dashboards, Audit logging, Settings, and User/Role management. Single-company deployment — no multi-tenancy. (A WhatsApp Business API channel previously existed; it was removed in the 2026-08-23 final QA pass — explicitly descoped by the project owner — and must not be reintroduced.)
 
 See `backend/BACKEND_LEARNING_GUIDE.md` and `backend/BACKEND_PROGRESS.md` for the full build history and architectural reasoning behind every module. For running this in production, see `backend/PRODUCTION_DEPLOYMENT_GUIDE.md` (architecture, Cloudflare/WAF, scaling, monitoring) and `backend/BACKUP_AND_RECOVERY_GUIDE.md` (backup strategy, restore runbook).
 
@@ -52,7 +52,6 @@ See `backend/.env.example` for the full annotated list. Summary:
 | `DJANGO_BEHIND_PROXY` | production, opt-in | set `true` only when an actual TLS-terminating reverse proxy sits in front |
 | `REDIS_URL` | production | shared cache for distributed rate limiting across instances — fails fast without it in production; development uses Django's local in-process cache instead |
 | `A1ROUTES_API_KEY` / `A1ROUTES_WEBHOOK_SECRET` / `A1ROUTES_DEFAULT_FROM_NUMBER` | optional | SIP telephony (A1 Routes) — leave unset to leave calling provider-ready-but-unverified |
-| `WHATSAPP_API_TOKEN` / `WHATSAPP_PHONE_ID` / `WHATSAPP_VERIFY_TOKEN` / `WHATSAPP_APP_SECRET` | optional | WhatsApp Business API — same "provider-ready" status without a real account |
 | `BACKUP_*` | optional | database backup automation — see `backend/BACKUP_AND_RECOVERY_GUIDE.md` |
 
 Never commit a real `.env` — it's gitignored, and `.env.example` must stay placeholder-only.
@@ -82,7 +81,9 @@ npm run build
 
 ## Known external dependencies / scope limits
 
-- **SendGrid, A1 Routes (SIP telephony), WhatsApp Business API**: all three are wired correctly — real HTTP clients, real webhook signature verification, real audit logging — but none has been verified against a real provider account in this environment (no credentials available). Status: implemented, external verification pending for all three.
+- **SendGrid, A1 Routes (SIP telephony)**: both are wired correctly — real HTTP clients, real webhook signature verification, real audit logging — but neither has been verified against a real provider account in this environment (no credentials available). Status: implemented, external verification pending for both.
+- **WhatsApp Business API**: removed (2026-08-23 final QA pass). It had been explicitly descoped by the project owner (SendGrid email + A1 Routes calling only) but was reintroduced without authorization in a later pass; it has now been fully removed (model, migration, provider client, views/serializers/filters, frontend workspace, env vars) and must not be reintroduced.
+- **Meta Lead Ads**: not implemented in this codebase. Only a generic webhook/integration framework (`apps.integrations`: `Integration`, `WebhookEndpoint`, `WebhookDelivery`) and generic lead-ingestion-readiness fields on `Lead` (`external_source_id`, `source_metadata`, `received_at`) exist; there is no Meta-specific webhook handler, signature verification, or Graph API client. Lead ingestion from an external source in this codebase is via the Google Sheets import action on `LeadViewSet`, not Meta.
 - **File storage/transcription**: out of scope — no feature in this project needs it (CSV/XLSX import/export are handled entirely in-request, never touching disk or object storage).
 - **Calendar reminders/notes**: intentionally local-only (browser state), by design — no backend model exists for them.
 - **Database backups**: automation is implemented (`python manage.py backup_database`) and unit-tested, but not verified end-to-end — no PostgreSQL client tools or S3-compatible bucket exist in this development environment. See `backend/BACKUP_AND_RECOVERY_GUIDE.md`.

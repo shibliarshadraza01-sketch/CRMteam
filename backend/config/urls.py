@@ -36,7 +36,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from apps.communications.views import A1RoutesWebhookView, InboundEmailWebhookView, WhatsAppWebhookView
+from apps.communications.views import A1RoutesWebhookView, InboundEmailWebhookView
 
 
 def health(request):
@@ -109,10 +109,9 @@ urlpatterns = [
     # Inbound provider webhooks — deliberately NOT under /api/v1/communications/:
     # these are unauthenticated-by-JWT (the provider has no user account),
     # authenticated instead by their own signature scheme (see
-    # apps.communications.views.A1RoutesWebhookView/WhatsAppWebhookView).
+    # apps.communications.views.A1RoutesWebhookView).
     # A distinct top-level prefix keeps that trust boundary visually
     # obvious in the URL itself, not just in a comment.
     path("api/v1/webhooks/a1routes/", A1RoutesWebhookView.as_view(), name="webhook-a1routes"),
-    path("api/v1/webhooks/whatsapp/", WhatsAppWebhookView.as_view(), name="webhook-whatsapp"),
     path("api/v1/webhooks/inbound-email/", InboundEmailWebhookView.as_view(), name="webhook-inbound-email"),
 ]

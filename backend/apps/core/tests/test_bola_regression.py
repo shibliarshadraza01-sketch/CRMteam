@@ -64,6 +64,13 @@ def employee_b(db, django_user_model):
 
 
 @pytest.fixture
+def super_admin(db, django_user_model):
+    return django_user_model.objects.create_user(
+        email="bola-admin@example.com", password="x", role=django_user_model.Role.SUPER_ADMIN
+    )
+
+
+@pytest.fixture
 def customer_a(db, organization, employee_a):
     """Owned by employee_a — employee_b must never be able to attach a
     child record to this customer.
@@ -95,23 +102,33 @@ def test_employee_cannot_add_address_to_another_employees_customer(api_client, c
 
 
 def test_employee_cannot_create_invoice_against_another_employees_customer(api_client, customer_a, employee_b):
+    # Revenue/Payments audit pass: Invoice writes are Super-Admin-only now
+    # (apps.sales.views.InvoiceViewSet), so a plain Employee is refused at
+    # the permission layer (403) before ever reaching the BOLA object check
+    # this test originally exercised (which would have been a 404) — an
+    # even stronger guarantee than before: an Employee can no longer
+    # create ANY invoice, their own or someone else's.
     api_client.force_authenticate(employee_b)
     response = api_client.post(
         "/api/v1/sales/invoices/", {"customer": customer_a.pk, "invoice_number": "INV-STOLEN"}
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
 
 
 def test_employee_cannot_add_line_item_to_another_employees_invoice(api_client, invoice_a, employee_b):
     """Live-verified vulnerability: employee_b could previously inflate
     employee_a's invoice total by injecting a fake line item.
+
+    Revenue/Payments audit pass: now refused even earlier, at the
+    permission layer (403) — an Employee cannot add a line item to ANY
+    invoice, not just someone else's.
     """
     api_client.force_authenticate(employee_b)
     response = api_client.post(
         "/api/v1/sales/invoice-items/",
         {"invoice": invoice_a.pk, "product_name": "Injected item", "quantity": 1, "unit_price": "999.00"},
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
     invoice_a.refresh_from_db()
     assert invoice_a.total == 100
     assert invoice_a.items.count() == 0
@@ -120,22 +137,46 @@ def test_employee_cannot_add_line_item_to_another_employees_invoice(api_client, 
 def test_employee_cannot_record_payment_against_another_employees_invoice(api_client, invoice_a, employee_b):
     """Live-verified vulnerability: employee_b could previously record a
     real payment transaction against employee_a's invoice.
+
+    Revenue/Payments audit pass: now refused even earlier, at the
+    permission layer (403) — an Employee cannot record a payment against
+    ANY invoice, not just someone else's.
     """
     api_client.force_authenticate(employee_b)
     response = api_client.post(
         "/api/v1/sales/payments/", {"invoice": invoice_a.pk, "amount": "5.00"}
     )
-    assert response.status_code == 404
+    assert response.status_code == 403
     invoice_a.refresh_from_db()
     assert invoice_a.amount_paid == 0
     assert invoice_a.payments.count() == 0
 
 
-def test_owner_can_still_add_line_item_and_record_payment_on_own_invoice(api_client, invoice_a, employee_a):
-    """The fix must not block the legitimate owner — same requests,
-    same invoice, authenticated as its actual owner.
+def test_owner_employee_can_no_longer_add_line_item_or_record_payment(api_client, invoice_a, employee_a):
+    """Revenue/Payments audit pass superseded the original BOLA fix's
+    "the legitimate owner is still allowed" guarantee: ownership alone no
+    longer grants write access to a real revenue record — only a Super
+    Admin may create/edit an invoice line item or record a payment, even
+    against an invoice the requesting Employee genuinely owns.
     """
     api_client.force_authenticate(employee_a)
+    item_response = api_client.post(
+        "/api/v1/sales/invoice-items/",
+        {"invoice": invoice_a.pk, "product_name": "Legit item", "quantity": 1, "unit_price": "10.00"},
+    )
+    assert item_response.status_code == 403
+
+    payment_response = api_client.post(
+        "/api/v1/sales/payments/", {"invoice": invoice_a.pk, "amount": "5.00"}
+    )
+    assert payment_response.status_code == 403
+
+
+def test_super_admin_can_still_add_line_item_and_record_payment(api_client, invoice_a, super_admin):
+    """The one role revenue/payment writes remain available to at all —
+    same requests the old "owner can still..."/"manager can still..."
+    tests exercised, now only reachable by a Super Admin."""
+    api_client.force_authenticate(super_admin)
     item_response = api_client.post(
         "/api/v1/sales/invoice-items/",
         {"invoice": invoice_a.pk, "product_name": "Legit item", "quantity": 1, "unit_price": "10.00"},
@@ -148,9 +189,11 @@ def test_owner_can_still_add_line_item_and_record_payment_on_own_invoice(api_cli
     assert payment_response.status_code == 201
 
 
-def test_manager_can_add_line_item_to_managed_employees_invoice(api_client, invoice_a, employee_a, organization):
-    """The fix must preserve the existing "manager can act on their
-    team's records" rule, not just "owner only".
+def test_manager_cannot_add_line_item_even_to_managed_employees_invoice(api_client, invoice_a, employee_a, organization):
+    """Revenue/Payments audit pass: "a Manager can act on their team's
+    records" — true everywhere else in this project — explicitly does NOT
+    extend to revenue. A Manager managing employee_a's team must still be
+    refused, exactly like any other non-Super-Admin.
     """
     from apps.organization.models import Department, Membership, Team
 
@@ -165,4 +208,4 @@ def test_manager_can_add_line_item_to_managed_employees_invoice(api_client, invo
         "/api/v1/sales/invoice-items/",
         {"invoice": invoice_a.pk, "product_name": "Manager-added item", "quantity": 1, "unit_price": "10.00"},
     )
-    assert response.status_code == 201
+    assert response.status_code == 403

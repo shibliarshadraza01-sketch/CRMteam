@@ -22,10 +22,10 @@ def test_customer_serializer_fields():
     assert {
         "id", "organization", "name", "slug", "owner", "status", "industry", "website",
         "email", "phone", "notes", "is_active",
-        # The privacy pass added three read-only capability booleans that
+        # The privacy pass added two read-only capability booleans that
         # REPLACE email/phone in an employee-facing response — see
         # apps.core.serializers.ContactCapabilityMixin.
-        "can_email", "can_call", "can_whatsapp",
+        "can_email", "can_call",
         "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
     } == set(fields.keys())
 

@@ -76,17 +76,18 @@ def register_audit_signals():
     `INSTALLED_APPS` ordering, so this is always safe, the standard
     Django pattern for cross-app signal registration.
     """
-    from apps.communications.models import Call, WhatsAppMessage
+    from apps.communications.models import Call
     from apps.crm.models import Customer, Lead
     from apps.crm.opportunities import Opportunity
     from apps.sales.models import Invoice, Quote
 
-    # Final production operations pass: Call/WhatsAppMessage added —
-    # both are real external-provider-facing communication records (a
-    # placed phone call, a sent WhatsApp message), the same "compliance/
-    # audit-trail-worthy" class of record as the original five, and
-    # explicitly required by that pass's own spec ("Audit log required").
-    for model in (Customer, Lead, Opportunity, Quote, Invoice, Call, WhatsAppMessage):
+    # Final production operations pass: Call added — a real
+    # external-provider-facing communication record (a placed phone
+    # call), the same "compliance/audit-trail-worthy" class of record as
+    # the original five, and explicitly required by that pass's own spec
+    # ("Audit log required"). WhatsAppMessage was removed along with the
+    # rest of the WhatsApp Business API integration (explicitly descoped).
+    for model in (Customer, Lead, Opportunity, Quote, Invoice, Call):
         post_save.connect(
             _record_save, sender=model, dispatch_uid=f"{_DISPATCH_UID_PREFIX}_{model._meta.label_lower}"
         )

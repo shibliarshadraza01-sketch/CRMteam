@@ -21,22 +21,18 @@ communications API, mounted at /api/v1/communications/ by config/urls.py.
     GET/POST          /api/v1/communications/calls/                (A1 Routes SIP)
     GET               /api/v1/communications/calls/<id>/
 
-    POST              /api/v1/communications/whatsapp/send/         (WhatsApp Business API)
-    GET               /api/v1/communications/whatsapp/messages/
-    GET               /api/v1/communications/whatsapp/messages/<id>/
-
 Inbound provider webhooks (``/api/v1/webhooks/...``) are mounted
 separately by ``config/urls.py`` — see that module and
-``views.A1RoutesWebhookView``/``views.WhatsAppWebhookView``'s own
-docstrings for why they live outside the versioned, JWT-authenticated
-``/api/v1/communications/`` namespace.
+``views.A1RoutesWebhookView``'s own docstring for why it lives outside
+the versioned, JWT-authenticated ``/api/v1/communications/`` namespace.
 
 Built entirely from DRF's ``DefaultRouter`` for the REST-shaped
-resources; the WhatsApp send/list split uses explicit ``path()`` entries
-since ``send``/``messages`` aren't a router's default list/create verbs
-on the same URL.
+resources.
+
+WhatsApp Business API support (send/messages routes, webhook) was
+removed — it was explicitly descoped by the project owner and must not
+be reintroduced.
 """
-from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
@@ -45,7 +41,6 @@ from .views import (
     EmailMessageViewSet,
     EmailTemplateViewSet,
     NotificationViewSet,
-    WhatsAppMessageViewSet,
 )
 
 app_name = "communications"
@@ -57,20 +52,4 @@ router.register("notifications", NotificationViewSet, basename="notification")
 router.register("communication-logs", CommunicationLogViewSet, basename="communication-log")
 router.register("calls", CallViewSet, basename="call")
 
-urlpatterns = router.urls + [
-    path(
-        "whatsapp/send/",
-        WhatsAppMessageViewSet.as_view({"post": "create"}),
-        name="whatsapp-send",
-    ),
-    path(
-        "whatsapp/messages/",
-        WhatsAppMessageViewSet.as_view({"get": "list"}),
-        name="whatsapp-message-list",
-    ),
-    path(
-        "whatsapp/messages/<int:pk>/",
-        WhatsAppMessageViewSet.as_view({"get": "retrieve"}),
-        name="whatsapp-message-detail",
-    ),
-]
+urlpatterns = router.urls

@@ -454,17 +454,20 @@ LOGGING = {
 }
 
 # ---------------------------------------------------------------------------
-# Telephony (A1 Routes) / WhatsApp Business API (final production
-# operations pass)
+# Telephony (A1 Routes) (final production operations pass)
 # ---------------------------------------------------------------------------
 # Every credential is read directly from the environment by
-# apps/communications/providers/{a1routes,whatsapp}.py at call time (NOT
-# cached into a settings constant) so a credential rotation takes effect
-# on the next request without a restart. This project only declares the
-# ONE non-secret configuration value each provider needs beyond its own
-# module's own os.environ.get() calls — the outbound "from" number A1
-# Routes calls originate from, which callers of CallViewSet.create() never
-# supply themselves (see that view's own docstring).
+# apps/communications/providers/a1routes.py at call time (NOT cached into
+# a settings constant) so a credential rotation takes effect on the next
+# request without a restart. This project only declares the ONE non-secret
+# configuration value the provider needs beyond its own module's own
+# os.environ.get() calls — the outbound "from" number A1 Routes calls
+# originate from, which callers of CallViewSet.create() never supply
+# themselves (see that view's own docstring).
+#
+# WhatsApp Business API integration was removed — explicitly descoped by
+# the project owner (SendGrid email + A1 Routes calling only) and must not
+# be reintroduced.
 A1ROUTES_DEFAULT_FROM_NUMBER = env("A1ROUTES_DEFAULT_FROM_NUMBER", "")
 
 # ---------------------------------------------------------------------------

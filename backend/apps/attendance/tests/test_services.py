@@ -35,17 +35,54 @@ def test_start_session_creates_open_work_segment(employee):
 
 
 @pytest.mark.django_db
-def test_start_session_closes_stale_open_session_for_same_employee(employee):
+def test_start_session_is_idempotent_and_resumes_the_open_session(employee):
+    """A repeated start (page refresh, second tab, retried request) must
+    RESUME the open session, never close it and open another — otherwise
+    every reload forges a check-out/check-in pair the employee never made.
+    """
     t0 = timezone.now()
     first = start_session(employee, now=t0)
 
     second = start_session(employee, now=t0 + timedelta(hours=1))
 
+    assert second.pk == first.pk
     first.refresh_from_db()
-    assert first.logout_at == t0 + timedelta(hours=1)
-    assert first.state == AttendanceSession.State.OFFLINE
+    assert first.logout_at is None
+    assert first.state == AttendanceSession.State.WORKING
+    assert AttendanceSession.active_objects.for_employee(employee).open().count() == 1
+    # Exactly one session for the day, so exactly one arrival event.
+    assert AttendanceSession.active_objects.for_employee(employee).count() == 1
+
+
+@pytest.mark.django_db
+def test_start_session_after_checkout_opens_a_genuinely_new_session(employee):
+    """A real second arrival — one that follows an explicit check-out —
+    still gets its own session and therefore its own check-in.
+    """
+    t0 = timezone.now()
+    first = start_session(employee, now=t0)
+    end_session(first, now=t0 + timedelta(hours=4))
+
+    second = start_session(employee, now=t0 + timedelta(hours=5))
+
+    assert second.pk != first.pk
     assert second.logout_at is None
     assert AttendanceSession.active_objects.for_employee(employee).open().count() == 1
+
+
+@pytest.mark.django_db
+def test_repeated_starts_do_not_multiply_daily_sessions_or_check_ins(employee):
+    t0 = timezone.now()
+    session = start_session(employee, now=t0)
+    for minute in range(1, 5):
+        start_session(employee, now=t0 + timedelta(minutes=minute))
+
+    summary = compute_daily_summary(employee, timezone.localdate(), now=t0 + timedelta(minutes=10))
+
+    assert summary["number_of_sessions"] == 1
+    check_ins = [entry for entry in summary["time_logs"] if entry["type"] == "CHECK_IN"]
+    assert len(check_ins) == 1
+    assert check_ins[0]["at"] == session.login_at
 
 
 @pytest.mark.django_db
@@ -292,3 +329,27 @@ def test_get_active_shift_configuration_returns_newest_existing_row(shift_config
 
     newer = ShiftConfiguration.objects.create(shift_duration_minutes=480)
     assert get_active_shift_configuration().id == newer.id
+
+
+@pytest.mark.django_db
+def test_start_session_does_not_resume_a_session_left_open_overnight(employee):
+    """Idempotency is scoped to a DAY.
+
+    compute_daily_summary() attributes a session to the date it started on,
+    so resuming yesterday's never-closed session would leave TODAY with no
+    attendance record at all while the employee is plainly working.
+    """
+    yesterday = timezone.now() - timedelta(days=1)
+    stale = start_session(employee, now=yesterday)
+
+    today_session = start_session(employee)
+
+    assert today_session.pk != stale.pk
+    stale.refresh_from_db()
+    assert stale.logout_at is not None
+    assert stale.state == AttendanceSession.State.OFFLINE
+    assert AttendanceSession.active_objects.for_employee(employee).open().count() == 1
+    # And today genuinely has its own record.
+    summary = compute_daily_summary(employee, timezone.localdate())
+    assert summary is not None
+    assert summary["number_of_sessions"] == 1

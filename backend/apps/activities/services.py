@@ -456,7 +456,7 @@ def get_recent_activity(user, *, limit=RECENT_ACTIVITY_DEFAULT_LIMIT, days=RECEN
             {
                 "kind": "CHECKED_IN",
                 "timestamp": session.login_at,
-                "title": f"{_name(session.employee)} checked in",
+                "title": f"{_name(session.employee)} logged in",
                 "description": "",
                 "entity_type": "attendance_session",
                 "entity_id": session.id,
@@ -469,7 +469,7 @@ def get_recent_activity(user, *, limit=RECENT_ACTIVITY_DEFAULT_LIMIT, days=RECEN
                 {
                     "kind": "CHECKED_OUT",
                     "timestamp": session.logout_at,
-                    "title": f"{_name(session.employee)} checked out",
+                    "title": f"{_name(session.employee)} logged out",
                     "description": "",
                     "entity_type": "attendance_session",
                     "entity_id": session.id,

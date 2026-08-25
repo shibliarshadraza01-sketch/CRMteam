@@ -337,34 +337,42 @@ Applied consistently across every owner-having create endpoint: `Lead`, `Custome
 
 ---
 
-## 15b. Telephony (A1 Routes) and WhatsApp Business API
+## 15b. Telephony (A1 Routes)
 
-Both implemented in the final production operations pass —
-`apps/communications/providers/{a1routes,whatsapp}.py` (real HTTP
-clients), `Call`/`WhatsAppMessage` models, `CallViewSet`/
-`WhatsAppMessageViewSet` (JWT-authenticated, ownership-scoped, audit-
-logged, rate-limited at the `expensive_operation` scope), and two
-inbound webhooks (`/api/v1/webhooks/a1routes/`, `/api/v1/webhooks/whatsapp/`
-— each authenticated by its own HMAC signature scheme instead of JWT,
-since the provider has no user account).
+Implemented in the final production operations pass —
+`apps/communications/providers/a1routes.py` (real HTTP client),
+the `Call` model, `CallViewSet` (JWT-authenticated, ownership-scoped,
+audit-logged, rate-limited at the `expensive_operation` scope), and one
+inbound webhook (`/api/v1/webhooks/a1routes/` — authenticated by its own
+HMAC signature scheme instead of JWT, since the provider has no user
+account).
 
-**CODE READY**: request/response shapes match each provider's real API,
+**CODE READY**: request/response shapes match the provider's real API,
 credentials are read from environment variables only and never appear
 in a response/log, webhook signatures are verified with constant-time
 comparison, both failure paths (provider unreachable, provider rejects
 the request) are recorded on the created row rather than raised as a
-5xx. 23 tests, all passing (provider calls mocked — no real account
-exists to test against).
+5xx. Provider calls are mocked in tests — no real account exists to
+test against.
 
 **REQUIRES CLOUD CONFIGURATION**: a real A1 Routes account (`A1ROUTES_API_KEY`,
-`A1ROUTES_WEBHOOK_SECRET`, a purchased/ported `A1ROUTES_DEFAULT_FROM_NUMBER`)
-and a real WhatsApp Business account (`WHATSAPP_API_TOKEN`,
-`WHATSAPP_PHONE_ID`, `WHATSAPP_APP_SECRET`, and registering
-`https://<your-domain>/api/v1/webhooks/whatsapp/` in the Meta App
-Dashboard using `WHATSAPP_VERIFY_TOKEN` for the subscription handshake).
-Neither has been verified against a live account in this environment —
-the same "implemented, external verification pending" status SendGrid
-carried until a real key existed.
+`A1ROUTES_WEBHOOK_SECRET`, a purchased/ported `A1ROUTES_DEFAULT_FROM_NUMBER`).
+Not verified against a live account in this environment — the same
+"implemented, external verification pending" status SendGrid carried
+until a real key existed.
+
+**WhatsApp Business API integration was removed** (2026-08-23 final QA
+pass) — it had been explicitly descoped by the project owner earlier in
+the project (SendGrid email + A1 Routes calling only, no other channel)
+but was reintroduced in a later "final production operations pass"
+without authorization. The removal deleted the `WhatsAppMessage` model
+(migration `0004_alter_communicationlog_channel_and_more.py`), the
+`whatsapp.py` provider client, the `WhatsAppMessageViewSet`/
+`WhatsAppWebhookView`, all WhatsApp serializers/filters/service
+functions, the `can_whatsapp` contact-capability field, the frontend
+WhatsApp chat workspace, and all associated env vars
+(`WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`,
+`WHATSAPP_APP_SECRET`). Do not reintroduce it.
 
 ---
 

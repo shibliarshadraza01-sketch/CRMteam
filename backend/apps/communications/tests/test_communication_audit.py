@@ -17,6 +17,10 @@ failures.
 
 Nothing here is allowed to relax the employee boundary — several tests
 deliberately assert that the audit surface is NOT a way around it.
+
+WhatsApp Business API coverage was removed along with the rest of the
+WhatsApp integration (explicitly descoped by the project owner); the
+email and A1 Routes calling coverage below is otherwise unchanged.
 """
 import hashlib
 import hmac
@@ -25,7 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.communications.models import Call, CommunicationLog, EmailMessage, WhatsAppMessage
+from apps.communications.models import Call, CommunicationLog, EmailMessage
 from apps.communications.services import queue_email, send_queued_email
 
 pytestmark = pytest.mark.django_db
@@ -35,12 +39,9 @@ AUDIT_PHONE = "AUDIT_TEST_PHONE_777"
 
 EMAIL_MESSAGES_URL = "/api/v1/communications/email-messages/"
 CALLS_URL = "/api/v1/communications/calls/"
-WHATSAPP_SEND_URL = "/api/v1/communications/whatsapp/send/"
-WHATSAPP_MESSAGES_URL = "/api/v1/communications/whatsapp/messages/"
 COMMUNICATION_LOGS_URL = "/api/v1/communications/communication-logs/"
 
 A1ROUTES_WEBHOOK_URL = "/api/v1/webhooks/a1routes/"
-WHATSAPP_WEBHOOK_URL = "/api/v1/webhooks/whatsapp/"
 INBOUND_EMAIL_WEBHOOK_URL = "/api/v1/webhooks/inbound-email/"
 
 
@@ -103,28 +104,10 @@ def a1routes_post(client, payload, secret="a1-secret"):
         )
 
 
-def whatsapp_post(client, payload, secret="wa-secret"):
-    body = json.dumps(payload).encode()
-    signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": secret}):
-        return client.post(
-            WHATSAPP_WEBHOOK_URL,
-            data=body,
-            content_type="application/json",
-            HTTP_X_HUB_SIGNATURE_256=signature,
-        )
-
-
 def place_call(client, customer, provider_call_id):
     with patch("apps.communications.services.A1RoutesClient.initiate_call", return_value=provider_call_id):
         with patch.dict("os.environ", {"A1ROUTES_API_KEY": "k"}):
             return client.post(CALLS_URL, {"customer": customer.pk})
-
-
-def send_whatsapp(client, customer, text, provider_message_id):
-    with patch.dict("os.environ", {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch("apps.communications.services.WhatsAppClient.send_message", return_value=provider_message_id):
-            return client.post(WHATSAPP_SEND_URL, {"customer": customer.pk, "message": text})
 
 
 # --------------------------------------------------------------------------
@@ -234,116 +217,6 @@ def test_employee_can_initiate_a_call_and_it_is_recorded(employee_client, employ
 
 
 # --------------------------------------------------------------------------
-# (8) WhatsApp messages are recorded
-# --------------------------------------------------------------------------
-
-
-def test_outbound_whatsapp_message_is_recorded(employee_client, employee, audit_customer):
-    response = send_whatsapp(employee_client, audit_customer, "Audit hi", "wamid.audit1")
-
-    assert response.status_code == 201
-    message = WhatsAppMessage.objects.get(pk=response.json()["id"])
-    assert message.owner_id == employee.pk
-    assert message.customer_id == audit_customer.pk
-    assert message.provider_message_id == "wamid.audit1"
-    assert message.status == WhatsAppMessage.Status.SENT
-
-    assert CommunicationLog.objects.filter(
-        channel=CommunicationLog.Channel.WHATSAPP, actor=employee, summary__icontains="sent"
-    ).exists()
-
-
-# --------------------------------------------------------------------------
-# (9) WhatsApp replies are recorded
-# --------------------------------------------------------------------------
-
-
-def test_inbound_whatsapp_reply_is_recorded_and_attributed(api_client, employee, audit_customer):
-    payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "metadata": {"phone_number_id": "12345"},
-                            "messages": [
-                                {
-                                    "id": "wamid.inbound1",
-                                    "from": AUDIT_PHONE,
-                                    "type": "text",
-                                    "text": {"body": "Customer replied"},
-                                }
-                            ],
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-
-    response = whatsapp_post(api_client, payload)
-
-    assert response.status_code == 200
-    reply = WhatsAppMessage.objects.get(direction=WhatsAppMessage.Direction.INBOUND)
-    assert reply.message == "Customer replied"
-    assert reply.customer_id == audit_customer.pk
-    assert reply.owner_id == employee.pk  # the customer's owner, resolved server-side
-    assert reply.provider_message_id == "wamid.inbound1"
-    assert CommunicationLog.objects.filter(
-        channel=CommunicationLog.Channel.WHATSAPP, summary__icontains="reply received"
-    ).exists()
-
-
-def test_inbound_whatsapp_reply_is_idempotent_across_provider_retries(api_client, audit_customer):
-    payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "metadata": {"phone_number_id": "12345"},
-                            "messages": [
-                                {"id": "wamid.retry", "from": AUDIT_PHONE, "type": "text", "text": {"body": "Hi"}}
-                            ],
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-
-    whatsapp_post(api_client, payload)
-    whatsapp_post(api_client, payload)
-
-    assert WhatsAppMessage.objects.filter(direction=WhatsAppMessage.Direction.INBOUND).count() == 1
-
-
-def test_inbound_whatsapp_from_an_unknown_number_is_still_recorded_unattached(api_client):
-    payload = {
-        "entry": [
-            {
-                "changes": [
-                    {
-                        "value": {
-                            "messages": [
-                                {"id": "wamid.unknown", "from": "+1999000111", "type": "text", "text": {"body": "?"}}
-                            ]
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-
-    whatsapp_post(api_client, payload)
-
-    reply = WhatsAppMessage.objects.get(direction=WhatsAppMessage.Direction.INBOUND)
-    # Never guessed at a customer — the touchpoint is kept, the attribution isn't invented.
-    assert reply.customer_id is None
-    assert reply.owner_id is None
-
-
-# --------------------------------------------------------------------------
 # (10) A Super Admin can retrieve the complete communication history
 # --------------------------------------------------------------------------
 
@@ -355,28 +228,23 @@ def test_super_admin_retrieves_the_complete_cross_channel_history(
         EMAIL_MESSAGES_URL, {"customer": audit_customer.pk, "subject": "Audit mail", "body": "B"}
     )
     place_call(employee_client, audit_customer, "prov-audit-10")
-    send_whatsapp(employee_client, audit_customer, "Audit wa", "wamid.audit10")
 
     emails = super_admin_client.get(EMAIL_MESSAGES_URL)
     calls = super_admin_client.get(CALLS_URL)
-    whatsapp = super_admin_client.get(WHATSAPP_MESSAGES_URL)
     logs = super_admin_client.get(COMMUNICATION_LOGS_URL)
 
     assert emails.json()["count"] == 1
     assert calls.json()["count"] == 1
-    assert whatsapp.json()["count"] == 1
-    assert logs.json()["count"] >= 2
+    assert logs.json()["count"] >= 1
 
     # ...and, unlike the employee, WITH the contact detail the audit
     # interface is explicitly authorized to show.
     assert emails.json()["results"][0]["to_email"] == AUDIT_EMAIL
     assert calls.json()["results"][0]["to_number"] == AUDIT_PHONE
-    assert whatsapp.json()["results"][0]["receiver"] == AUDIT_PHONE
 
     # Every audit row names the employee who performed the action.
     assert emails.json()["results"][0]["owner"] == employee.pk
     assert calls.json()["results"][0]["owner"] == employee.pk
-    assert whatsapp.json()["results"][0]["owner"] == employee.pk
 
 
 def test_super_admin_sees_every_employees_history_not_just_their_own(
@@ -449,23 +317,18 @@ def test_super_admin_can_pull_one_leads_whole_thread_across_channels(
         EMAIL_MESSAGES_URL, {"customer": audit_customer.pk, "subject": "Thread mail", "body": "B"}
     )
     place_call(employee_client, audit_customer, "prov-thread")
-    send_whatsapp(employee_client, audit_customer, "Thread wa", "wamid.thread")
 
     entity_query = f"?content_type={content_type}&object_id={audit_customer.pk}"
     emails = super_admin_client.get(f"{EMAIL_MESSAGES_URL}{entity_query}").json()["results"]
     calls = super_admin_client.get(f"{CALLS_URL}{entity_query}").json()["results"]
-    whatsapp = super_admin_client.get(
-        f"{WHATSAPP_MESSAGES_URL}?customer={audit_customer.pk}"
-    ).json()["results"]
 
     thread = sorted(
         [("EMAIL", row["created_at"]) for row in emails]
-        + [("CALL", row["created_at"]) for row in calls]
-        + [("WHATSAPP", row["created_at"]) for row in whatsapp],
+        + [("CALL", row["created_at"]) for row in calls],
         key=lambda item: item[1],
     )
 
-    assert {channel for channel, _ in thread} == {"EMAIL", "CALL", "WHATSAPP"}
+    assert {channel for channel, _ in thread} == {"EMAIL", "CALL"}
 
 
 # --------------------------------------------------------------------------
@@ -489,21 +352,16 @@ def test_employee_cannot_read_another_employees_communication_records(
     foreign_call = Call.objects.create(
         owner=other_employee, direction=Call.Direction.OUTBOUND, from_number="+1", to_number=AUDIT_PHONE
     )
-    foreign_wa = WhatsAppMessage.objects.create(
-        owner=other_employee, direction=WhatsAppMessage.Direction.OUTBOUND, sender="1", receiver=AUDIT_PHONE, message="x"
-    )
     foreign_log = CommunicationLog.objects.create(
         channel=CommunicationLog.Channel.EMAIL, summary="Not yours", actor=other_employee
     )
 
     assert employee_client.get(EMAIL_MESSAGES_URL).json()["count"] == 0
     assert employee_client.get(CALLS_URL).json()["count"] == 0
-    assert employee_client.get(WHATSAPP_MESSAGES_URL).json()["count"] == 0
     assert employee_client.get(COMMUNICATION_LOGS_URL).json()["count"] == 0
 
     assert employee_client.get(f"{EMAIL_MESSAGES_URL}{foreign_email.pk}/").status_code == 404
     assert employee_client.get(f"{CALLS_URL}{foreign_call.pk}/").status_code == 404
-    assert employee_client.get(f"{WHATSAPP_MESSAGES_URL}{foreign_wa.pk}/").status_code == 404
     assert employee_client.get(f"{COMMUNICATION_LOGS_URL}{foreign_log.pk}/").status_code == 404
 
 
@@ -533,7 +391,7 @@ def test_an_employee_claiming_super_admin_in_the_request_gains_nothing(
 
 
 def test_unauthenticated_access_to_the_audit_surface_is_rejected(api_client):
-    for url in (EMAIL_MESSAGES_URL, CALLS_URL, WHATSAPP_MESSAGES_URL, COMMUNICATION_LOGS_URL):
+    for url in (EMAIL_MESSAGES_URL, CALLS_URL, COMMUNICATION_LOGS_URL):
         assert api_client.get(url).status_code in (401, 403), url
 
 
@@ -557,7 +415,7 @@ def test_communication_log_has_no_write_verb_for_any_role(employee_client, super
     assert log.summary == "Immutable"
 
 
-def test_employee_cannot_rewrite_call_or_whatsapp_attribution_status_or_duration(
+def test_employee_cannot_rewrite_call_attribution_status_or_duration(
     employee_client, employee, audit_customer
 ):
     call = Call.objects.create(
@@ -568,24 +426,13 @@ def test_employee_cannot_rewrite_call_or_whatsapp_attribution_status_or_duration
         status=Call.Status.COMPLETED,
         duration_seconds=42,
     )
-    message = WhatsAppMessage.objects.create(
-        owner=employee,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="1",
-        receiver=AUDIT_PHONE,
-        message="x",
-        status=WhatsAppMessage.Status.DELIVERED,
-    )
 
-    # PATCH isn't even routed on these two viewsets (GET/POST only).
+    # PATCH isn't even routed on this viewset (GET/POST only).
     assert employee_client.patch(f"{CALLS_URL}{call.pk}/", {"status": "FAILED", "duration_seconds": 1}).status_code == 405
-    assert employee_client.patch(f"{WHATSAPP_MESSAGES_URL}{message.pk}/", {"status": "FAILED"}).status_code == 405
 
     call.refresh_from_db()
-    message.refresh_from_db()
     assert call.status == Call.Status.COMPLETED
     assert call.duration_seconds == 42
-    assert message.status == WhatsAppMessage.Status.DELIVERED
 
 
 def test_employee_cannot_rewrite_a_sent_emails_recorded_content_or_timestamps(employee_client, employee):
@@ -626,7 +473,6 @@ def test_audit_records_are_database_rows_not_process_state(employee_client, empl
         EMAIL_MESSAGES_URL, {"customer": audit_customer.pk, "subject": "Persisted", "body": "B"}
     )
     place_call(employee_client, audit_customer, "prov-persist")
-    send_whatsapp(employee_client, audit_customer, "Persisted", "wamid.persist")
 
     cache.clear()
 
@@ -636,16 +482,13 @@ def test_audit_records_are_database_rows_not_process_state(employee_client, empl
         assert cursor.fetchone()[0] == 1
         cursor.execute("SELECT COUNT(*) FROM communications_call")
         assert cursor.fetchone()[0] == 1
-        cursor.execute("SELECT COUNT(*) FROM communications_whatsappmessage")
-        assert cursor.fetchone()[0] == 1
         cursor.execute("SELECT COUNT(*) FROM communications_communicationlog")
-        assert cursor.fetchone()[0] >= 2
+        assert cursor.fetchone()[0] >= 1
 
     fresh_client = APIClient()
     fresh_client.force_authenticate(employee)
     assert fresh_client.get(EMAIL_MESSAGES_URL).json()["count"] == 1
     assert fresh_client.get(CALLS_URL).json()["count"] == 1
-    assert fresh_client.get(WHATSAPP_MESSAGES_URL).json()["count"] == 1
 
 
 def test_history_survives_lead_reassignment_to_another_employee(
@@ -682,7 +525,6 @@ def test_every_channel_associates_the_record_with_the_lead_and_the_employee(
     with patch("apps.communications.services.A1RoutesClient.initiate_call", return_value="prov-lead"):
         with patch.dict("os.environ", {"A1ROUTES_API_KEY": "k"}):
             employee_client.post(CALLS_URL, {"lead": audit_lead.pk})
-    send_whatsapp(employee_client, audit_customer, "Customer wa", "wamid.assoc")
 
     lead_ct = ContentType.objects.get_for_model(audit_lead)
 
@@ -691,9 +533,6 @@ def test_every_channel_associates_the_record_with_the_lead_and_the_employee(
 
     call = Call.objects.get(provider_call_id="prov-lead")
     assert (call.content_type_id, call.object_id, call.owner_id) == (lead_ct.pk, audit_lead.pk, employee.pk)
-
-    wa = WhatsAppMessage.objects.get(provider_message_id="wamid.assoc")
-    assert (wa.customer_id, wa.owner_id) == (audit_customer.pk, employee.pk)
 
 
 # --------------------------------------------------------------------------
@@ -731,23 +570,6 @@ def test_a_failed_call_attempt_is_recorded(employee_client, employee, audit_cust
     assert call.status == Call.Status.FAILED
     assert "trunk unreachable" in call.error_message
     assert call.owner_id == employee.pk
-
-
-def test_a_failed_whatsapp_send_is_recorded(employee_client, employee, audit_customer):
-    from apps.communications.providers.whatsapp import WhatsAppError
-
-    with patch.dict("os.environ", {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch(
-            "apps.communications.services.WhatsAppClient.send_message", side_effect=WhatsAppError("rejected")
-        ):
-            response = employee_client.post(
-                WHATSAPP_SEND_URL, {"customer": audit_customer.pk, "message": "Hi"}
-            )
-
-    assert response.status_code == 201
-    message = WhatsAppMessage.objects.get(pk=response.json()["id"])
-    assert message.status == WhatsAppMessage.Status.FAILED
-    assert "rejected" in message.error_message
 
 
 # --------------------------------------------------------------------------
@@ -805,43 +627,6 @@ def test_a_failed_call_reported_by_the_provider_becomes_an_audit_event(
     ).exists()
 
 
-def test_whatsapp_delivery_and_read_receipts_become_audit_events(
-    api_client, employee_client, employee, audit_customer
-):
-    send_whatsapp(employee_client, audit_customer, "Receipt test", "wamid.receipts")
-    before = CommunicationLog.objects.filter(channel=CommunicationLog.Channel.WHATSAPP).count()
-
-    for provider_status in ("delivered", "read"):
-        payload = {
-            "entry": [
-                {"changes": [{"value": {"statuses": [{"id": "wamid.receipts", "status": provider_status}]}}]}
-            ]
-        }
-        assert whatsapp_post(api_client, payload).status_code == 200
-
-    message = WhatsAppMessage.objects.get(provider_message_id="wamid.receipts")
-    assert message.status == WhatsAppMessage.Status.READ
-
-    logs = CommunicationLog.objects.filter(channel=CommunicationLog.Channel.WHATSAPP).order_by("occurred_at")
-    assert logs.count() == before + 2
-    summaries = [log.summary for log in logs]
-    assert any("delivered" in summary for summary in summaries)
-    assert any("read" in summary for summary in summaries)
-    assert all(log.actor_id == employee.pk for log in logs)
-
-
-def test_whatsapp_failure_receipt_becomes_an_audit_event(api_client, employee_client, audit_customer):
-    send_whatsapp(employee_client, audit_customer, "Will fail", "wamid.failed")
-
-    payload = {"entry": [{"changes": [{"value": {"statuses": [{"id": "wamid.failed", "status": "failed"}]}}]}]}
-    whatsapp_post(api_client, payload)
-
-    assert WhatsAppMessage.objects.get(provider_message_id="wamid.failed").status == WhatsAppMessage.Status.FAILED
-    assert CommunicationLog.objects.filter(
-        channel=CommunicationLog.Channel.WHATSAPP, summary__icontains="failed"
-    ).exists()
-
-
 def test_an_unsigned_provider_webhook_cannot_write_to_the_audit_trail(api_client, employee_client, audit_customer):
     place_call(employee_client, audit_customer, "prov-unsigned")
     before = CommunicationLog.objects.count()
@@ -867,43 +652,8 @@ def test_the_webhook_generated_audit_events_are_pii_free_for_an_employee(
 ):
     place_call(employee_client, audit_customer, "prov-pii-webhook")
     a1routes_post(api_client, {"call_id": "prov-pii-webhook", "status": "completed", "duration_seconds": 9})
-    send_whatsapp(employee_client, audit_customer, "Hi", "wamid.piiwebhook")
-    whatsapp_post(
-        api_client,
-        {"entry": [{"changes": [{"value": {"statuses": [{"id": "wamid.piiwebhook", "status": "read"}]}}]}]},
-    )
 
     body = employee_client.get(COMMUNICATION_LOGS_URL).content.decode()
 
     assert AUDIT_PHONE not in body
     assert AUDIT_EMAIL not in body
-
-
-def test_an_inbound_whatsapp_reply_never_leaks_the_number_to_an_employee(
-    api_client, employee_client, audit_customer
-):
-    whatsapp_post(
-        api_client,
-        {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "metadata": {"phone_number_id": "12345"},
-                                "messages": [
-                                    {"id": "wamid.pii-in", "from": AUDIT_PHONE, "type": "text", "text": {"body": "Hi"}}
-                                ],
-                            }
-                        }
-                    ]
-                }
-            ]
-        },
-    )
-
-    response = employee_client.get(WHATSAPP_MESSAGES_URL)
-
-    assert response.json()["count"] == 1
-    assert AUDIT_PHONE not in response.content.decode()
-    assert "sender" not in response.json()["results"][0]

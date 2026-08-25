@@ -97,17 +97,28 @@ def test_invoice_amount_paid_ignores_soft_deleted_transactions(priced_invoice):
 # --------------------------------------------------------------------------
 
 
-def test_create_payment_via_api(api_client, priced_invoice, owner):
-    api_client.force_authenticate(owner)
+def test_create_payment_via_api(api_client, priced_invoice, owner, super_admin):
+    # Revenue/Payments audit pass: recording a payment is Super-Admin-only now
+    # — a plain owner (Manager/Employee) is checked separately below.
+    api_client.force_authenticate(super_admin)
     response = api_client.post(PAYMENTS_URL, {"invoice": priced_invoice.pk, "amount": "25.00"})
     assert response.status_code == 201
-    assert response.data["recorded_by"] == owner.pk
+    assert response.data["recorded_by"] == super_admin.pk
     priced_invoice.refresh_from_db()
     assert priced_invoice.status == Invoice.Status.PARTIAL
 
 
-def test_create_payment_via_api_rejects_overpayment(api_client, priced_invoice, owner):
+def test_create_payment_via_api_rejects_non_super_admin(api_client, priced_invoice, owner):
+    """Revenue/Payments audit pass: an Invoice owner who is only a Manager
+    (the `owner` fixture's role) must not be able to record a payment —
+    only a Super Admin may, regardless of ownership."""
     api_client.force_authenticate(owner)
+    response = api_client.post(PAYMENTS_URL, {"invoice": priced_invoice.pk, "amount": "25.00"})
+    assert response.status_code == 403
+
+
+def test_create_payment_via_api_rejects_overpayment(api_client, priced_invoice, owner, super_admin):
+    api_client.force_authenticate(super_admin)
     api_client.post(PAYMENTS_URL, {"invoice": priced_invoice.pk, "amount": "100.00"})
 
     response = api_client.post(PAYMENTS_URL, {"invoice": priced_invoice.pk, "amount": "1.00"})
@@ -115,8 +126,8 @@ def test_create_payment_via_api_rejects_overpayment(api_client, priced_invoice, 
     assert response.status_code == 400
 
 
-def test_create_payment_via_api_rejects_zero_amount(api_client, priced_invoice, owner):
-    api_client.force_authenticate(owner)
+def test_create_payment_via_api_rejects_zero_amount(api_client, priced_invoice, owner, super_admin):
+    api_client.force_authenticate(super_admin)
     response = api_client.post(PAYMENTS_URL, {"invoice": priced_invoice.pk, "amount": "0"})
     assert response.status_code == 400
 
@@ -142,16 +153,30 @@ def test_unauthenticated_denied(api_client, priced_invoice):
     assert response.status_code == 401
 
 
-def test_payment_update_not_allowed(api_client, priced_invoice, owner):
+def test_payment_update_not_allowed(api_client, priced_invoice, owner, super_admin):
+    # A non-Super-Admin owner is blocked by the revenue-write permission
+    # itself (403) before the HTTP-method restriction is even reached.
     api_client.force_authenticate(owner)
     transaction = record_payment(priced_invoice, 10)
+    response = api_client.patch(_detail(PAYMENTS_URL, transaction.pk), {"amount": "20.00"})
+    assert response.status_code == 403
+
+    # A Super Admin — who DOES have write permission — still hits the real
+    # HTTP-method restriction: PATCH was never a supported verb on this
+    # viewset (a recorded payment is corrected via an offsetting entry, not
+    # rewritten in place), so this is 405, not 200.
+    api_client.force_authenticate(super_admin)
     response = api_client.patch(_detail(PAYMENTS_URL, transaction.pk), {"amount": "20.00"})
     assert response.status_code == 405
 
 
-def test_payment_soft_delete_not_allowed(api_client, priced_invoice, owner):
+def test_payment_soft_delete_not_allowed(api_client, priced_invoice, owner, super_admin):
     api_client.force_authenticate(owner)
     transaction = record_payment(priced_invoice, 10)
+    response = api_client.delete(_detail(PAYMENTS_URL, transaction.pk))
+    assert response.status_code == 403
+
+    api_client.force_authenticate(super_admin)
     response = api_client.delete(_detail(PAYMENTS_URL, transaction.pk))
     assert response.status_code == 405
 

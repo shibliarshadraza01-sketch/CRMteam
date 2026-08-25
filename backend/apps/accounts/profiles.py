@@ -49,6 +49,26 @@ def can_view_staff_profile(requesting_user, target_user):
     return False
 
 
+def _manager_summary(user):
+    """This user's manager as a small, display-ready dict (or ``None``).
+
+    Resolved through ``services.get_manager_for_user()``, i.e. from the
+    apps.organization Team/Membership rows — the SAME data
+    ``managed_user_ids()`` scopes by — so what a profile shows as someone's
+    manager is always exactly who can actually see their records.
+    """
+    from apps.accounts.services import get_manager_for_user
+
+    manager = get_manager_for_user(user)
+    if manager is None:
+        return None
+    return {
+        "id": manager.id,
+        "full_name": manager.full_name or manager.email,
+        "email": manager.email,
+    }
+
+
 def _basic_profile(user):
     return {
         "id": user.id,
@@ -58,7 +78,11 @@ def _basic_profile(user):
         "last_name": user.last_name,
         "full_name": user.full_name or user.email,
         "phone": user.phone,
-        "department": user.department,
+        # `department` was removed from the User model — the free-text label
+        # nothing read. The real reporting line is `manager` below, resolved
+        # from the apps.organization Team/Membership hierarchy that RBAC
+        # scoping already uses.
+        "manager": _manager_summary(user),
         "role": user.role,
         "date_joined": user.date_joined,
         "is_active": user.is_active,
@@ -134,9 +158,9 @@ def _converted_customers(user, *, limit=50):
 
 
 def _interaction_history(user, *, limit=50):
-    """This user's communication trail — calls, WhatsApp, emails, meetings,
-    notes, follow-ups — read from ``CommunicationLog``, the model that
-    already records every one of them (see ``apps.communications``).
+    """This user's communication trail — calls, emails, meetings, notes,
+    follow-ups — read from ``CommunicationLog``, the model that already
+    records every one of them (see ``apps.communications``).
     """
     from apps.communications.models import CommunicationLog
 

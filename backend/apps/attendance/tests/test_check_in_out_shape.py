@@ -25,8 +25,18 @@ DAILY_SUMMARY_URL = "/api/v1/attendance/sessions/daily-summary/"
 
 @pytest.fixture
 def worked_day(db, employee):
-    """A realistic day: check in, work, take a break, resume, check out."""
-    base = timezone.now() - datetime.timedelta(hours=4)
+    """A realistic day: check in, work, take a break, resume, check out.
+
+    Anchored to 09:00 local time on TODAY (not ``timezone.now() - 4h``,
+    which — depending on the wall-clock moment the suite happens to run —
+    can land on the PREVIOUS local calendar day, making
+    ``compute_daily_summary(employee, timezone.localdate())`` legitimately
+    find no session and return ``None``. That was a flaky-near-midnight
+    test bug, not a product bug: fixing it here by keeping the whole
+    session safely inside today's local date, regardless of what time the
+    test suite itself runs.
+    """
+    base = timezone.localtime().replace(hour=9, minute=0, second=0, microsecond=0)
     session = start_session(employee, now=base)
     start_break(session, now=base + datetime.timedelta(hours=1))
     end_break(session, now=base + datetime.timedelta(hours=1, minutes=30))
@@ -70,7 +80,13 @@ def test_time_logs_are_chronological_and_typed(employee, worked_day):
 
     kinds = {entry["type"] for entry in logs}
     assert "BREAK_START" in kinds
-    assert "BREAK_END" in kinds
+    # Returning from the break is reported ONCE, as WORK_START ("Work
+    # resumed"). There is deliberately no separate BREAK_END: the instant
+    # the break ends IS the instant work resumes, and emitting both put two
+    # log lines at one identical timestamp for a single real transition.
+    # See build_time_logs()'s own "one transition is one event" note.
+    assert "BREAK_END" not in kinds
+    assert "WORK_START" in kinds
 
 
 def test_time_logs_are_deduplicated(employee, worked_day):
@@ -82,6 +98,72 @@ def test_time_logs_are_deduplicated(employee, worked_day):
 
 def test_time_logs_are_empty_for_a_day_with_no_sessions(employee):
     assert build_time_logs([]) == []
+
+
+# ---- Arrival/departure semantics ---------------------------------------
+#
+# "Check In" and "Work Resumed" must mean different things. start_session()
+# opens the session and its first WORK segment at the SAME instant, so the
+# time-log builder used to emit CHECK_IN and WORK_START together — which the
+# UI renders as "Checked in" followed immediately by "Work resumed",
+# describing a break the employee never took.
+
+
+def test_initial_check_in_does_not_emit_a_work_resumed_event(employee):
+    """The opening work segment IS the arrival. It must not also appear as
+    a resume.
+    """
+    base = timezone.now() - datetime.timedelta(hours=2)
+    session = start_session(employee, now=base)
+
+    logs = build_time_logs([session])
+
+    assert [entry["type"] for entry in logs] == ["CHECK_IN"]
+    assert not [entry for entry in logs if entry["type"] == "WORK_START"]
+
+
+def test_work_resumed_appears_only_after_a_real_break(employee, worked_day):
+    logs = build_time_logs([worked_day])
+    types = [entry["type"] for entry in logs]
+
+    # Exactly one resume, for exactly one break.
+    assert types.count("WORK_START") == 1
+    assert types.count("BREAK_START") == 1
+    # The resume IS the end of the break — one transition, one event — so
+    # no separate BREAK_END is emitted at that same instant.
+    assert types.count("BREAK_END") == 0
+    # ...and the resume comes after the break began, never before it.
+    assert types.index("WORK_START") > types.index("BREAK_START")
+
+
+def test_arrival_and_departure_are_each_a_single_event(employee, worked_day):
+    logs = build_time_logs([worked_day])
+    types = [entry["type"] for entry in logs]
+
+    assert types.count("CHECK_IN") == 1
+    assert types.count("CHECK_OUT") == 1
+    # No event may share the check-in or check-out instant.
+    check_in_at = next(e["at"] for e in logs if e["type"] == "CHECK_IN")
+    check_out_at = next(e["at"] for e in logs if e["type"] == "CHECK_OUT")
+    assert len([e for e in logs if e["at"] == check_in_at]) == 1
+    assert len([e for e in logs if e["at"] == check_out_at]) == 1
+
+
+def test_reload_does_not_add_a_second_check_in(employee):
+    """Repeated start_session calls (page refresh / extra tab) must not
+    produce extra arrival or departure events.
+    """
+    base = timezone.now() - datetime.timedelta(hours=2)
+    session = start_session(employee, now=base)
+    start_session(employee, now=base + datetime.timedelta(minutes=5))
+    start_session(employee, now=base + datetime.timedelta(minutes=10))
+
+    logs = build_time_logs([session])
+    types = [entry["type"] for entry in logs]
+
+    assert types.count("CHECK_IN") == 1
+    assert types.count("CHECK_OUT") == 0  # still open — nobody left
+    assert types.count("WORK_START") == 0  # no break happened
 
 
 def test_daily_summary_endpoint_returns_the_check_in_out_fields(api_client, employee, worked_day):

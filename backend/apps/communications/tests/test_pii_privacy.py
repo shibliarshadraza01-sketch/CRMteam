@@ -1,12 +1,14 @@
 """Customer-PII privacy tests for the whole employee-facing surface.
 
-The rule under test: an EMPLOYEE must be able to email, call and WhatsApp
-a customer/lead through the CRM without the customer's real email
-address, phone number or WhatsApp number EVER crossing the
-backend-to-employee boundary — not in a response body (however deeply
-nested), not in a URL, not in an export, not in a notification, not in a
-communication-history record, not in an error message, and not through a
-search-by-value confirmation oracle.
+The rule under test: an EMPLOYEE must be able to email or call a
+customer/lead through the CRM without the customer's real email address
+or phone number EVER crossing the backend-to-employee boundary — not in
+a response body (however deeply nested), not in a URL, not in an export,
+not in a notification, not in a communication-history record, not in an
+error message, and not through a search-by-value confirmation oracle.
+
+WhatsApp Business API coverage was removed along with the rest of the
+WhatsApp integration (explicitly descoped by the project owner).
 
 Structure:
 
@@ -29,25 +31,22 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.communications.models import Call, CommunicationLog, EmailMessage, WhatsAppMessage
+from apps.communications.models import Call, CommunicationLog, EmailMessage
 from apps.communications.services import queue_email
 
 pytestmark = pytest.mark.django_db
 
 PII_EMAIL = "PII_TEST_EMAIL_123@example.com"
 PII_PHONE = "PII_TEST_PHONE_123"
-PII_WHATSAPP = "PII_TEST_WHATSAPP_123"
 
 #: Every literal that must never appear in an employee-facing response.
-PII_LITERALS = ("PII_TEST_EMAIL_123", "PII_TEST_PHONE_123", "PII_TEST_WHATSAPP_123")
+PII_LITERALS = ("PII_TEST_EMAIL_123", "PII_TEST_PHONE_123")
 
 CUSTOMERS_URL = "/api/v1/crm/customers/"
 LEADS_URL = "/api/v1/crm/leads/"
 CONTACTS_URL = "/api/v1/crm/contacts/"
 EMAIL_MESSAGES_URL = "/api/v1/communications/email-messages/"
 CALLS_URL = "/api/v1/communications/calls/"
-WHATSAPP_SEND_URL = "/api/v1/communications/whatsapp/send/"
-WHATSAPP_MESSAGES_URL = "/api/v1/communications/whatsapp/messages/"
 COMMUNICATION_LOGS_URL = "/api/v1/communications/communication-logs/"
 NOTIFICATIONS_URL = "/api/v1/communications/notifications/"
 
@@ -196,7 +195,6 @@ def test_employee_gets_capability_booleans_instead_of_values(employee_client, pi
 
     assert body["can_email"] is True
     assert body["can_call"] is True
-    assert body["can_whatsapp"] is True
     assert "email" not in body
     assert "phone" not in body
 
@@ -206,7 +204,6 @@ def test_capability_booleans_are_false_without_contact_details(employee_client, 
 
     assert body["can_email"] is False
     assert body["can_call"] is False
-    assert body["can_whatsapp"] is False
 
 
 # --------------------------------------------------------------------------
@@ -533,60 +530,6 @@ def test_call_by_lead_resolves_the_leads_number(employee_client, pii_lead):
 
 
 # --------------------------------------------------------------------------
-# WhatsApp
-# --------------------------------------------------------------------------
-
-
-def test_employee_can_whatsapp_a_customer_without_ever_seeing_the_number(employee_client, pii_customer):
-    with patch.dict("os.environ", {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch("apps.communications.services.WhatsAppClient.send_message", return_value="wamid.pii"):
-            response = employee_client.post(
-                WHATSAPP_SEND_URL, {"customer": pii_customer.pk, "message": "Hello"}
-            )
-
-    assert response.status_code == 201
-    assert_no_pii(response, context="whatsapp send response")
-    assert find_pii_paths(response.json()) == []
-    assert response.json()["customer_name"] == pii_customer.name
-
-    message = WhatsAppMessage.objects.get(pk=response.json()["id"])
-    assert message.receiver == PII_PHONE  # resolved internally
-
-
-def test_whatsapp_history_never_exposes_the_number(employee_client, employee, pii_customer):
-    WhatsAppMessage.objects.create(
-        owner=employee,
-        customer=pii_customer,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="12345",
-        receiver=PII_WHATSAPP,
-        message="Hi",
-    )
-
-    response = employee_client.get(WHATSAPP_MESSAGES_URL)
-
-    assert response.status_code == 200
-    assert_no_pii(response, context="whatsapp history")
-    assert find_pii_paths(response.json()) == []
-
-
-def test_manager_still_sees_whatsapp_numbers(api_client, manager, pii_customer):
-    WhatsAppMessage.objects.create(
-        owner=manager,
-        customer=pii_customer,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="12345",
-        receiver=PII_WHATSAPP,
-        message="Hi",
-    )
-    api_client.force_authenticate(manager)
-
-    response = api_client.get(WHATSAPP_MESSAGES_URL)
-
-    assert response.json()["results"][0]["receiver"] == PII_WHATSAPP
-
-
-# --------------------------------------------------------------------------
 # Communication log / notifications
 # --------------------------------------------------------------------------
 
@@ -595,9 +538,6 @@ def test_communication_log_summaries_never_contain_contact_details(employee_clie
     with patch("apps.communications.services.A1RoutesClient.initiate_call", return_value="prov-pii-4"):
         with patch.dict("os.environ", {"A1ROUTES_API_KEY": "k"}):
             employee_client.post(CALLS_URL, {"customer": pii_customer.pk})
-    with patch.dict("os.environ", {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch("apps.communications.services.WhatsAppClient.send_message", return_value="wamid.pii2"):
-            employee_client.post(WHATSAPP_SEND_URL, {"customer": pii_customer.pk, "message": "Hello"})
 
     assert CommunicationLog.objects.exists()
     response = employee_client.get(COMMUNICATION_LOGS_URL)
@@ -679,15 +619,6 @@ def test_employee_cannot_call_another_employees_customer(employee_client, foreig
     assert not Call.objects.exists()
 
 
-def test_employee_cannot_whatsapp_another_employees_customer(employee_client, foreign_customer):
-    response = employee_client.post(
-        WHATSAPP_SEND_URL, {"customer": foreign_customer.pk, "message": "Hello"}
-    )
-
-    assert response.status_code == 404
-    assert not WhatsAppMessage.objects.exists()
-
-
 def test_employee_cannot_reach_a_foreign_customer_through_the_generic_entity_pair(
     employee_client, foreign_customer
 ):
@@ -734,14 +665,6 @@ def test_negative_pii_sweep_across_every_employee_facing_endpoint(
     Call.objects.create(
         owner=employee, direction=Call.Direction.OUTBOUND, from_number="+1", to_number=PII_PHONE
     )
-    WhatsAppMessage.objects.create(
-        owner=employee,
-        customer=pii_customer,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="1",
-        receiver=PII_WHATSAPP,
-        message="Hi",
-    )
 
     urls = [
         CUSTOMERS_URL,
@@ -763,8 +686,6 @@ def test_negative_pii_sweep_across_every_employee_facing_endpoint(
         f"{EMAIL_MESSAGES_URL}?search=PII",
         CALLS_URL,
         f"{CALLS_URL}?search=PII",
-        WHATSAPP_MESSAGES_URL,
-        f"{WHATSAPP_MESSAGES_URL}?search=PII",
         COMMUNICATION_LOGS_URL,
         NOTIFICATIONS_URL,
     ]

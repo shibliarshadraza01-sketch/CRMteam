@@ -70,7 +70,7 @@ BACKUP_RETENTION_DAYS=30
 BACKUP_LOCAL_DIR=/tmp/qualify-learn-crm-backups   # scratch space only, not durable storage
 ```
 
-None of these are read by Django's own settings modules — they're read directly by `backup_database.py` at run time (`os.environ.get(...)`), matching every provider client this project already uses (SendGrid, A1 Routes, WhatsApp) — see each one's own module docstring for the same "environment only, read at call time, never cached into a settings constant" pattern.
+None of these are read by Django's own settings modules — they're read directly by `backup_database.py` at run time (`os.environ.get(...)`), matching every provider client this project already uses (SendGrid, A1 Routes) — see each one's own module docstring for the same "environment only, read at call time, never cached into a settings constant" pattern.
 
 ---
 

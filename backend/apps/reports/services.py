@@ -279,6 +279,121 @@ def update_widget_configuration(widget, configuration):
     return widget
 
 
+# --------------------------------------------------------------------------
+# Company-wide dashboard summary (Reports/Payments audit pass)
+# --------------------------------------------------------------------------
+
+
+def _period_stats(*, date_from=None, date_to=None):
+    """One period's worth of the six company-wide dashboard metrics —
+    Total Leads, Total Converted Leads, Total Revenue, Pending Payments,
+    Active Employees, Conversion Rate — computed server-side from the
+    real domain models (never frontend-aggregated). Shared by both the
+    "This Month" and "All Time" sections below so the two can never drift
+    out of sync in how a metric is defined; only the date bounds differ.
+
+    ``date_from``/``date_to`` bound the *activity* each metric counts
+    (a lead created, a lead converted, a payment received) — ``None``
+    means unbounded, i.e. "All Time". Pending Payments and Active
+    Employees are current-state snapshots by nature (a balance still
+    owed, a currently-active account), so they are reported as of NOW
+    for both sections rather than artificially bounded to a period a
+    balance may have existed across — see the return value's own keys
+    for exactly what each number means.
+    """
+    from django.db.models import DecimalField, Q, Sum, Value
+    from django.db.models.functions import Coalesce
+
+    from apps.accounts.models import User
+    from apps.crm.models import Lead
+
+    def _bounded(queryset, field):
+        if date_from is not None:
+            queryset = queryset.filter(**{f"{field}__gte": date_from})
+        if date_to is not None:
+            queryset = queryset.filter(**{f"{field}__lt": date_to})
+        return queryset
+
+    leads = _bounded(Lead.active_objects.all(), "created_at")
+    total_leads = leads.count()
+
+    converted_leads = _bounded(
+        Lead.active_objects.filter(status=Lead.Status.CONVERTED, converted_customer__isnull=False),
+        "converted_customer__created_at",
+    ).count()
+
+    try:
+        from apps.sales.models import Invoice, PaymentTransaction
+
+        revenue_qs = _bounded(PaymentTransaction.active_objects.all(), "paid_at")
+        total_revenue = revenue_qs.aggregate(
+            total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField(max_digits=14, decimal_places=2))
+        )["total"]
+
+        # Pending Payments is a current-state balance (what is owed RIGHT
+        # NOW on every not-cancelled invoice), reported identically for
+        # both sections — a payment made last month can still be part of
+        # this month's pending picture, so bounding it by period would
+        # misrepresent what is actually still owed.
+        outstanding = Invoice.active_objects.exclude(status=Invoice.Status.CANCELLED).annotate(
+            _paid=Coalesce(
+                Sum("payments__amount", filter=Q(payments__is_deleted=False)),
+                Value(0),
+                output_field=DecimalField(max_digits=14, decimal_places=2),
+            )
+        )
+        pending_payments = sum((invoice.total - invoice._paid) for invoice in outstanding)
+    except Exception:  # pragma: no cover - defensive only; apps.sales always installed
+        total_revenue = 0
+        pending_payments = 0
+
+    # Active Employees: current active Employee/Manager headcount for
+    # "All Time"; for "This Month" (date_from set), narrowed to those who
+    # actually logged an attendance session inside the period — an
+    # employee who never worked this month is not meaningfully "active
+    # this month" even if their account is still enabled.
+    staff = User.objects.filter(is_active=True, role__in=[User.Role.EMPLOYEE, User.Role.MANAGER])
+    if date_from is not None:
+        from apps.attendance.models import AttendanceSession
+
+        worked_ids = _bounded(AttendanceSession.active_objects.all(), "login_at").values_list(
+            "employee_id", flat=True
+        )
+        staff = staff.filter(pk__in=set(worked_ids))
+    active_employees = staff.count()
+
+    conversion_rate = round((converted_leads / total_leads) * 100, 1) if total_leads else 0.0
+
+    return {
+        "total_leads": total_leads,
+        "total_converted_leads": converted_leads,
+        "total_revenue": total_revenue,
+        "pending_payments": pending_payments,
+        "active_employees": active_employees,
+        "conversion_rate": conversion_rate,
+    }
+
+
+def compute_company_dashboard_summary(*, now=None):
+    """``{"this_month": {...}, "all_time": {...}}`` — the Super Admin
+    Reports/Dashboard's two clearly-separated sections (Revenue/Reports
+    audit pass). Both blocks use the exact same six-metric shape from
+    ``_period_stats()`` above; only the date bounds differ, so a client
+    never needs its own aggregation logic to render either section.
+    """
+    now = now or timezone.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if month_start.month == 12:
+        next_month_start = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month_start = month_start.replace(month=month_start.month + 1)
+
+    return {
+        "this_month": _period_stats(date_from=month_start, date_to=next_month_start),
+        "all_time": _period_stats(),
+    }
+
+
 __all__ = [
     "managed_user_ids",
     "scope_queryset_for_user",
@@ -288,4 +403,5 @@ __all__ = [
     "set_default_dashboard",
     "add_widget",
     "update_widget_configuration",
+    "compute_company_dashboard_summary",
 ]

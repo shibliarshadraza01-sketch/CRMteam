@@ -73,13 +73,15 @@ class User(AbstractBaseUser, PermissionsMixin):
         ),
     )
     phone = models.CharField(_("phone"), max_length=32, blank=True, default="")
-    department = models.CharField(
-        _("department"),
-        max_length=150,
-        blank=True,
-        default="",
-        help_text=_("Free-text department/category label for staff management."),
-    )
+    # NOTE: there is deliberately no `department` field here. It used to be
+    # a free-text label collected on the staff-creation form, but nothing in
+    # the application ever read it, scoped by it, or filtered on it — it only
+    # rendered as "Not assigned" on most profiles. The real organizational
+    # structure lives in `apps.organization` (Organization -> Department ->
+    # Team -> Membership), which is a genuine, still-current concept and is
+    # entirely unaffected by this removal. An employee's MANAGER is likewise
+    # resolved from that hierarchy — see
+    # `apps.accounts.services.get_manager_for_user()`.
     role = models.CharField(
         _("role"),
         max_length=20,

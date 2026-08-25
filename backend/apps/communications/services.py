@@ -20,9 +20,8 @@ from django.utils import timezone
 
 from apps.crm.services import managed_user_ids, scope_queryset_for_user  # noqa: F401 (re-exported)
 
-from .models import Call, CommunicationLog, EmailMessage, Notification, WhatsAppMessage
+from .models import Call, CommunicationLog, EmailMessage, Notification
 from .providers.a1routes import A1RoutesClient, A1RoutesError
-from .providers.whatsapp import WhatsAppClient, WhatsAppError
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +71,8 @@ def resolve_recipient_email(entity):
 
 
 def resolve_recipient_phone(entity):
-    """Return `entity`'s real phone number (also used as its WhatsApp
-    number — this project stores one number per contact), read straight
-    from the database. Raises `ContactResolutionError` when absent.
+    """Return `entity`'s real phone number, read straight from the
+    database. Raises `ContactResolutionError` when absent.
     """
     number = (getattr(entity, "phone", "") or "").strip()
     if not number:
@@ -85,13 +83,13 @@ def resolve_recipient_phone(entity):
 
 
 def contact_capabilities(entity):
-    """``{"can_email": bool, "can_call": bool, "can_whatsapp": bool}`` for
-    `entity` — the safe, boolean-only shape an employee-facing API may
-    return in place of the values themselves.
+    """``{"can_email": bool, "can_call": bool}`` for `entity` — the safe,
+    boolean-only shape an employee-facing API may return in place of the
+    values themselves.
     """
     has_email = bool((getattr(entity, "email", "") or "").strip())
     has_phone = bool((getattr(entity, "phone", "") or "").strip())
-    return {"can_email": has_email, "can_call": has_phone, "can_whatsapp": has_phone}
+    return {"can_email": has_email, "can_call": has_phone}
 
 
 # --------------------------------------------------------------------------
@@ -352,7 +350,7 @@ def record_inbound_email(payload):
 
     Returns the created INBOUND `EmailMessage`, or ``None`` when the token
     is missing/unknown (an unrecognized reply is ignored, never raised —
-    same contract as the A1 Routes/WhatsApp webhook appliers).
+    same contract as the A1 Routes webhook applier).
     """
     recipient = payload.get("to") or payload.get("recipient") or ""
     token = parse_reply_token(recipient)
@@ -634,218 +632,6 @@ def apply_a1routes_webhook_event(payload):
     return call
 
 
-def send_whatsapp_message(to_number, body, *, owner=None, customer=None):
-    """Create a `WhatsAppMessage` and send it through the WhatsApp Cloud
-    API — identical shape/contract to `initiate_call()` above: the row
-    is created ``QUEUED`` first, a provider failure moves it to
-    ``FAILED`` with `error_message` set, and this never raises.
-
-    ``to_number`` may be ``None``/empty, in which case it is resolved
-    server-side from ``customer`` (``resolve_recipient_phone()``) — the
-    employee-facing path passes a customer, never a number. Kept as the
-    first POSITIONAL parameter so every existing caller is unaffected.
-    """
-    if not to_number:
-        if customer is None:
-            raise ContactResolutionError(
-                "Provide a customer to resolve the WhatsApp number from."
-            )
-        to_number = resolve_recipient_phone(customer)
-
-    message = WhatsAppMessage.objects.create(
-        owner=owner,
-        customer=customer,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="",  # filled in below once the client resolves WHATSAPP_PHONE_ID
-        receiver=to_number,
-        message=body,
-        status=WhatsAppMessage.Status.QUEUED,
-    )
-
-    try:
-        client = WhatsAppClient()
-    except WhatsAppError as exc:
-        message.status = WhatsAppMessage.Status.FAILED
-        message.error_message = str(exc)
-        message.save(update_fields=["status", "error_message", "updated_at"])
-        return message
-
-    message.sender = client.phone_id
-    try:
-        provider_message_id = client.send_message(to_number, body)
-    except WhatsAppError as exc:
-        message.status = WhatsAppMessage.Status.FAILED
-        message.error_message = str(exc)
-        message.save(update_fields=["sender", "status", "error_message", "updated_at"])
-        return message
-
-    message.provider_message_id = provider_message_id
-    message.status = WhatsAppMessage.Status.SENT
-    message.save(update_fields=["sender", "provider_message_id", "status", "updated_at"])
-    # Never the number — see initiate_call()'s equivalent comment.
-    log_communication(
-        channel=CommunicationLog.Channel.WHATSAPP,
-        summary=f"WhatsApp message sent (message #{message.pk})",
-        actor=owner,
-        related_object=message,
-    )
-    logger.info("WhatsApp message %s sent to %s.", message.pk, _entity_label(customer))
-    return message
-
-
-_WHATSAPP_STATUS_MAP = {
-    "sent": WhatsAppMessage.Status.SENT,
-    "delivered": WhatsAppMessage.Status.DELIVERED,
-    "read": WhatsAppMessage.Status.READ,
-    "failed": WhatsAppMessage.Status.FAILED,
-}
-
-#: WhatsApp status transitions that get their own `CommunicationLog`
-#: entry. ``SENT`` is absent for the same reason ``RINGING`` is absent from
-#: `_CALL_AUDITED_TRANSITIONS`: `send_whatsapp_message()` already logs the
-#: send. DELIVERED/READ/FAILED are the spec's WHATSAPP_DELIVERED/READ/
-#: FAILED events, and only the provider can report them.
-_WHATSAPP_AUDITED_TRANSITIONS = {
-    WhatsAppMessage.Status.DELIVERED: "delivered",
-    WhatsAppMessage.Status.READ: "read",
-    WhatsAppMessage.Status.FAILED: "failed",
-}
-
-
-def apply_whatsapp_webhook_event(payload):
-    """Update the matching `WhatsAppMessage` (by `provider_message_id`)
-    from a WhatsApp Cloud API webhook status payload — same idempotent-
-    by-value-comparison contract as `apply_a1routes_webhook_event()`.
-    Returns the updated message, or ``None`` if no matching row exists (a
-    status update for a message id this app doesn't recognize). Inbound
-    messages arrive on the SAME webhook but under a different key and are
-    handled by `record_inbound_whatsapp()`, not here.
-    """
-    provider_message_id = payload.get("id")
-    if not provider_message_id:
-        return None
-
-    message = WhatsAppMessage.objects.filter(provider_message_id=provider_message_id).first()
-    if message is None:
-        return None
-
-    new_status = _WHATSAPP_STATUS_MAP.get(str(payload.get("status", "")).lower())
-    if new_status is None or new_status == message.status:
-        return message
-
-    message.status = new_status
-    message.save(update_fields=["status", "updated_at"])
-
-    # See `apply_a1routes_webhook_event()`'s equivalent block — same
-    # reasoning, same idempotency guarantee (the unchanged-status guard
-    # above returns before reaching here on a replay).
-    transition_label = _WHATSAPP_AUDITED_TRANSITIONS.get(new_status)
-    if transition_label is not None:
-        log_communication(
-            channel=CommunicationLog.Channel.WHATSAPP,
-            summary=f"WhatsApp message {transition_label} (message #{message.pk})",
-            actor=message.owner,
-            related_object=message,
-        )
-    return message
-
-
-def _match_customer_by_phone(number):
-    """Find the `Customer` whose stored phone number IS `number`.
-
-    Deliberately EXACT-match only (against the raw value and its
-    ``+``-prefixed/unprefixed variants, since providers differ on that one
-    character): a fuzzy "ends with these digits" match would let a caller
-    who controls the ``from`` field of a webhook payload attach a
-    fabricated inbound message to a customer whose number merely shares a
-    suffix. An unmatched number simply yields ``None`` and the message is
-    stored unattached — never guessed at.
-    """
-    from apps.crm.models import Customer
-
-    number = (number or "").strip()
-    if not number:
-        return None
-    candidates = {number, f"+{number.lstrip('+')}", number.lstrip("+")}
-    return Customer.objects.filter(phone__in=candidates).first()
-
-
-def record_inbound_whatsapp(payload, *, receiver=""):
-    """Store one inbound WhatsApp message (a customer's REPLY) from a
-    single ``entry[].changes[].value.messages[]`` element of a Meta Cloud
-    API webhook body.
-
-    Same trust model and same contract as `record_inbound_email()`:
-
-    - The caller (``views.WhatsAppWebhookView``) has already verified the
-      payload's ``X-Hub-Signature-256`` before this runs.
-    - The conversation is resolved SERVER-SIDE from the sending number
-      (`_match_customer_by_phone()`); any customer/lead id present in the
-      payload is ignored outright, because a webhook body is
-      attacker-controlled input.
-    - Returns ``None`` rather than raising for anything unrecognized, so a
-      webhook handler never 500s on data it doesn't understand.
-    - Idempotent on ``provider_message_id``: Meta retries deliveries, and
-      a retry must not create a second copy of the same reply.
-
-    The stored ``sender`` is the customer's real number — an audit fact,
-    and already masked out of every Employee-facing response by
-    ``WhatsAppMessageSerializer.pii_fields``.
-    """
-    provider_message_id = str(payload.get("id") or "").strip()
-    from_number = str(payload.get("from") or "").strip()
-    if not from_number:
-        return None
-
-    if provider_message_id and WhatsAppMessage.objects.filter(
-        provider_message_id=provider_message_id, direction=WhatsAppMessage.Direction.INBOUND
-    ).exists():
-        return None
-
-    text = payload.get("text")
-    body = str(text.get("body") or "") if isinstance(text, dict) else ""
-    if not body:
-        # Non-text messages (media, reactions, location, ...) are still a
-        # real communication touchpoint the audit trail must not lose, so
-        # the row is created with a neutral type marker instead of being
-        # dropped. The provider's own type string is the only thing
-        # trusted from the payload here, and it is not PII.
-        body = f"[{str(payload.get('type') or 'unsupported')} message]"
-
-    customer = _match_customer_by_phone(from_number)
-    owner = customer.owner if customer is not None and customer.owner_id else None
-
-    message = WhatsAppMessage.objects.create(
-        owner=owner,
-        customer=customer,
-        direction=WhatsAppMessage.Direction.INBOUND,
-        sender=from_number,
-        receiver=receiver or "",
-        message=body,
-        # An inbound message has already arrived — there is no delivery
-        # attempt of ours left to track, so it lands terminal.
-        status=WhatsAppMessage.Status.DELIVERED,
-        provider_message_id=provider_message_id,
-    )
-
-    log_communication(
-        channel=CommunicationLog.Channel.WHATSAPP,
-        summary=f"WhatsApp reply received (message #{message.pk})",
-        actor=owner,
-        related_object=message,
-    )
-    if owner is not None:
-        create_notification(
-            owner,
-            Notification.NotificationType.INFO,
-            "New WhatsApp reply received",
-            message=body[:200],
-            related_object=customer,
-        )
-    logger.info("Inbound WhatsApp message stored as %s for %s.", message.pk, _entity_label(customer))
-    return message
-
-
 # --------------------------------------------------------------------------
 # Unified communication service (entity-addressed, provider-abstracted)
 # --------------------------------------------------------------------------
@@ -879,19 +665,6 @@ def call_entity(entity, *, owner=None, from_number=None):
     return initiate_call(from_number, None, owner=owner, related_object=entity)
 
 
-def send_whatsapp_to_entity(entity, body, *, owner=None):
-    """Send a WhatsApp message to `entity`, resolving the number
-    internally. `WhatsAppMessage` only models a `Customer` relation, so a
-    non-`Customer` entity is still contactable but not back-linked.
-    """
-    from apps.crm.models import Customer
-
-    customer = entity if isinstance(entity, Customer) else None
-    return send_whatsapp_message(
-        resolve_recipient_phone(entity), body, owner=owner, customer=customer
-    )
-
-
 __all__ = [
     "managed_user_ids",
     "scope_queryset_for_user",
@@ -906,7 +679,6 @@ __all__ = [
     "record_inbound_email",
     "send_email_to_entity",
     "call_entity",
-    "send_whatsapp_to_entity",
     "render_template",
     "queue_email",
     "send_queued_email",
@@ -916,7 +688,4 @@ __all__ = [
     "log_communication",
     "initiate_call",
     "apply_a1routes_webhook_event",
-    "send_whatsapp_message",
-    "apply_whatsapp_webhook_event",
-    "record_inbound_whatsapp",
 ]

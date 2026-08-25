@@ -185,6 +185,10 @@ class Lead(SoftDeleteTimeStampedModel):
         QUALIFIED = "QUALIFIED", _("Qualified")
         CONVERTED = "CONVERTED", _("Converted")
         LOST = "LOST", _("Lost")
+        DNC = "DNC", _("DNC")
+        NO_ANSWER = "NO_ANSWER", _("No Answer")
+        NOT_INTERESTED = "NOT_INTERESTED", _("Not Interested")
+        CALL_BACK = "CALL_BACK", _("Call Back")
 
     company_name = models.CharField(_("company name"), max_length=200)
     contact_name = models.CharField(_("contact name"), max_length=200)
@@ -196,6 +200,54 @@ class Lead(SoftDeleteTimeStampedModel):
     status = models.CharField(
         _("status"), max_length=20, choices=Status.choices, default=Status.NEW, db_index=True
     )
+
+    # -- External-ingestion readiness (Phase 6 audit) ----------------------
+    # No integration writes to these yet — the only ingestion paths today
+    # are a user typing a lead in by hand and the existing CSV/Google
+    # Sheets bulk import, neither of which has a stable external id or
+    # extra payload to carry. They exist now so that a FUTURE normalized
+    # ingestion pathway (a webhook from an ad platform, a Zapier/CRM
+    # connector, ...) has one clean place to land without a later
+    # migration that has to backfill millions of already-imported rows.
+    external_source_id = models.CharField(
+        _("external source id"),
+        max_length=255,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=_(
+            "This lead's own id in whatever external system it came from (e.g. a Facebook "
+            "Lead Ads leadgen_id, a webhook provider's event id) — NOT this row's own primary "
+            "key. Lets a future ingestion pathway recognize the same external lead delivered "
+            "twice (a webhook retry, a re-run sync) as one lead, not two, via the unique "
+            "constraint below, instead of relying on email/phone matching alone. Blank for a "
+            "lead entered directly or through the existing import, neither of which has one."
+        ),
+    )
+    source_metadata = models.JSONField(
+        _("source metadata"),
+        default=dict,
+        blank=True,
+        help_text=_(
+            "Extra data carried by an external lead source that doesn't warrant its own "
+            "column — campaign name, ad/form id, UTM parameters, or the provider's own raw "
+            "payload, for reference. Never read for access control or business logic, and "
+            "never included in PII masking decisions (`source` above already covers the "
+            "one source-related field masking applies to)."
+        ),
+    )
+    received_at = models.DateTimeField(
+        _("received at"),
+        null=True,
+        blank=True,
+        help_text=_(
+            "When this lead actually arrived at its external source, if known and different "
+            "from `created_at` — e.g. a batch sync ingesting leads hours after they were "
+            "really submitted. Falls back to `created_at` (this row's own creation time) when "
+            "not set, which is exactly right for every ingestion path that exists today."
+        ),
+    )
+
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         verbose_name=_("owner"),
@@ -232,6 +284,21 @@ class Lead(SoftDeleteTimeStampedModel):
             # GET .../duplicates/ call.
             models.Index(fields=["email"], name="crm_lead_email_idx"),
             models.Index(fields=["phone"], name="crm_lead_phone_idx"),
+        ]
+        constraints = [
+            # Idempotency for a future normalized ingestion pathway: the
+            # same external lead delivered twice (a webhook retry, a
+            # re-run sync) must resolve to the same row, not a duplicate.
+            # Scoped to non-blank `external_source_id` only — every lead
+            # entered directly or via the existing CSV/Google Sheets
+            # import leaves this blank, and forcing global uniqueness on
+            # an empty string would make the SECOND manually-entered lead
+            # ever created a database error.
+            models.UniqueConstraint(
+                fields=["external_source_id"],
+                condition=~models.Q(external_source_id=""),
+                name="crm_lead_unique_external_source_id",
+            ),
         ]
 
     def __str__(self):

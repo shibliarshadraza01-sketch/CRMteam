@@ -139,3 +139,91 @@ def test_super_admin_can_create_lead_owned_by_anyone(api_client, super_admin, ot
     )
     assert response.status_code == 201
     assert response.data["owner"] == other_employee.pk
+
+
+# --------------------------------------------------------------------------
+# Phase 3: the refusal above was only half of the fix.
+#
+# `resolve_owner_for_create()` is called AFTER the record has been saved, in
+# every `perform_create()` that uses it:
+#
+#     super().perform_create(serializer)                      # writes
+#     resolve_owner_for_create(self.request.user, obj.owner)  # may RAISE
+#
+# So the 403 the tests above assert was answered by a request that had
+# ALREADY committed the row — attributed to the very user the caller was
+# forbidden from naming. Verified against the running dev backend: an
+# Employee POSTing a Task with `owner: <super-admin-id>` got
+# "You are not allowed to assign this record to that owner." AND left a
+# Task behind with `owner_id` = the Super Admin, visible in the Super
+# Admin's own scoped lists.
+#
+# Fixed once, in the shared write mixin every one of these viewsets
+# inherits — `apps.core.views.AuditStampedModelMixin.create()/update()` are
+# now `@transaction.atomic`, so the refusal rolls the write back. Covered
+# here across both code shapes: `data.pop("owner")` (Customer) and the
+# post-save-resolve shape (Lead, Task).
+# --------------------------------------------------------------------------
+
+
+def test_a_refused_lead_create_leaves_no_lead_behind(api_client, employee, other_employee):
+    from apps.crm.models import Lead
+
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(
+        LEADS_URL,
+        {"company_name": "GhostCo", "contact_name": "Contact", "owner": other_employee.pk},
+    )
+
+    assert response.status_code == 403
+    # Not `active_objects`: a soft-deleted row would still be a row.
+    assert not Lead.objects.filter(company_name="GhostCo").exists()
+
+
+def test_a_refused_task_create_leaves_no_task_behind(api_client, employee, super_admin):
+    from apps.activities.models import Task
+
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(
+        TASKS_URL,
+        {"title": "GhostTask", "priority": "MEDIUM", "status": "PENDING", "owner": super_admin.pk},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert not Task.objects.filter(title="GhostTask").exists()
+
+
+def test_a_refused_customer_create_leaves_no_customer_behind(
+    api_client, employee, other_employee, organization
+):
+    from apps.crm.models import Customer
+
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(
+        CUSTOMERS_URL,
+        {"organization": organization.pk, "name": "GhostCustomer", "owner": other_employee.pk},
+        format="json",
+    )
+
+    assert response.status_code == 403
+    assert not Customer.objects.filter(name="GhostCustomer").exists()
+
+
+def test_an_allowed_create_still_commits(api_client, employee):
+    """The rollback must be scoped to the FAILURE — a legitimate create
+    still persists, owned by its creator.
+    """
+    from apps.activities.models import Task
+
+    api_client.force_authenticate(employee)
+
+    response = api_client.post(
+        TASKS_URL, {"title": "RealTask", "priority": "MEDIUM", "status": "PENDING"}, format="json"
+    )
+
+    assert response.status_code == 201
+    assert Task.objects.get(title="RealTask").owner_id == employee.pk

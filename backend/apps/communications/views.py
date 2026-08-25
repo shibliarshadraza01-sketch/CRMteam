@@ -41,16 +41,11 @@ from .filters import (
     EmailMessageFilterSet,
     EmailTemplateFilterSet,
     NotificationFilterSet,
-    WhatsAppMessageFilterSet,
 )
-from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification, WhatsAppMessage
+from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification
 from .permissions import EmailTemplateWritePermission, NotificationWritePermission
 from .providers.a1routes import verify_webhook_signature as verify_a1routes_signature
 from .providers.inbound_email import verify_webhook_signature as verify_inbound_email_signature
-from .providers.whatsapp import (
-    verify_webhook_signature as verify_whatsapp_signature,
-    verify_webhook_subscription_token,
-)
 from .serializers import (
     CallSerializer,
     CommunicationLogSerializer,
@@ -59,22 +54,17 @@ from .serializers import (
     EmailTemplateSerializer,
     InitiateCallSerializer,
     NotificationSerializer,
-    SendWhatsAppMessageSerializer,
-    WhatsAppMessageSerializer,
 )
 from .services import (
     ContactResolutionError,
     apply_a1routes_webhook_event,
-    apply_whatsapp_webhook_event,
     create_notification,
     initiate_call,
     mark_notification_read,
     mark_notification_unread,
     queue_email,
     record_inbound_email,
-    record_inbound_whatsapp,
     send_queued_email,
-    send_whatsapp_to_entity,
 )
 
 
@@ -390,58 +380,6 @@ class CallViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
         return Response(output_serializer.data, status=status.HTTP_201_CREATED)
 
 
-class WhatsAppMessageViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
-    """Final production operations pass: WhatsApp Business API
-    integration — identical shape/reasoning to ``CallViewSet`` above.
-    """
-
-    base_manager = WhatsAppMessage.objects
-    base_active_manager = WhatsAppMessage.active_objects
-    serializer_class = WhatsAppMessageSerializer
-    filterset_class = WhatsAppMessageFilterSet
-    full_search_fields = ["sender", "receiver", "message", "provider_message_id"]
-    pii_search_fields = ("sender", "receiver")
-    ordering_fields = ["created_at", "status"]
-    ordering = ["-created_at"]
-    http_method_names = ["get", "post", "head", "options"]
-
-    def get_throttles(self):
-        if self.action == "create":
-            self.throttle_scope = "expensive_operation"
-            return [ScopedRateThrottle()]
-        return super().get_throttles()
-
-    def get_queryset(self):
-        return super().get_queryset().select_related("owner", "customer")
-
-    @extend_schema(request=SendWhatsAppMessageSerializer, responses={201: WhatsAppMessageSerializer})
-    def create(self, request, *args, **kwargs):
-        """``POST /whatsapp/send/`` — sends a WhatsApp message
-        (``services.send_whatsapp_message()``). Same "the record of the
-        attempt is the response, a provider failure is never a 5xx"
-        contract as ``CallViewSet.create()``.
-        """
-        input_serializer = SendWhatsAppMessageSerializer(data=request.data)
-        input_serializer.is_valid(raise_exception=True)
-        data = input_serializer.validated_data
-
-        target = _resolve_contact_target(request, data)
-
-        try:
-            # The unified, entity-addressed entry point: it resolves the
-            # WhatsApp number from `target` server-side and back-links the
-            # row to the customer when the target IS a customer.
-            message = send_whatsapp_to_entity(target, data["message"], owner=request.user)
-        except ContactResolutionError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        stamp_audit_fields(message, request.user, creating=True)
-        message.save()
-
-        output_serializer = self.get_serializer(message)
-        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
-
-
 # --------------------------------------------------------------------------
 # Inbound provider webhooks
 # --------------------------------------------------------------------------
@@ -531,54 +469,5 @@ class InboundEmailWebhookView(APIView):
 
         message = record_inbound_email(payload)
         if message is None:
-            return Response({"status": "ignored"}, status=status.HTTP_200_OK)
-        return Response({"status": "ok"}, status=status.HTTP_200_OK)
-
-
-class WhatsAppWebhookView(APIView):
-    """``POST /api/v1/webhooks/whatsapp/`` — WhatsApp Cloud API's
-    message-status callback. ``GET`` handles Meta's own webhook-
-    subscription verification handshake (``hub.challenge``/
-    ``hub.verify_token``) — see ``providers.whatsapp.verify_webhook_subscription_token()``.
-    """
-
-    authentication_classes = []
-    permission_classes = [AllowAny]
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "expensive_operation"
-
-    @extend_schema(request=None, responses={200: dict, 403: dict})
-    def get(self, request, *args, **kwargs):
-        mode = request.query_params.get("hub.mode")
-        token = request.query_params.get("hub.verify_token")
-        challenge = request.query_params.get("hub.challenge", "")
-        if mode == "subscribe" and verify_webhook_subscription_token(token):
-            return Response(int(challenge) if challenge.isdigit() else challenge, status=status.HTTP_200_OK)
-        return Response({"detail": "Verification failed."}, status=status.HTTP_403_FORBIDDEN)
-
-    @extend_schema(request=None, responses={200: dict, 401: dict})
-    def post(self, request, *args, **kwargs):
-        signature = request.headers.get("X-Hub-Signature-256", "")
-        if not verify_whatsapp_signature(request.body, signature):
-            return Response({"detail": "Invalid signature."}, status=status.HTTP_401_UNAUTHORIZED)
-
-        # Meta's payload nests BOTH kinds of event under
-        # entry[].changes[].value: delivery/read receipts for messages WE
-        # sent under `statuses[]`, and the customer's own inbound replies
-        # under `messages[]`. Both are audit-trail facts, so both are
-        # processed here — the provider webhook is the authoritative
-        # source for each (see the spec's "do not rely on the frontend to
-        # create audit records").
-        try:
-            entries = request.data.get("entry", [])
-            for entry in entries:
-                for change in entry.get("changes", []):
-                    value = change.get("value", {})
-                    for status_update in value.get("statuses", []):
-                        apply_whatsapp_webhook_event(status_update)
-                    receiver = str(value.get("metadata", {}).get("phone_number_id") or "")
-                    for inbound in value.get("messages", []):
-                        record_inbound_whatsapp(inbound, receiver=receiver)
-        except (AttributeError, TypeError):
             return Response({"status": "ignored"}, status=status.HTTP_200_OK)
         return Response({"status": "ok"}, status=status.HTTP_200_OK)

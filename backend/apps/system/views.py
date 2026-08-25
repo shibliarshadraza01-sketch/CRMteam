@@ -16,7 +16,11 @@ shapes:
   — factored out at CP20 as the THIRD independent occurrence of it,
   after CP13's `_CatalogModelViewSet`/CP15's `_ReferenceDataModelViewSet`
   (see that mixin's own docstring); only `permission_classes` is set
-  here, `SystemConfigWritePermission` being this app's own composition.
+  here — `SystemConfigWritePermission` is this app's own alias, and
+  since Phase 5 it means "everyone reads, ONLY a Super Admin writes"
+  (see `permissions.py` for why system-wide config is not
+  Manager-writable operational data). `get_permissions()` extends that
+  same boundary to CP7's `restore`/`hard-delete` actions.
 - `BackgroundJobViewSet` reuses CP10's `_CrmModelViewSet` directly (a
   real `owner` FK) — the same cross-app reuse CP12/CP14/CP15/CP16/CP17/
   CP18 already established.
@@ -68,6 +72,28 @@ class _SystemConfigModelViewSet(ReferenceDataModelViewSetMixin, viewsets.ModelVi
     """
 
     permission_classes = [IsAuthenticated, SystemConfigWritePermission]
+
+    #: Phase 5: CP7's `restore`/`hard-delete` actions carry their OWN
+    #: `permission_classes=[CanRestoreOrHardDelete]` (an
+    #: `IsManagerOrSuperAdmin` subclass), declared on the shared
+    #: `SoftDeleteModelViewSetMixin` in `apps.core.views`. A DRF `@action`'s
+    #: `permission_classes` REPLACES the viewset's, so tightening
+    #: `SystemConfigWritePermission` alone would have left a Manager able to
+    #: `POST /system/settings/<id>/hard-delete/` — permanently destroying a
+    #: system-wide setting through the exact back door this tightening
+    #: exists to close. Re-adding the class here for those two actions
+    #: restores the intended boundary WITHOUT touching `CanRestoreOrHardDelete`
+    #: itself, which stays correctly Manager-level for every owner-shaped
+    #: CRM record in the other apps. Same mechanism CP15's
+    #: `NotificationViewSet.get_permissions()` already uses for its own
+    #: authoring actions.
+    destructive_actions = ("restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.destructive_actions:
+            permissions = permissions + [SystemConfigWritePermission()]
+        return permissions
 
     def get_queryset(self):
         """``SystemSetting.active_objects``/``FeatureFlag.active_objects``

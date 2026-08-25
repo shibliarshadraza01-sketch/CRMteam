@@ -430,9 +430,12 @@ class UserListCreateView(generics.ListCreateAPIView):
             last_name=data.get("last_name", ""),
             username=data.get("username"),
             phone=data.get("phone", ""),
-            department=data.get("department", ""),
             date_joined=data.get("date_joined"),
             is_active=data.get("is_active", True),
+            # Persisted through the apps.organization Team/Membership
+            # hierarchy by create_managed_user() -> assign_user_to_manager(),
+            # not as a column on User — see apps/accounts/services.py.
+            manager=data.get("manager"),
         )
         serializer.instance = user
 

@@ -42,9 +42,9 @@ class ContactPersonSerializer(PiiMaskedSerializerMixin, ContactCapabilityMixin, 
     """``email``/``phone`` are WRITABLE (data entry is what a CRM is for)
     but are stripped from the RESPONSE for an Employee — see
     ``apps.core.serializers.PiiMaskedSerializerMixin``. An Employee reads
-    ``can_email``/``can_call``/``can_whatsapp`` instead and communicates
-    through ``apps.communications``, which resolves the real address/
-    number server-side and never returns it.
+    ``can_email``/``can_call`` instead and communicates through
+    ``apps.communications``, which resolves the real address/number
+    server-side and never returns it.
     """
 
     pii_fields = ("email", "phone")
@@ -180,7 +180,11 @@ class LeadSerializer(
     """
 
     pii_fields = ("email", "phone")
-    super_admin_only_fields = ("source",)
+    # `external_source_id`/`source_metadata` reveal the same kind of
+    # "where did this lead come from" detail as `source` itself, so they
+    # are masked identically — see this class's own docstring for why
+    # `source` is Super-Admin-only.
+    super_admin_only_fields = ("source", "external_source_id", "source_metadata")
 
     # Conversion is a workflow action (apps.crm.services.convert_lead()),
     # not a plain field edit — read-only here even on the "writable"
@@ -192,8 +196,16 @@ class LeadSerializer(
         fields = [
             "id", "company_name", "contact_name", "email", "phone", "source", "status", "owner",
             "converted_customer", "notes",
+            # Read-only: no ingestion pathway writes through this general
+            # CRUD serializer yet (see models.py's own "external-ingestion
+            # readiness" note) — a future one is expected to set these via
+            # a dedicated service function, the same way `convert_lead()`
+            # is the only writer of `converted_customer`, not this
+            # serializer.
+            "external_source_id", "source_metadata", "received_at",
             "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
         ] + CONTACT_CAPABILITY_FIELDS
+        read_only_fields = ["external_source_id", "source_metadata", "received_at"]
 
     def validate_status(self, value):
         """``CONVERTED`` is a status a lead ARRIVES at only through

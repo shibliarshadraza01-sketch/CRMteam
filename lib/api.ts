@@ -28,6 +28,107 @@ export class ApiError extends Error {
   }
 }
 
+// ---- DRF error-body → readable message --------------------------------
+//
+// The backend already returns correct, structured DRF errors. Historically
+// this client threw a hardcoded `${method} ${path} failed (${status})` and
+// only stashed the real body on `err.body`, which almost no call site read —
+// so every validation failure surfaced to the user as a meaningless
+// "POST /api/v1/... failed (400)". Everything below exists to turn the three
+// shapes DRF actually produces into a sentence a user can act on:
+//
+//   {"email": ["user with this email address already exists."]}  → field errors
+//   {"detail": "Not found."}                                     → single message
+//   {"non_field_errors": ["Passwords do not match."]}            → form-level
+//
+// Anything unrecognised falls back to the generic string, so a non-JSON or
+// empty body never produces a blank or "[object Object]" toast.
+
+// "non_field_errors" / "first_name" → "First name". Field keys are only
+// prefixed when they name a real field, so form-level errors read cleanly.
+function humanizeFieldName(field: string): string {
+  const withSpaces = field.replace(/_/g, " ").trim();
+  if (!withSpaces) return field;
+  return withSpaces.charAt(0).toUpperCase() + withSpaces.slice(1);
+}
+
+// DRF nests: a value may be a string, a list of strings, a list of nested
+// error objects (writable nested serializers / many=True), or an object.
+// Flatten any of those to plain sentences.
+function flattenErrorValue(value: unknown): string[] {
+  if (value == null) return [];
+  if (typeof value === "string") return value.trim() ? [value.trim()] : [];
+  if (typeof value === "number" || typeof value === "boolean") return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(flattenErrorValue);
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => {
+      const messages = flattenErrorValue(nested);
+      if (!messages.length) return [];
+      // Numeric keys come from list indexes (e.g. items[0]) — they add noise
+      // rather than meaning, so the inner message is used as-is.
+      if (/^\d+$/.test(key)) return messages;
+      return messages.map((message) => `${humanizeFieldName(key)}: ${message}`);
+    });
+  }
+  return [];
+}
+
+// Turn a parsed DRF error body into a single readable string, or null when
+// the body carries nothing usable (so the caller can fall back).
+export function formatApiErrorBody(body: unknown): string | null {
+  if (body == null) return null;
+
+  // Some error responses are a bare string or a bare list of strings.
+  if (typeof body === "string") return body.trim() || null;
+  if (Array.isArray(body)) {
+    const messages = flattenErrorValue(body);
+    return messages.length ? messages.join(" ") : null;
+  }
+  if (typeof body !== "object") return null;
+
+  const record = body as Record<string, unknown>;
+
+  // {"detail": "..."} — DRF's own shape for auth/permission/404 errors.
+  // It never coexists meaningfully with field errors, so it wins outright.
+  if (typeof record.detail === "string" && record.detail.trim()) {
+    return record.detail.trim();
+  }
+
+  const parts: string[] = [];
+
+  // Form-level errors first — they describe the submission as a whole.
+  for (const key of ["non_field_errors", "detail"]) {
+    if (key in record) {
+      parts.push(...flattenErrorValue(record[key]));
+    }
+  }
+
+  // Then per-field errors, prefixed with the humanized field name.
+  for (const [field, value] of Object.entries(record)) {
+    if (field === "non_field_errors" || field === "detail") continue;
+    const messages = flattenErrorValue(value);
+    if (!messages.length) continue;
+    parts.push(...messages.map((message) => `${humanizeFieldName(field)}: ${message}`));
+  }
+
+  if (!parts.length) return null;
+  // De-duplicate: the same message can arrive under several keys.
+  return Array.from(new Set(parts)).join(" ");
+}
+
+// Build the ApiError for a failed response: read the body once, prefer the
+// backend's real message, and fall back to the generic request description
+// only when the body is empty or unparseable.
+async function errorFromResponse(response: Response, fallback: string): Promise<ApiError> {
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    // no JSON body (HTML error page, empty 500, network-level truncation)
+  }
+  return new ApiError(response.status, body, formatApiErrorBody(body) ?? fallback);
+}
+
 export function getTokens(): { access: string | null; refresh: string | null } {
   if (typeof window === "undefined") return { access: null, refresh: null };
   const access = window.localStorage.getItem(ACCESS_TOKEN_KEY) ?? window.sessionStorage.getItem(ACCESS_TOKEN_KEY);
@@ -134,13 +235,7 @@ export async function apiRequest<T = unknown>(
   }
 
   if (!response.ok) {
-    let body: unknown = null;
-    try {
-      body = await response.json();
-    } catch {
-      // no JSON body
-    }
-    throw new ApiError(response.status, body, `${options.method ?? "GET"} ${path} failed (${response.status})`);
+    throw await errorFromResponse(response, `${options.method ?? "GET"} ${path} failed (${response.status})`);
   }
 
   if (response.status === 204) return undefined as T;
@@ -157,13 +252,7 @@ export async function apiUpload<T = unknown>(path: string, formData: FormData): 
     body: formData
   });
   if (!response.ok) {
-    let body: unknown = null;
-    try {
-      body = await response.json();
-    } catch {
-      // no JSON body
-    }
-    throw new ApiError(response.status, body, `POST ${path} failed (${response.status})`);
+    throw await errorFromResponse(response, `POST ${path} failed (${response.status})`);
   }
   return (await response.json()) as T;
 }
@@ -176,7 +265,9 @@ export async function apiDownload(path: string): Promise<{ blob: Blob; filename:
     headers: { ...(access ? { Authorization: `Bearer ${access}` } : {}) }
   });
   if (!response.ok) {
-    throw new ApiError(response.status, null, `GET ${path} failed (${response.status})`);
+    // Export endpoints stream a file on success but still return a JSON
+    // error body on failure, so the same formatter applies here.
+    throw await errorFromResponse(response, `GET ${path} failed (${response.status})`);
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="?([^"]+)"?/);
@@ -198,7 +289,7 @@ export async function login(email: string, password: string): Promise<LoginResul
   });
   const data = await response.json();
   if (!response.ok) {
-    throw new ApiError(response.status, data, data?.detail ?? "Invalid email or password.");
+    throw new ApiError(response.status, data, formatApiErrorBody(data) ?? "Invalid email or password.");
   }
   if (data.secondary_verification_required) {
     return { kind: "challenge", challenge: data.challenge };
@@ -213,7 +304,7 @@ export async function verifySuperAdmin(challenge: string, accessCode: string): P
   });
   const data = await response.json();
   if (!response.ok) {
-    throw new ApiError(response.status, data, data?.detail ?? "Incorrect access code.");
+    throw new ApiError(response.status, data, formatApiErrorBody(data) ?? "Incorrect access code.");
   }
   return { kind: "tokens", access: data.access, refresh: data.refresh, user: data.user };
 }
@@ -246,7 +337,12 @@ export type LeadImportPreview = {
   total: number;
   valid: number;
   invalid: number;
-  warnings: string[];
+  // A COUNT of rows that imported with a fallback applied (e.g. an
+  // unrecognised source defaulting to OTHER), not a list of messages —
+  // see apps/crm/imports.py's preview_leads()/import_leads(), which both
+  // return `warnings` as an int. This was previously typed `string[]`,
+  // which would have rendered as garbage the moment anything displayed it.
+  warnings: number;
   errors: Array<{ row: number; message?: string; error?: string }>;
   sample: Array<Record<string, unknown>>;
 };
@@ -257,7 +353,8 @@ export type LeadImportResult = {
   total: number;
   created: number;
   failed: number;
-  warnings: string[];
+  // Count, not a message list — see LeadImportPreview.warnings above.
+  warnings: number;
   errors: Array<{ row: number; message?: string; error?: string }>;
   lead_ids: number[];
 };
@@ -274,6 +371,16 @@ export const crm = {
   updateLead: (id: number | string, body: Record<string, unknown>) =>
     apiRequest(`/api/v1/crm/leads/${id}/`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteLead: (id: number | string) => apiRequest(`/api/v1/crm/leads/${id}/`, { method: "DELETE" }),
+  // Contextual, per-lead conversion. ONE endpoint serves all three roles:
+  // authorization is entirely server-side (a lead outside the caller's
+  // scope is a 404), and converting an already-converted lead is a 400
+  // with a real message rather than a second customer. Returns the created
+  // Customer row.
+  convertLead: (id: number | string, body: Record<string, unknown> = {}) =>
+    apiRequest<Record<string, unknown>>(`/api/v1/crm/leads/${id}/convert/`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
   findDuplicateLeads: (id: number | string) =>
     apiRequest<Record<string, unknown>[]>(`/api/v1/crm/leads/${id}/duplicates/`),
   mergeLeads: (id: number | string, duplicateId: number | string) =>
@@ -341,7 +448,11 @@ export type StaffProfile = {
     last_name: string;
     full_name: string;
     phone: string;
-    department: string;
+    // `department` was removed from the User model — a free-text label
+    // nothing in the app read. The reporting line that DOES matter (and
+    // that RBAC scoping is derived from) is `manager`, resolved from the
+    // apps.organization Team/Membership hierarchy.
+    manager: { id: number; full_name: string; email: string } | null;
     role: BackendRole;
     date_joined: string;
     is_active: boolean;
@@ -469,24 +580,16 @@ export const communications = {
   // grants access; the server decides. `query` is a pre-built,
   // URL-encoded query string (e.g. "?channel=CALL&owner=3").
   listCalls: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/communications/calls/${query}`),
-  listWhatsAppMessages: (query = "") =>
-    apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/communications/whatsapp/messages/${query}`),
 
-  // Write actions for the Calling and WhatsApp channels. Both are
-  // ENTITY-addressed exactly like queueEmail above: the body names
-  // { customer } | { lead } | { contact } (or content_type+object_id) and
-  // the backend resolves the real phone/WhatsApp number itself
-  // (apps.communications.serializers.InitiateCallSerializer /
-  // SendWhatsAppMessageSerializer both deliberately refuse a raw
-  // to_number). Each returns the created row — a provider failure comes
-  // back as a 201 with status=FAILED on the row, not as an HTTP error.
+  // Write action for the Calling channel. ENTITY-addressed exactly like
+  // queueEmail above: the body names { customer } | { lead } | { contact }
+  // (or content_type+object_id) and the backend resolves the real phone
+  // number itself (apps.communications.serializers.InitiateCallSerializer
+  // deliberately refuses a raw to_number). Returns the created row — a
+  // provider failure comes back as a 201 with status=FAILED on the row,
+  // not as an HTTP error.
   initiateCall: (body: Record<string, unknown>) =>
     apiRequest<Record<string, unknown>>("/api/v1/communications/calls/", {
-      method: "POST",
-      body: JSON.stringify(body)
-    }),
-  sendWhatsAppMessage: (body: Record<string, unknown>) =>
-    apiRequest<Record<string, unknown>>("/api/v1/communications/whatsapp/send/", {
       method: "POST",
       body: JSON.stringify(body)
     }),
@@ -541,7 +644,26 @@ export const reports = {
   deleteSavedReport: (id: number | string) =>
     apiRequest(`/api/v1/reports/saved-reports/${id}/`, { method: "DELETE" }),
   executeSavedReport: (id: number | string) =>
-    apiRequest<Record<string, unknown>>(`/api/v1/reports/saved-reports/${id}/execute/`, { method: "POST" })
+    apiRequest<Record<string, unknown>>(`/api/v1/reports/saved-reports/${id}/execute/`, { method: "POST" }),
+  // Spec 6: server-computed "This Month" + "All Time" company-wide figures
+  // for the Super Admin Reports/Dashboard — see
+  // apps.reports.services.compute_company_dashboard_summary(). Super Admin
+  // only; a Manager/Employee calling this gets a 403.
+  companySummary: () => apiRequest<CompanyDashboardSummary>(`/api/v1/reports/dashboards/company-summary/`)
+};
+
+export type CompanyDashboardPeriodStats = {
+  total_leads: number;
+  total_converted_leads: number;
+  total_revenue: string | number;
+  pending_payments: string | number;
+  active_employees: number;
+  conversion_rate: number;
+};
+
+export type CompanyDashboardSummary = {
+  this_month: CompanyDashboardPeriodStats;
+  all_time: CompanyDashboardPeriodStats;
 };
 
 export type AttendanceSession = {
@@ -666,8 +788,9 @@ export const system = {
   listAuditLogs: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/system/audit-logs/${query}`),
 
   listSettings: (query = "") => apiRequest<Paginated<Record<string, unknown>>>(`/api/v1/system/settings/${query}`),
-  createSetting: (body: Record<string, unknown>) =>
-    apiRequest("/api/v1/system/settings/", { method: "POST", body: JSON.stringify(body) }),
+  // No `createSetting`: the "Add Setting" UI action was removed (settings
+  // are provisioned by the backend, not authored ad-hoc), so this client
+  // deliberately exposes only read/update/delete for them.
   updateSetting: (id: number | string, body: Record<string, unknown>) =>
     apiRequest(`/api/v1/system/settings/${id}/`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteSetting: (id: number | string) => apiRequest(`/api/v1/system/settings/${id}/`, { method: "DELETE" })

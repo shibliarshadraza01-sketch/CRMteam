@@ -11,7 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
-from apps.accounts.permissions import assert_object_accessible
+from apps.accounts.permissions import assert_object_accessible, is_super_admin
 from apps.core.utils import stamp_audit_fields
 from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
@@ -30,7 +30,7 @@ from .serializers import (
     ReportExecutionSerializer,
     SavedReportSerializer,
 )
-from .services import add_widget, execute_report, set_default_dashboard
+from .services import add_widget, compute_company_dashboard_summary, execute_report, set_default_dashboard
 
 
 class SavedReportViewSet(_CrmModelViewSet):
@@ -156,6 +156,23 @@ class DashboardViewSet(_CrmModelViewSet):
         set_default_dashboard(dashboard)
         serializer = self.get_serializer(dashboard)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(request=None, responses={200: dict})
+    @action(detail=False, methods=["get"], url_path="company-summary")
+    def company_summary(self, request, *args, **kwargs):
+        """``GET /dashboards/company-summary/`` — Reports/Dashboard audit
+        pass: the Super Admin "This Month" + "All Time" company-wide
+        figures (Total Leads, Total Converted Leads, Total Revenue,
+        Pending Payments, Active Employees, Conversion Rate), computed
+        entirely server-side by ``services.compute_company_dashboard_summary()``
+        from the real Lead/Invoice/PaymentTransaction/User records — never
+        frontend-aggregated. Super Admin only: this is a company-wide
+        figure, not a Manager's team or an Employee's own scope (which
+        already have their own scoped views elsewhere).
+        """
+        if not is_super_admin(request.user):
+            return Response({"detail": "Super Admin only."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(compute_company_dashboard_summary())
 
 
 class DashboardWidgetViewSet(_CrmModelViewSet):

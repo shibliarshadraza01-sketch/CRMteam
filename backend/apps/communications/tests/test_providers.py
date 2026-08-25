@@ -1,12 +1,15 @@
-"""Final production operations pass: A1 Routes SIP + WhatsApp Business
-API integration tests. No real provider account exists in this
-environment — every provider HTTP call is mocked (``unittest.mock``),
-so these tests verify OUR code's behavior (record creation, status
-transitions, failure handling, webhook signature verification,
-authorization, throttling) without depending on network access or real
-credentials. Live verification against real A1 Routes/WhatsApp accounts
-is explicitly out of scope until real credentials exist — same status
-SendGrid had (and, once a real key was supplied, was moved out of).
+"""Final production operations pass: A1 Routes SIP integration tests.
+No real provider account exists in this environment — every provider
+HTTP call is mocked (``unittest.mock``), so these tests verify OUR
+code's behavior (record creation, status transitions, failure handling,
+webhook signature verification, authorization, throttling) without
+depending on network access or real credentials. Live verification
+against a real A1 Routes account is explicitly out of scope until real
+credentials exist — same status SendGrid had (and, once a real key was
+supplied, was moved out of).
+
+WhatsApp Business API provider tests were removed along with the rest of
+the WhatsApp integration (explicitly descoped by the project owner).
 """
 import hashlib
 import hmac
@@ -15,23 +18,17 @@ from unittest.mock import patch
 import pytest
 from rest_framework.test import APIClient
 
-from apps.communications.models import Call, WhatsAppMessage
+from apps.communications.models import Call
 from apps.communications.providers.a1routes import A1RoutesError, verify_webhook_signature as verify_a1routes_sig
-from apps.communications.providers.whatsapp import WhatsAppError, verify_webhook_signature as verify_whatsapp_sig
 from apps.communications.services import (
     apply_a1routes_webhook_event,
-    apply_whatsapp_webhook_event,
     initiate_call,
-    send_whatsapp_message,
 )
 
 pytestmark = pytest.mark.django_db
 
 CALLS_URL = "/api/v1/communications/calls/"
-WHATSAPP_SEND_URL = "/api/v1/communications/whatsapp/send/"
-WHATSAPP_LIST_URL = "/api/v1/communications/whatsapp/messages/"
 A1ROUTES_WEBHOOK_URL = "/api/v1/webhooks/a1routes/"
-WHATSAPP_WEBHOOK_URL = "/api/v1/webhooks/whatsapp/"
 
 
 # --------------------------------------------------------------------------
@@ -52,17 +49,6 @@ def test_a1routes_signature_verification_rejects_wrong_signature():
 
 def test_a1routes_signature_verification_rejects_missing_secret():
     assert verify_a1routes_sig(b"{}", "anything", secret="") is False
-
-
-def test_whatsapp_signature_verification_accepts_correct_signature():
-    secret = "app-secret"
-    body = b'{"entry":[]}'
-    signature = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_whatsapp_sig(body, signature, app_secret=secret) is True
-
-
-def test_whatsapp_signature_verification_rejects_wrong_signature():
-    assert verify_whatsapp_sig(b"{}", "sha256=wrong", app_secret="app-secret") is False
 
 
 # --------------------------------------------------------------------------
@@ -95,48 +81,6 @@ def test_initiate_call_records_provider_failure_without_raising(employee):
 
     assert call.status == Call.Status.FAILED
     assert "provider rejected the call" in call.error_message
-
-
-# --------------------------------------------------------------------------
-# services.send_whatsapp_message()
-# --------------------------------------------------------------------------
-
-
-def test_send_whatsapp_message_records_success(employee):
-    import os
-
-    with patch.dict(os.environ, {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch("apps.communications.services.WhatsAppClient.send_message", return_value="wamid.123"):
-            message = send_whatsapp_message("+15551234567", "Hello", owner=employee)
-
-    assert message.status == WhatsAppMessage.Status.SENT
-    assert message.provider_message_id == "wamid.123"
-    assert message.sender == "12345"
-
-
-def test_send_whatsapp_message_records_provider_failure_without_raising(employee):
-    import os
-
-    with patch.dict(os.environ, {"WHATSAPP_API_TOKEN": "tok", "WHATSAPP_PHONE_ID": "12345"}):
-        with patch(
-            "apps.communications.services.WhatsAppClient.send_message",
-            side_effect=WhatsAppError("invalid recipient"),
-        ):
-            message = send_whatsapp_message("+15551234567", "Hello", owner=employee)
-
-    assert message.status == WhatsAppMessage.Status.FAILED
-    assert "invalid recipient" in message.error_message
-
-
-def test_send_whatsapp_message_missing_credentials_fails_gracefully(employee):
-    import os
-
-    with patch.dict(os.environ, {}, clear=False):
-        os.environ.pop("WHATSAPP_API_TOKEN", None)
-        message = send_whatsapp_message("+15551234567", "Hello", owner=employee)
-
-    assert message.status == WhatsAppMessage.Status.FAILED
-    assert message.error_message
 
 
 # --------------------------------------------------------------------------
@@ -173,16 +117,6 @@ def test_apply_a1routes_webhook_event_is_idempotent(employee):
     assert call.duration_seconds == 10
 
 
-def test_apply_whatsapp_webhook_event_updates_matching_message(employee):
-    message = WhatsAppMessage.objects.create(
-        owner=employee, direction=WhatsAppMessage.Direction.OUTBOUND, sender="1", receiver="2",
-        message="hi", provider_message_id="wamid.1", status=WhatsAppMessage.Status.SENT,
-    )
-    apply_whatsapp_webhook_event({"id": "wamid.1", "status": "delivered"})
-    message.refresh_from_db()
-    assert message.status == WhatsAppMessage.Status.DELIVERED
-
-
 # --------------------------------------------------------------------------
 # API: authentication, authorization, throttling not-disabled
 # --------------------------------------------------------------------------
@@ -190,11 +124,6 @@ def test_apply_whatsapp_webhook_event_updates_matching_message(employee):
 
 def test_unauthenticated_cannot_initiate_call(api_client):
     response = api_client.post(CALLS_URL, {"customer": 1})
-    assert response.status_code == 401
-
-
-def test_unauthenticated_cannot_send_whatsapp_message(api_client):
-    response = api_client.post(WHATSAPP_SEND_URL, {"customer": 1, "message": "hi"})
     assert response.status_code == 401
 
 
@@ -280,26 +209,3 @@ def test_a1routes_webhook_accepts_valid_signature(api_client, settings, employee
     assert response.status_code == 200
     call.refresh_from_db()
     assert call.status == Call.Status.COMPLETED
-
-
-def test_whatsapp_webhook_rejects_missing_signature(api_client):
-    response = api_client.post(WHATSAPP_WEBHOOK_URL, {"entry": []}, format="json")
-    assert response.status_code == 401
-
-
-def test_whatsapp_webhook_subscription_handshake(api_client, monkeypatch):
-    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "my-verify-token")
-    response = api_client.get(
-        WHATSAPP_WEBHOOK_URL,
-        {"hub.mode": "subscribe", "hub.verify_token": "my-verify-token", "hub.challenge": "12345"},
-    )
-    assert response.status_code == 200
-
-
-def test_whatsapp_webhook_subscription_handshake_rejects_wrong_token(api_client, monkeypatch):
-    monkeypatch.setenv("WHATSAPP_VERIFY_TOKEN", "my-verify-token")
-    response = api_client.get(
-        WHATSAPP_WEBHOOK_URL,
-        {"hub.mode": "subscribe", "hub.verify_token": "wrong-token", "hub.challenge": "12345"},
-    )
-    assert response.status_code == 403

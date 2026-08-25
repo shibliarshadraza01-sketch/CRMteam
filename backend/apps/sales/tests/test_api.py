@@ -209,24 +209,25 @@ def test_retrieve_invoice_uses_detail_serializer(api_client, invoice, owner):
     assert "items" in response.data
 
 
-def test_mark_paid_action(api_client, invoice, owner):
-    api_client.force_authenticate(owner)
+def test_mark_paid_action(api_client, invoice, owner, super_admin):
+    # Revenue/Payments audit pass: mark-paid/cancel are Super-Admin-only writes now.
+    api_client.force_authenticate(super_admin)
     response = api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}mark-paid/")
     assert response.status_code == 200
     invoice.refresh_from_db()
     assert invoice.status == Invoice.Status.PAID
 
 
-def test_cancel_action(api_client, invoice, owner):
-    api_client.force_authenticate(owner)
+def test_cancel_action(api_client, invoice, owner, super_admin):
+    api_client.force_authenticate(super_admin)
     response = api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}cancel/")
     assert response.status_code == 200
     invoice.refresh_from_db()
     assert invoice.status == Invoice.Status.CANCELLED
 
 
-def test_cancel_action_rejects_paid(api_client, invoice, owner):
-    api_client.force_authenticate(owner)
+def test_cancel_action_rejects_paid(api_client, invoice, owner, super_admin):
+    api_client.force_authenticate(super_admin)
     api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}mark-paid/")
 
     response = api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}cancel/")
@@ -234,8 +235,8 @@ def test_cancel_action_rejects_paid(api_client, invoice, owner):
     assert response.status_code == 400
 
 
-def test_mark_paid_action_rejects_cancelled(api_client, invoice, owner):
-    api_client.force_authenticate(owner)
+def test_mark_paid_action_rejects_cancelled(api_client, invoice, owner, super_admin):
+    api_client.force_authenticate(super_admin)
     api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}cancel/")
 
     response = api_client.post(f"{_detail(INVOICES_URL, invoice.pk)}mark-paid/")

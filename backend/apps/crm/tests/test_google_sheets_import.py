@@ -189,3 +189,124 @@ def test_sheet_import_requires_a_spreadsheet_id(api_client, super_admin):
     response = api_client.post(SHEET_URL, {}, format="json")
 
     assert response.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Spreadsheet-ID parsing and range encoding
+#
+# Two real implementation bugs, both reachable WITHOUT any credentials:
+# a pasted sheet URL was used verbatim as the document id, and the sheet
+# range was interpolated into the request path unencoded even though a
+# perfectly ordinary range ("Sheet1!A1:F500") contains "!".
+# --------------------------------------------------------------------------
+
+
+def test_a_bare_spreadsheet_id_is_accepted_unchanged():
+    assert google_sheets.extract_spreadsheet_id("1AbC_dEf-123") == "1AbC_dEf-123"
+
+
+def test_a_pasted_sheet_url_yields_the_document_id():
+    url = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0"
+
+    assert google_sheets.extract_spreadsheet_id(url) == "1AbC_dEf-123"
+
+
+def test_a_sheet_url_without_a_fragment_also_works():
+    url = "https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit"
+
+    assert google_sheets.extract_spreadsheet_id(url) == "1AbC_dEf-123"
+
+
+def test_surrounding_whitespace_is_ignored():
+    assert google_sheets.extract_spreadsheet_id("  1AbC_dEf-123  ") == "1AbC_dEf-123"
+
+
+def test_an_empty_spreadsheet_id_is_rejected():
+    with pytest.raises(google_sheets.GoogleSheetsError):
+        google_sheets.extract_spreadsheet_id("")
+
+
+def test_an_unparseable_value_is_rejected_locally_not_sent_upstream():
+    with pytest.raises(google_sheets.GoogleSheetsError) as excinfo:
+        google_sheets.extract_spreadsheet_id("https://example.com/not-a-sheet")
+
+    assert "spreadsheet ID" in str(excinfo.value)
+
+
+def _capture_request_url(monkeypatch):
+    """Run the real provider against a stubbed `requests.get`, returning the
+    URL it would have called. No network, no credentials beyond a fake key.
+    """
+    import sys
+    import types
+
+    captured = {}
+
+    class _FakeResponse:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"values": [["company_name"], ["Acme"]]}
+
+    def fake_get(url, params=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse()
+
+    fake_requests = types.ModuleType("requests")
+    fake_requests.get = fake_get
+    monkeypatch.setitem(sys.modules, "requests", fake_requests)
+    return captured
+
+
+def test_a_pasted_url_produces_a_correct_api_path(monkeypatch):
+    captured = _capture_request_url(monkeypatch)
+    provider = google_sheets.GoogleSheetsAPIProvider(api_key="test-key")
+
+    provider.fetch_rows("https://docs.google.com/spreadsheets/d/1AbC_dEf-123/edit#gid=0", None)
+
+    # The document id, not the whole URL, lands in the path.
+    assert "/1AbC_dEf-123/values/" in captured["url"]
+    assert "docs.google.com" not in captured["url"].replace(
+        google_sheets.DEFAULT_API_URL, ""
+    )
+
+
+def test_a_range_containing_an_exclamation_mark_is_percent_encoded(monkeypatch):
+    captured = _capture_request_url(monkeypatch)
+    provider = google_sheets.GoogleSheetsAPIProvider(api_key="test-key")
+
+    provider.fetch_rows("1AbC_dEf-123", "Sheet1!A1:F500")
+
+    assert "Sheet1%21A1%3AF500" in captured["url"]
+    assert "!" not in captured["url"]
+
+
+def test_a_tab_name_with_a_space_is_percent_encoded(monkeypatch):
+    captured = _capture_request_url(monkeypatch)
+    provider = google_sheets.GoogleSheetsAPIProvider(api_key="test-key")
+
+    provider.fetch_rows("1AbC_dEf-123", "'My Leads'!A:G")
+
+    assert " " not in captured["url"]
+    assert "%20" in captured["url"]
+
+
+def test_the_default_range_is_still_used_when_none_is_given(monkeypatch):
+    captured = _capture_request_url(monkeypatch)
+    provider = google_sheets.GoogleSheetsAPIProvider(api_key="test-key")
+
+    provider.fetch_rows("1AbC_dEf-123", None)
+
+    assert captured["url"].endswith("/values/Sheet1")
+
+
+def test_the_api_key_travels_as_a_query_param_not_in_the_path(monkeypatch):
+    captured = _capture_request_url(monkeypatch)
+    provider = google_sheets.GoogleSheetsAPIProvider(api_key="test-key")
+
+    provider.fetch_rows("1AbC_dEf-123", None)
+
+    assert captured["params"] == {"key": "test-key"}
+    assert "test-key" not in captured["url"]

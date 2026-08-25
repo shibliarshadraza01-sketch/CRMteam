@@ -18,8 +18,7 @@ from rest_framework.validators import UniqueTogetherValidator
 
 def pii_masking_required(request):
     """True when the response being built is *employee-facing* and must
-    therefore never carry a customer's raw email address / phone number /
-    WhatsApp number.
+    therefore never carry a customer's raw email address / phone number.
 
     The rule is deliberately fail-closed for anything that is not a
     Manager-or-above authenticated request: an anonymous request, a
@@ -116,20 +115,16 @@ class SuperAdminOnlyFieldsMixin(serializers.Serializer):
 
 
 class ContactCapabilityMixin(serializers.Serializer):
-    """Adds the read-only ``can_email``/``can_call``/``can_whatsapp``
-    booleans that replace raw contact details for an Employee.
+    """Adds the read-only ``can_email``/``can_call`` booleans that replace
+    raw contact details for an Employee.
 
     They are emitted for EVERY role (not only Employees) so the response
     shape stays stable regardless of who is reading — a client renders a
     "Call" button off ``can_call`` and never needs the number itself.
-    ``can_whatsapp`` is derived from the same stored phone number the
-    WhatsApp Business integration actually dials; this project stores no
-    separate WhatsApp column (see ``apps.communications.services``).
     """
 
     can_email = serializers.SerializerMethodField()
     can_call = serializers.SerializerMethodField()
-    can_whatsapp = serializers.SerializerMethodField()
 
     #: Model attribute holding the email address / phone number.
     email_source_field = "email"
@@ -145,12 +140,9 @@ class ContactCapabilityMixin(serializers.Serializer):
     def get_can_call(self, obj) -> bool:
         return self._has_value(obj, self.phone_source_field)
 
-    def get_can_whatsapp(self, obj) -> bool:
-        return self._has_value(obj, self.phone_source_field)
-
 
 #: Field names appended to a contact-bearing serializer's ``Meta.fields``.
-CONTACT_CAPABILITY_FIELDS = ["can_email", "can_call", "can_whatsapp"]
+CONTACT_CAPABILITY_FIELDS = ["can_email", "can_call"]
 
 
 class TimeStampedSerializerMixin(serializers.Serializer):

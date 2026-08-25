@@ -20,6 +20,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Lead
+from .services import _normalize_email, _normalize_phone, find_existing_lead_by_contact
 
 #: Column headers accepted on import, and the model field each maps to.
 #: "company_name"/"contact_name" are required; everything else is optional.
@@ -31,6 +32,34 @@ EXPORT_COLUMNS = [
     "id", "company_name", "contact_name", "email", "phone", "source", "status",
     "owner", "notes", "created_at", "updated_at",
 ]
+
+#: Leading characters that a spreadsheet application (Excel, Google Sheets,
+#: LibreOffice Calc) interprets as "this cell is a formula" — the classic
+#: CSV/XLSX formula-injection vector (CWE-1236). Every exported field here
+#: is ultimately free text a caller controls (``company_name``,
+#: ``contact_name``, ``notes`` — and, via the Google Sheets import path,
+#: attacker-influenced spreadsheet content), so a value like
+#: ``=HYPERLINK("http://evil","click")`` or ``=cmd|'/c calc'!A1`` must never
+#: reach a cell verbatim: it would execute (or prompt to execute) the
+#: moment an employee opens the exported file, not when it was written.
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize_export_cell(value):
+    """Neutralize a spreadsheet formula trigger in ``value`` by prefixing a
+    single quote, exactly as every major spreadsheet application already
+    treats a leading ``'`` as "force this cell to plain text" — the
+    standard OWASP-recommended mitigation for CSV injection. Applied to
+    every exported field uniformly (not just the ones that look
+    "risky" today) since new free-text columns are added to
+    ``EXPORT_COLUMNS`` without necessarily revisiting this function.
+    """
+    if value is None:
+        return value
+    text = str(value)
+    if text.startswith(_FORMULA_TRIGGER_CHARS):
+        return "'" + text
+    return value
 
 
 def _normalize_choice(raw_value, choices_class, default):
@@ -106,6 +135,21 @@ def import_leads(rows, *, default_owner=None, created_by=None):
     An unrecognized source/status value doesn't fail the row — it falls
     back to the model's own default and is counted in ``warnings``
     instead, since the row is still genuinely creatable.
+
+    DUPLICATE DETECTION (Phase 6 audit — this was previously entirely
+    absent from the import path: every row became a new ``Lead``
+    regardless of any existing match, which is precisely backwards for a
+    bulk-entry surface where the same contact appearing twice — a
+    re-uploaded file, two overlapping lead lists — is the norm rather
+    than the exception). A row whose ``email``/``phone`` normalized-matches
+    an existing active, unconverted lead (``services.find_existing_lead_by_contact()``
+    — same case-/format-insensitive comparison as ``find_duplicate_leads()``)
+    is skipped and reported as a row-level error naming the existing
+    lead, rather than silently creating a second row for the same
+    contact. This also guards AGAINST THE FILE ITSELF: two rows in the
+    same upload that are duplicates of each other are caught too, since
+    each row is checked (and, if created, immediately visible to
+    ``find_existing_lead_by_contact()``) before the next row is read.
     """
     errors = []
     warnings_count = 0
@@ -125,13 +169,28 @@ def import_leads(rows, *, default_owner=None, created_by=None):
             warnings_count += 1
 
         email = row.get("email", "").strip()
+        phone = row.get("phone", "").strip()
+
+        existing = find_existing_lead_by_contact(email, phone)
+        if existing is not None:
+            errors.append(
+                {
+                    "row": index,
+                    "message": (
+                        f"Duplicate of existing lead #{existing.pk} "
+                        f"({existing.company_name} / {existing.contact_name}) — matched by email or phone."
+                    ),
+                }
+            )
+            continue
+
         try:
             with transaction.atomic():
                 lead = Lead(
                     company_name=company_name,
                     contact_name=contact_name,
                     email=email,
-                    phone=row.get("phone", "").strip(),
+                    phone=phone,
                     source=source,
                     status=status,
                     notes=row.get("notes", "").strip(),
@@ -182,11 +241,24 @@ def preview_leads(rows, *, sample_size=PREVIEW_SAMPLE_SIZE):
     ``sample`` holds the first ``sample_size`` rows AS THEY WOULD BE
     CREATED (post-normalization), which is what makes the preview useful:
     a user sees that "Cold Call" became ``COLD_CALL`` before confirming.
+
+    DUPLICATE DETECTION (Phase 6 audit) mirrors ``import_leads()``'s: a
+    row matching an existing active, unconverted lead (normalized
+    email/phone) is marked invalid here too, so the preview's "valid"
+    count honestly reflects what will actually be created — a row the
+    preview called valid that ``import_leads()`` then silently skipped
+    would make the preview a lie. Since nothing is saved here to check
+    LATER rows against, a within-file duplicate (two rows of the SAME
+    upload referring to the same contact) is tracked separately, in
+    ``seen`` — ``import_leads()`` catches that case naturally, by actually
+    creating rows as it goes.
     """
     errors = []
     warnings_count = 0
     valid_count = 0
     sample = []
+    seen_emails = set()
+    seen_phones = set()
 
     for index, row in enumerate(rows, start=1):
         company_name = row.get("company_name", "").strip()
@@ -201,15 +273,37 @@ def preview_leads(rows, *, sample_size=PREVIEW_SAMPLE_SIZE):
         if source_unrecognized or status_unrecognized:
             warnings_count += 1
 
+        email = row.get("email", "").strip()
+        phone = row.get("phone", "").strip()
         candidate = {
             "company_name": company_name,
             "contact_name": contact_name,
-            "email": row.get("email", "").strip(),
-            "phone": row.get("phone", "").strip(),
+            "email": email,
+            "phone": phone,
             "source": source,
             "status": status,
             "notes": row.get("notes", "").strip(),
         }
+
+        normalized_email = _normalize_email(email)
+        normalized_phone = _normalize_phone(phone)
+        existing = find_existing_lead_by_contact(email, phone)
+        is_within_file_duplicate = (normalized_email and normalized_email in seen_emails) or (
+            normalized_phone and normalized_phone in seen_phones
+        )
+        if existing is not None or is_within_file_duplicate:
+            message = (
+                f"Duplicate of existing lead #{existing.pk} "
+                f"({existing.company_name} / {existing.contact_name}) — matched by email or phone."
+                if existing is not None
+                else "Duplicate of another row earlier in this same file — matched by email or phone."
+            )
+            errors.append({"row": index, "message": message})
+            continue
+        if normalized_email:
+            seen_emails.add(normalized_email)
+        if normalized_phone:
+            seen_phones.add(normalized_phone)
 
         try:
             Lead(**candidate).full_clean(exclude=["converted_customer", "owner"])
@@ -318,4 +412,6 @@ def _export_row(lead, *, include_pii=True, include_source=True):
         "created_at": lead.created_at.isoformat(),
         "updated_at": lead.updated_at.isoformat(),
     }
-    return [values[column] for column in _export_columns(include_pii, include_source)]
+    return [
+        _sanitize_export_cell(values[column]) for column in _export_columns(include_pii, include_source)
+    ]

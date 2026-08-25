@@ -349,7 +349,6 @@ class CommunicationLog(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         EMAIL = "EMAIL", _("Email")
         NOTIFICATION = "NOTIFICATION", _("Notification")
         CALL = "CALL", _("Call")
-        WHATSAPP = "WHATSAPP", _("WhatsApp")
         OTHER = "OTHER", _("Other")
 
     channel = models.CharField(_("channel"), max_length=20, choices=Channel.choices, db_index=True)
@@ -481,97 +480,6 @@ class Call(SoftDeleteTimeStampedModel, RelatedToEntityModel):
         visible).
         """
         return f"{self.direction} call #{self.pk} [{self.status}]"
-
-    def manager_has_access(self, user):
-        from apps.crm.services import managed_user_ids
-
-        return self.owner_id is not None and self.owner_id in managed_user_ids(user)
-
-
-# --------------------------------------------------------------------------
-# WhatsAppMessage (final production operations pass — WhatsApp Business API)
-# --------------------------------------------------------------------------
-
-
-class WhatsAppMessageQuerySet(SoftDeleteQuerySet):
-    pass
-
-
-class WhatsAppMessageManager(models.Manager.from_queryset(WhatsAppMessageQuerySet)):
-    """``WhatsAppMessage.objects`` — unfiltered, per CP7's soft-delete
-    convention.
-    """
-
-
-class ActiveWhatsAppMessageManager(WhatsAppMessageManager):
-    def get_queryset(self):
-        return super().get_queryset().active()
-
-
-class WhatsAppMessage(SoftDeleteTimeStampedModel):
-    """One WhatsApp Business API message, inbound or outbound. Real
-    delivery/read receipts arrive via ``POST /api/v1/webhooks/whatsapp/``
-    and update ``status`` on the matching row (looked up by
-    ``provider_message_id``) — the same provider-writes-status-back
-    shape as ``Call``, above.
-    """
-
-    class Direction(models.TextChoices):
-        OUTBOUND = "OUTBOUND", _("Outbound")
-        INBOUND = "INBOUND", _("Inbound")
-
-    class Status(models.TextChoices):
-        QUEUED = "QUEUED", _("Queued")
-        SENT = "SENT", _("Sent")
-        DELIVERED = "DELIVERED", _("Delivered")
-        READ = "READ", _("Read")
-        FAILED = "FAILED", _("Failed")
-
-    customer = models.ForeignKey(
-        "crm.Customer",
-        verbose_name=_("customer"),
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="whatsapp_messages",
-    )
-    owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        verbose_name=_("owner"),
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="owned_whatsapp_messages",
-        help_text=_("The user who sent this message — null for an inbound message with no assignee yet."),
-    )
-    direction = models.CharField(_("direction"), max_length=10, choices=Direction.choices)
-    sender = models.CharField(_("sender"), max_length=32)
-    receiver = models.CharField(_("receiver"), max_length=32)
-    message = models.TextField(_("message"))
-    status = models.CharField(_("status"), max_length=10, choices=Status.choices, default=Status.QUEUED, db_index=True)
-    provider_message_id = models.CharField(
-        _("provider message id"), max_length=128, blank=True, default="",
-        help_text=_("WhatsApp Cloud API's own opaque message identifier — used to match inbound webhook status updates to this row."),
-    )
-    error_message = models.TextField(_("error message"), blank=True, default="")
-
-    objects = WhatsAppMessageManager()
-    active_objects = ActiveWhatsAppMessageManager()
-
-    class Meta:
-        ordering = ["-created_at"]
-        verbose_name = _("WhatsApp message")
-        verbose_name_plural = _("WhatsApp messages")
-        indexes = [
-            models.Index(fields=["owner"], name="comms_wa_owner_idx"),
-            models.Index(fields=["customer"], name="comms_wa_customer_idx"),
-            models.Index(fields=["status"], name="comms_wa_status_idx"),
-            models.Index(fields=["provider_message_id"], name="comms_wa_provider_id_idx"),
-        ]
-
-    def __str__(self):
-        """No WhatsApp numbers — see ``Call.__str__()``."""
-        return f"{self.direction} WhatsApp message #{self.pk} [{self.status}]"
 
     def manager_has_access(self, user):
         from apps.crm.services import managed_user_ids

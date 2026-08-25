@@ -16,7 +16,7 @@ it's the SAME function both ``views.py``'s ``get_queryset()`` and
 individual object-permission checks can never disagree about who a Manager
 can see.
 """
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.text import slugify
@@ -52,6 +52,7 @@ def create_lead(company_name, contact_name, *, owner=None, **extra_fields):
     return Lead.objects.create(company_name=company_name, contact_name=contact_name, owner=owner, **extra_fields)
 
 
+@transaction.atomic
 def convert_lead(lead, organization, *, owner=None, slug=None, **extra_customer_fields):
     """Convert ``lead`` into a real ``Customer`` under ``organization``.
 
@@ -68,6 +69,19 @@ def convert_lead(lead, organization, *, owner=None, slug=None, **extra_customer_
     to it, and advances ``lead.status`` to ``Lead.Status.CONVERTED`` — all
     three happen together so a lead is never left half-converted (linked to
     a customer but still showing an earlier pipeline status, or vice versa).
+
+    "Together" is now enforced by ``@transaction.atomic`` rather than only
+    intended by the ordering of the statements below (Phase 4
+    transaction-safety audit). Conversion is genuinely two writes against
+    two tables: a brand-new ``Customer`` row, then the ``Lead`` update that
+    points at it. If the second write fails for any reason — a database
+    error, a constraint, a signal receiver raising — the un-transacted
+    version left the ``Customer`` committed and permanently orphaned: a
+    customer nobody asked for, owned by the lead's owner, appearing in
+    their customer list, while the lead itself still showed as
+    unconverted and could be converted AGAIN into a second duplicate
+    customer. The already-converted guard above cannot catch that, because
+    the flag it reads is exactly the write that didn't happen.
     """
     if lead.is_converted:
         raise ValueError("This lead has already been converted.")
@@ -92,29 +106,96 @@ def convert_lead(lead, organization, *, owner=None, slug=None, **extra_customer_
     return customer
 
 
+def _normalize_email(value):
+    """Lowercased, whitespace-trimmed email, for duplicate comparison
+    only — the stored field is left exactly as entered. Email addresses
+    are case-insensitive at the mailbox-domain level for every real
+    provider that matters here, so ``Jane@Acme.example`` and
+    ``jane@acme.example`` are the same contact, not two.
+    """
+    return (value or "").strip().lower()
+
+
+def _normalize_phone(value):
+    """Digits-only phone number, for duplicate comparison only — the
+    stored field is left exactly as entered.
+
+    Without this, ``"555-0100"``, ``"(555) 0100"``, and ``"555 0100"``
+    compared as three different phone numbers under a plain equality
+    filter, so the same contact submitted twice with differently
+    formatted phone numbers (a near-certainty across a CSV import, a
+    manual entry, and a future external lead source) was never flagged
+    as a duplicate at all — the exact gap CP9's original "exact match
+    only" note called out as acceptable for NAME but not for the actual
+    identifying fields.
+    """
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _duplicate_candidates(email, phone, *, exclude_pk=None):
+    """Shared matching core for ``find_duplicate_leads()`` (an existing,
+    saved lead) and ``find_existing_lead_by_contact()`` (contact details
+    that don't belong to a saved lead yet, e.g. one row of a CSV import
+    being validated before it is created). Active, unconverted leads only,
+    matched on normalized ``email``/``phone`` — see
+    ``_normalize_email()``/``_normalize_phone()``.
+    """
+    normalized_email = _normalize_email(email)
+    normalized_phone = _normalize_phone(phone)
+    if not normalized_email and not normalized_phone:
+        return Lead.active_objects.none()
+
+    # A loose SQL prefilter (case-insensitive email, or ANY non-empty
+    # phone) narrows the candidate set portably across every DB backend
+    # this project runs against; the real, normalized comparison happens
+    # in Python below since phone formatting can't be stripped in a
+    # backend-portable SQL expression.
+    criteria = Q()
+    if normalized_email:
+        criteria |= Q(email__iexact=normalized_email)
+    if normalized_phone:
+        criteria |= ~Q(phone="")
+
+    candidates = Lead.active_objects.filter(criteria).exclude(status=Lead.Status.CONVERTED)
+    if exclude_pk is not None:
+        candidates = candidates.exclude(pk=exclude_pk)
+
+    matched_ids = [
+        candidate.pk
+        for candidate in candidates
+        if (normalized_email and _normalize_email(candidate.email) == normalized_email)
+        or (normalized_phone and _normalize_phone(candidate.phone) == normalized_phone)
+    ]
+    return Lead.active_objects.filter(pk__in=matched_ids)
+
+
 def find_duplicate_leads(lead):
     """Other active, unconverted ``Lead``s that plausibly refer to the same
     real-world contact as ``lead``: a matching non-empty ``email`` or a
-    matching non-empty ``phone``. Deliberately conservative (no fuzzy name
-    matching) — a false-positive merge is destructive, a missed duplicate
-    is just an extra manual check.
+    matching non-empty ``phone``, compared case-/format-insensitively (see
+    ``_normalize_email()``/``_normalize_phone()``) so ``Jane@Acme.example``
+    and ``jane@acme.example``, or ``555-0100`` and ``(555) 0100``, are
+    correctly recognised as the same contact. Deliberately conservative
+    beyond that (no fuzzy name matching) — a false-positive merge is
+    destructive, a missed duplicate is just an extra manual check.
     """
     if lead.pk is None:
         return Lead.active_objects.none()
+    return _duplicate_candidates(lead.email, lead.phone, exclude_pk=lead.pk)
 
-    criteria = Q()
-    if lead.email:
-        criteria |= Q(email=lead.email)
-    if lead.phone:
-        criteria |= Q(phone=lead.phone)
-    if not criteria:
-        return Lead.active_objects.none()
 
-    return (
-        Lead.active_objects.filter(criteria)
-        .exclude(pk=lead.pk)
-        .exclude(status=Lead.Status.CONVERTED)
-    )
+def find_existing_lead_by_contact(email, phone):
+    """The first active, unconverted ``Lead`` matching ``email``/``phone``
+    (normalized — see ``_duplicate_candidates()``), for contact details
+    that don't belong to a saved ``Lead`` yet. ``None`` when there is no
+    match or neither value is supplied.
+
+    Used by ``imports.py``'s ``import_leads()`` so a bulk import checks
+    each row against leads ALREADY in the system before creating one —
+    the same normalized comparison ``find_duplicate_leads()`` applies to
+    two already-saved leads, just run one step earlier.
+    """
+    return _duplicate_candidates(email, phone).first()
 
 
 @transaction.atomic
@@ -353,6 +434,280 @@ def add_address(customer, address_type, **fields):
     return Address.objects.create(customer=customer, address_type=address_type, **fields)
 
 
+class ExternalLeadIngestionError(ValueError):
+    """Raised by ``ingest_external_lead()`` for malformed input — missing
+    required contact fields, a missing ``external_source_id``, or a blank
+    ``provider``. A caller error (bad payload from whatever future
+    webhook/connector calls this), not a server fault, so it deliberately
+    is NOT a DRF ``PermissionDenied``/``ValidationError`` subclass — this
+    function has no HTTP framing of its own yet (no view calls it today;
+    see this function's own docstring), so it raises a plain, catchable
+    Python exception a future view can translate into a 400 however that
+    view's own error-response shape works.
+    """
+
+
+#: Maps a known external ``provider`` identifier to the closest existing
+#: ``Lead.Source`` choice, purely for the ``source`` column's own filtering/
+#: reporting UI (the "Source" dropdown Leads are already filtered by
+#: elsewhere in this project) to have a sensible value. This is a
+#: convenience only — the RAW, unmapped ``provider`` string is always also
+#: preserved verbatim in ``source_metadata["provider"]``, so no information
+#: is lost for a provider not listed here (or a future provider added
+#: later); it simply falls back to ``Lead.Source.OTHER``.
+EXTERNAL_LEAD_PROVIDER_SOURCE_MAP = {
+    "website": Lead.Source.WEBSITE,
+    "website_webhook": Lead.Source.WEBSITE,
+    "meta": Lead.Source.ADVERTISEMENT,
+    "facebook": Lead.Source.ADVERTISEMENT,
+    "facebook_lead_ads": Lead.Source.ADVERTISEMENT,
+    "google_ads": Lead.Source.ADVERTISEMENT,
+    "whatsapp": Lead.Source.OTHER,
+}
+
+
+def _lock_existing_lead_by_external_id(external_source_id):
+    """Row-locking existence check for ``ingest_external_lead()``, pulled
+    out as its own function purely so a test can monkeypatch this ONE
+    call to deterministically simulate "another request already inserted
+    the row between this SELECT and our INSERT" — the exact race
+    ``ingest_external_lead()``'s ``IntegrityError`` handling exists for —
+    without needing a genuinely separate DB connection/thread. See
+    ``apps/crm/tests/test_ingest_external_lead.py``'s concurrency test for
+    why: a real multi-connection race was tried first and hit an
+    unrelated, pre-existing environment limitation in this project's test
+    database teardown.
+    """
+    return Lead.objects.select_for_update().filter(external_source_id=external_source_id).first()
+
+
+def ingest_external_lead(
+    *,
+    provider,
+    external_source_id,
+    company_name,
+    contact_name,
+    email="",
+    phone="",
+    source_metadata=None,
+    received_at=None,
+    notes="",
+):
+    """Generic, provider-agnostic entry point for a FUTURE external lead
+    source (a Meta/Google Ads lead-form webhook, a WhatsApp Business
+    inbound-message-to-lead flow, a website contact-form webhook, ...) to
+    hand a raw lead payload to this system and get back exactly one
+    ``Lead`` row — never two, no matter how many times the same external
+    event is redelivered.
+
+    This function builds ONLY the service-layer contract. No view/URL
+    calls it yet (see ``urls.py`` — there is deliberately no webhook
+    endpoint in this pass); wiring an actual Meta/Google Ads/WhatsApp/
+    website integration is explicitly OUT of scope here. A future webhook
+    view's entire job is: authenticate the inbound request, map that
+    provider's payload shape onto this function's keyword arguments, and
+    call it — no duplicate-detection or idempotency logic of its own.
+
+    Returns ``(lead, created)`` — ``created`` is ``True`` only when a new
+    ``Lead`` row was actually written, mirroring Django's own
+    ``get_or_create()`` return shape so a caller can log/branch on it
+    without inventing its own convention.
+
+    Pipeline, in order:
+
+    1. **Validate.** ``provider`` and ``external_source_id`` must both be
+       non-empty (see "Idempotency contract" below); ``company_name`` and
+       ``contact_name`` must both be non-empty — the same two fields
+       ``Lead.company_name``/``Lead.contact_name`` require at the model
+       level (``blank=False``), enforced HERE because this function calls
+       ``Lead.objects.create()`` directly rather than going through a
+       serializer's own validation. Anything missing raises
+       ``ExternalLeadIngestionError`` — never a silent garbage row, never
+       an unhandled ``IntegrityError``/``django.core.exceptions.
+       ValidationError`` bubbling out of the ORM.
+    2. **Idempotency short-circuit.** If a ``Lead`` with this exact
+       ``external_source_id`` already exists, return it unchanged —
+       ``(existing_lead, False)`` — without touching duplicate detection
+       at all. This is deliberately checked BEFORE the email/phone
+       duplicate scan: the same external event redelivered (a webhook
+       retry, a re-run sync) is not a "possible duplicate contact" for a
+       human to review, it is THE SAME LEAD, and must resolve identically
+       every time.
+    3. **Duplicate check.** Only for a genuinely new external id: reuses
+       ``find_existing_lead_by_contact()`` (the same normalized email/
+       phone matching ``imports.py``'s CSV/Google Sheets bulk import
+       already applies) so an external lead that is really the same
+       CONTACT as one already in the system — entered by hand, imported,
+       or ingested from a different provider — still lands on that
+       existing ``Lead`` instead of creating a second row for the same
+       real person. This is a courtesy match, not a hard idempotency
+       guarantee the way ``external_source_id`` is (see "Known
+       limitation" below) — it is best-effort, exactly like every other
+       caller of ``find_existing_lead_by_contact()``.
+    4. **Create-or-return.** Create the ``Lead`` with ``external_source_id``
+       set, ``source`` mapped from ``provider`` (see
+       ``EXTERNAL_LEAD_PROVIDER_SOURCE_MAP``), and the raw ``provider``
+       string plus caller-supplied ``source_metadata`` merged into
+       ``source_metadata`` on the row. ``owner`` is deliberately left
+       unset — assignment is a separate, later step (routing/auto-assign
+       rules), not this function's job.
+    5. **Audit event.** A brand-new ``Lead`` is already covered for free —
+       ``apps.system.signals``'s existing ``post_save`` receiver logs a
+       ``CREATE`` ``AuditLog`` entry for every ``Lead`` saved, ingestion
+       included. For the idempotent-duplicate-request path (step 2, no
+       save happens, so no signal fires) this function logs its OWN
+       explicit ``AuditLog`` entry — action ``OTHER`` — so "the same
+       external event arrived again" is still an observable, auditable
+       fact, not a silent no-op.
+
+    Idempotency under a race. Two concurrent requests for the same
+    ``provider``+``external_source_id`` (a webhook firing twice at once)
+    must both resolve to the SAME single ``Lead``, never a raised
+    ``IntegrityError`` and never two rows. The whole function runs inside
+    ``transaction.atomic()``; the existence check uses
+    ``select_for_update()`` so a second concurrent caller blocks behind
+    the first's row-level lock (on a backend that honors it — see
+    ``SAVEPOINT`` note below) rather than racing past it, and the
+    ``Lead.objects.create()`` call is additionally wrapped in its own
+    nested atomic block (a SAVEPOINT) so that IF the DB-level
+    ``UniqueConstraint`` on ``external_source_id`` (see ``models.py``)
+    still fires — the last-resort guarantee under a backend/isolation
+    level where the row lock alone isn't enough — the ``IntegrityError``
+    is caught, the savepoint is rolled back cleanly (leaving the OUTER
+    transaction healthy), and the row that won the race is re-fetched and
+    returned instead of letting a raw 500 escape.
+
+    Known limitation (Q3's own framing): the ``UniqueConstraint`` this
+    function relies on is declared on ``external_source_id`` ALONE, not on
+    ``(source, external_source_id)`` or ``(provider, external_source_id)``
+    — there is currently a single GLOBAL namespace for external ids, not
+    one namespaced per provider. Two different providers that happen to
+    reuse the exact same raw id string (e.g. both assign ids ``"1"``,
+    ``"2"``, ``"3"``, ...) would collide and the second provider's lead
+    would be silently treated as a duplicate of the first's. This is
+    flagged here deliberately rather than fixed: changing the DB
+    constraint is a migration/schema change outside "build the service
+    layer", and no real provider integration exists yet to confirm this
+    is an actual problem in practice (Meta/Google/WhatsApp ids are
+    already provider-specific-format strings vanishingly unlikely to
+    collide with each other). A future integration pass that DOES observe
+    a real collision, or that onboards a provider with short/numeric ids,
+    should namespace this — e.g. prefixing ``external_source_id`` with
+    ``f"{provider}:"`` at the call site costs nothing today and sidesteps
+    the limitation without touching the schema at all; that prefixing is
+    deliberately NOT done automatically by this function, since it would
+    change the stored value for every future caller unconditionally
+    rather than leaving it as an opt-in choice.
+    """
+    provider = (provider or "").strip()
+    external_source_id = (external_source_id or "").strip()
+    company_name = (company_name or "").strip()
+    contact_name = (contact_name or "").strip()
+
+    if not provider:
+        raise ExternalLeadIngestionError("provider is required.")
+    if not external_source_id:
+        raise ExternalLeadIngestionError(
+            "external_source_id is required — ingest_external_lead() exists specifically to "
+            "provide idempotent external ingestion; a lead with no stable external id should "
+            "be created via create_lead() instead, which has no idempotency contract to break."
+        )
+    if not company_name:
+        raise ExternalLeadIngestionError("company_name is required.")
+    if not contact_name:
+        raise ExternalLeadIngestionError("contact_name is required.")
+    if not email and not phone:
+        raise ExternalLeadIngestionError("At least one of email or phone is required.")
+
+    merged_metadata = dict(source_metadata or {})
+    merged_metadata.setdefault("provider", provider)
+    mapped_source = EXTERNAL_LEAD_PROVIDER_SOURCE_MAP.get(provider.lower(), Lead.Source.OTHER)
+
+    with transaction.atomic():
+        existing = _lock_existing_lead_by_external_id(external_source_id)
+        if existing is not None:
+            _log_ingestion_duplicate(provider, external_source_id, existing)
+            return existing, False
+
+        duplicate = find_existing_lead_by_contact(email, phone)
+        if duplicate is not None and not duplicate.external_source_id:
+            # A contact match against a lead with NO external id of its
+            # own (entered by hand, or imported) — attach this
+            # provider's id to it rather than creating a second row for
+            # the same real contact. A lead that already carries a
+            # DIFFERENT provider's external_source_id is left alone and
+            # falls through to creating a new row: it is already owned by
+            # another external identity and re-stamping it here would
+            # silently sever that other provider's own idempotency link.
+            duplicate.external_source_id = external_source_id
+            duplicate.source_metadata = {**duplicate.source_metadata, **merged_metadata}
+            if received_at is not None:
+                duplicate.received_at = received_at
+            duplicate.save(update_fields=["external_source_id", "source_metadata", "received_at", "updated_at"])
+            return duplicate, False
+
+        try:
+            with transaction.atomic():
+                lead = Lead.objects.create(
+                    company_name=company_name,
+                    contact_name=contact_name,
+                    email=email,
+                    phone=phone,
+                    source=mapped_source,
+                    external_source_id=external_source_id,
+                    source_metadata=merged_metadata,
+                    received_at=received_at,
+                    notes=notes,
+                )
+        except IntegrityError:
+            # Lost a race against another concurrent ingestion of the
+            # SAME external_source_id between our SELECT above and this
+            # INSERT (possible under isolation levels/backends where
+            # select_for_update() alone doesn't fully serialize two
+            # inserts) — the DB-level UniqueConstraint is the final
+            # backstop. Re-fetch and return the row that won instead of
+            # letting the IntegrityError escape as an unhandled 500.
+            lead = Lead.objects.get(external_source_id=external_source_id)
+            return lead, False
+
+    return lead, True
+
+
+def _log_ingestion_duplicate(provider, external_source_id, existing_lead):
+    """Records an explicit audit trail entry for a repeated external
+    ingestion request that resolved to an already-existing ``Lead`` (no
+    model save happens on this path, so ``apps.system.signals``'s
+    automatic post-save audit logging never fires for it — see
+    ``ingest_external_lead()``'s own docstring, step 5).
+
+    Broad ``try/except`` for the same reason ``apps.system.signals``'s own
+    receiver has one: a logging failure must never break ingestion
+    idempotency itself — returning the existing lead is the important,
+    correctness-bearing behavior; failing to also log that it happened
+    again is a much smaller problem.
+    """
+    try:
+        from apps.system.services import log_audit_event
+        from apps.system.models import AuditLog
+
+        log_audit_event(
+            None,
+            AuditLog.Action.OTHER,
+            related_object=existing_lead,
+            description=(
+                f"Duplicate external lead ingestion ignored (provider={provider!r}, "
+                f"external_source_id={external_source_id!r}) — resolved to existing lead "
+                f"id={existing_lead.pk}."
+            ),
+        )
+    except Exception:  # noqa: BLE001 - deliberate, see docstring
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "Failed to log duplicate-ingestion audit event for lead id=%s", existing_lead.pk
+        )
+
+
 def managed_user_ids(manager):
     """All user IDs ``manager`` is considered to "manage": themselves, plus
     every member of every ``apps.organization`` ``Team`` they manage.
@@ -543,6 +898,9 @@ __all__ = [
     "assign_leads",
     "add_contact",
     "add_address",
+    "ExternalLeadIngestionError",
+    "EXTERNAL_LEAD_PROVIDER_SOURCE_MAP",
+    "ingest_external_lead",
     "managed_user_ids",
     "scope_queryset_for_user",
     "create_opportunity",

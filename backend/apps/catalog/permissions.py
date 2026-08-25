@@ -26,6 +26,21 @@ passes even though ``ReadOnlyOrSuperAdmin`` alone would have rejected it
 sides fail, and access is correctly denied. See
 BACKEND_LEARNING_GUIDE.md CP13, "composing permissions instead of writing
 a new one", for the full truth table.
+
+PHASE 5 AUDIT — DELIBERATELY UNCHANGED. Phase 5 tightened system-wide
+CONFIGURATION writes to Super Admin only (`apps.system`'s
+`SystemConfigWritePermission`, `apps.attendance`'s
+`ShiftConfigurationViewSet`). This composition was re-examined and kept:
+`Product`/`Service`/`PriceBook`/`PriceBookEntry` are MANY per-record rows
+of operational sales reference data, not a single global policy row that
+changes behaviour for every user in the deployment. Pricing a product is
+the managerial decision this module's docstring already describes, and
+`test_api.py`'s `test_manager_can_create`/`_patch`/`_delete` assert that
+capability today. Tightening this to Super Admin would remove real
+Manager functionality, not close a hole — the exact "do NOT simply change
+every Manager permission to Super Admin" case. Contrast
+`apps.organization`'s `OrganizationWritePermission`, which IS the
+single-row-per-company shape and is correctly Super-Admin-only.
 """
 from apps.accounts.permissions import (
     IsEmployee,

@@ -40,22 +40,90 @@ def get_active_shift_configuration():
 
 @transaction.atomic
 def start_session(employee, *, now=None):
-    """Begin a new working session for ``employee`` — called by the
-    frontend immediately after a successful login (never by the login
+    """Begin — or RESUME — a working session for ``employee``. Called by
+    the frontend immediately after a successful login (never by the login
     view itself; see this app's own integration note in
     ``BACKEND_PROGRESS.md`` — auth is explicitly not modified).
 
-    Any previously OPEN session for this same employee is closed first
-    (state OFFLINE, logout_at=now) — handles "multiple login sessions"
-    (a second tab/device logging in, a browser crash that never called
-    ``end_session``) without ever leaving two sessions open and double-
-    counting the same wall-clock time across both.
+    IDEMPOTENT. If this employee already has an OPEN session, that
+    session is returned as-is (with a heartbeat recorded against it) and
+    NO new session is created.
+
+    This idempotency is the fix for a real duplicate-event bug. The
+    frontend calls this endpoint on every mount of ``useAttendanceTracking``,
+    which means every page refresh, reload, or second tab. The previous
+    behaviour — close the open session, then open a fresh one — turned
+    each of those into a spurious CHECK_OUT immediately followed by
+    another CHECK_IN, inflating ``number_of_sessions`` and littering the
+    day's Time Logs with arrivals and departures that never happened. One
+    real arrival must produce exactly one check-in event.
+
+    Crash recovery is not lost by resuming rather than reopening: a
+    browser that died without calling ``end_session`` simply stopped
+    sending heartbeats, and ``record_heartbeat()`` below already accounts
+    for the resulting gap as IDLE time — which is strictly more accurate
+    than counting the whole gap as worked time, and more accurate than
+    the old behaviour's silent session split.
+
+    Only a genuine second arrival — one that follows an explicit
+    ``end_session`` (check out) — creates a new session and therefore a
+    new CHECK_IN.
+
+    CONCURRENCY. Idempotency by "read the open sessions, create one if
+    there are none" is only idempotent against SEQUENTIAL calls. The
+    frontend does not make sequential calls: ``useAttendanceTracking``
+    fires this on mount, and a React strict-mode double-invoke, a
+    double-submitted login, or simply two tabs opening together put two
+    requests in flight at once. Both transactions then read zero open
+    sessions and both INSERT — producing two open sessions milliseconds
+    apart, two CHECK_IN events on the day's Time Logs, and the same
+    wall-clock minutes counted twice in every total derived from them.
+    (Real rows exhibiting exactly this were found in this database:
+    two open sessions 3ms apart for one employee.)
+
+    No row exists yet to lock, so the openness check cannot be made
+    atomic by locking sessions. We instead take a row lock on the
+    EMPLOYEE for the duration of the transaction, which serializes every
+    concurrent ``start_session`` for that one employee while leaving
+    different employees fully parallel. The check-then-create below is
+    then genuinely atomic, and the "exactly one open session per
+    employee" invariant the rest of this module relies on actually holds.
     """
     now = now or timezone.now()
 
-    stale_sessions = AttendanceSession.active_objects.for_employee(employee).open()
-    for stale in stale_sessions:
-        end_session(stale, now=now)
+    # Serialize concurrent arrivals for this employee (see docstring).
+    # Locking the employee row, not the session rows, because the race is
+    # over a session that does not exist yet.
+    type(employee)._base_manager.select_for_update().filter(pk=employee.pk).first()
+
+    open_sessions = list(
+        AttendanceSession.active_objects.for_employee(employee).open().order_by("-login_at")
+    )
+
+    # Resuming is only correct WITHIN A DAY. A session left open overnight
+    # (the browser was never closed properly, so `end_session` never ran)
+    # belongs to the day it started on — ``compute_daily_summary()``
+    # attributes sessions by ``login_at``'s date. Resuming it the next
+    # morning would leave TODAY with no attendance record at all while the
+    # employee is plainly working, and would let one "session" grow without
+    # bound. So a stale open session from an earlier day is closed and a
+    # genuine new one is opened for today.
+    today = timezone.localdate(now)
+    resumable = [s for s in open_sessions if timezone.localdate(s.login_at) == today]
+    stale = [s for s in open_sessions if timezone.localdate(s.login_at) != today]
+    for session in stale:
+        end_session(session, now=now)
+
+    if resumable:
+        # Defensive: legacy/racing data could leave more than one open
+        # session. Keep the newest, close the rest, so the "exactly one
+        # open session per employee" invariant holds from here on and the
+        # same wall-clock time can never be counted twice.
+        current, *duplicates = resumable
+        for duplicate in duplicates:
+            end_session(duplicate, now=now)
+        record_heartbeat(current, now=now)
+        return current
 
     session = AttendanceSession.objects.create(
         employee=employee, login_at=now, last_heartbeat_at=now, state=AttendanceSession.State.WORKING
@@ -301,16 +369,61 @@ def build_time_logs(sessions):
         TimeSegment.SegmentType.IDLE: ("IDLE_START", "IDLE_END"),
     }
 
+    # ONE TRANSITION IS ONE EVENT — the single rule this whole function
+    # now follows, applied at EVERY boundary rather than only at the two
+    # that were reported.
+    #
+    # The segment ledger is contiguous: segment[i].ended_at is exactly
+    # segment[i+1].started_at, and the first/last segments coincide with
+    # login_at/logout_at. So emitting both the closing label of one
+    # segment and the opening label of the next always produced TWO log
+    # lines at one identical timestamp for a single real-world event:
+    #
+    #   going on a break  -> "Work paused"    + "Break started"
+    #   coming back       -> "Break ended"    + "Work resumed"
+    #   going idle        -> "Work paused"    + "Went idle"
+    #   coming back       -> "Back from idle" + "Work resumed"
+    #   arriving          -> "Checked in"     + "Work resumed"
+    #   leaving           -> "Work paused"    + "Checked out"
+    #
+    # An earlier pass special-cased only the last two (arrival and
+    # departure). The break and idle boundaries kept double-reporting,
+    # which is the same bug wearing a different label — a fresh check-in,
+    # break and check-out still rendered as "Checked in / Work paused /
+    # Break started / Break ended / Work resumed / Checked out".
+    #
+    # The general fix: a boundary SHARED by two segments is described
+    # once, by the segment being ENTERED. A closing label is emitted only
+    # for a boundary that is NOT shared — i.e. a genuine gap in the
+    # ledger, where the next segment starts later than this one ended, so
+    # the pause is real and worth showing. CHECK_IN/CHECK_OUT always win
+    # over a coincident segment label, since arrival and departure are the
+    # more meaningful description of that same instant.
     entries = []
     for session in sessions:
         entries.append({"at": session.login_at, "type": "CHECK_IN"})
-        for segment in session.segments.active().order_by("started_at"):
+        segments = list(session.segments.active().order_by("started_at"))
+        for index, segment in enumerate(segments):
             start_label, end_label = boundary_labels.get(
                 segment.segment_type, ("SEGMENT_START", "SEGMENT_END")
             )
-            entries.append({"at": segment.started_at, "type": start_label})
+            next_segment = segments[index + 1] if index + 1 < len(segments) else None
+
+            # Entering this segment. Suppressed only when the instant is
+            # already described by CHECK_IN (the opening segment) — never
+            # by the previous segment's closing label, which is itself
+            # suppressed below.
+            if segment.started_at != session.login_at:
+                entries.append({"at": segment.started_at, "type": start_label})
+
             if segment.ended_at is not None:
-                entries.append({"at": segment.ended_at, "type": end_label})
+                shared_with_next = (
+                    next_segment is not None and next_segment.started_at == segment.ended_at
+                )
+                described_by_checkout = segment.ended_at == session.logout_at
+                if not shared_with_next and not described_by_checkout:
+                    entries.append({"at": segment.ended_at, "type": end_label})
+
         if session.logout_at is not None:
             entries.append({"at": session.logout_at, "type": "CHECK_OUT"})
 

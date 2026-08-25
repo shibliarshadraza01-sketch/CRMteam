@@ -11,6 +11,18 @@ zero new comparison logic:
   owner-shaped attribute (`owner` real field or delegating property — see
   `models.py`), so CP6's `IsOwnerOrSuperAdmin` applies unchanged, the same
   as every model in CP14's `apps.activities`.
+
+PHASE 5 AUDIT — `EmailTemplateWritePermission` DELIBERATELY UNCHANGED.
+Re-examined alongside the Phase 5 tightening of `apps.system`'s
+`SystemConfigWritePermission` and `apps.attendance`'s
+`ShiftConfigurationViewSet`, and kept as-is: an `EmailTemplate` is one of
+MANY per-record outreach documents (a subject/body pair a Manager authors
+for their team's campaigns), not a single deployment-wide policy row.
+Authoring templates is Manager-scoped operational work — `test_api.py`'s
+`test_manager_can_create_email_template` asserts it today, and tightening
+this would delete real Manager functionality rather than close a hole.
+`NotificationWritePermission` below is the genuinely global one in this
+app and is already Super-Admin-only.
 """
 from apps.accounts.permissions import IsManagerOrSuperAdmin, IsOwnerOrSuperAdmin, ReadOnlyOrSuperAdmin
 

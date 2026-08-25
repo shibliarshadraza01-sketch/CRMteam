@@ -13,7 +13,7 @@ from apps.activities.serializers import RelatedObjectMixin
 from apps.core.serializers import PiiMaskedSerializerMixin, SoftDeleteTimeStampedSerializerMixin
 from apps.crm.models import ContactPerson, Customer, Lead
 
-from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification, WhatsAppMessage
+from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification
 
 
 class _CommunicationsSerializer(SoftDeleteTimeStampedSerializerMixin, serializers.ModelSerializer):
@@ -237,58 +237,5 @@ class InitiateCallSerializer(serializers.Serializer):
         if not supplied and not has_generic_target:
             raise serializers.ValidationError(
                 "Provide who to call: `customer`, `lead`, `contact`, or content_type+object_id."
-            )
-        return attrs
-
-
-# --------------------------------------------------------------------------
-# WhatsAppMessage
-# --------------------------------------------------------------------------
-
-
-class WhatsAppMessageSerializer(PiiMaskedSerializerMixin, _CommunicationsSerializer):
-    """``sender``/``receiver`` are WhatsApp numbers (one of them the
-    customer's) and are stripped for an Employee — who sees the customer's
-    NAME (``customer_name``) and the message text, which is all a chat UI
-    needs.
-    """
-
-    pii_fields = ("sender", "receiver")
-
-    customer_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = WhatsAppMessage
-        fields = [
-            "id", "customer", "customer_name", "owner", "direction", "sender", "receiver", "message",
-            "status", "provider_message_id", "error_message",
-            "created_at", "updated_at", "created_by", "updated_by", "is_deleted", "deleted_at",
-        ]
-        read_only_fields = [
-            "direction", "sender", "receiver", "status", "provider_message_id", "error_message",
-        ]
-
-    def get_customer_name(self, obj) -> str:
-        return obj.customer.name if obj.customer_id else ""
-
-
-class SendWhatsAppMessageSerializer(serializers.Serializer):
-    """Write-only input shape for ``WhatsAppMessageViewSet.create()`` —
-    see ``InitiateCallSerializer``'s own docstring, identical reasoning:
-    ``to_number`` is gone, the caller names the ``customer`` (or a
-    ``lead``/``contact``) and the backend resolves the number.
-    """
-
-    message = serializers.CharField(allow_blank=False)
-    customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False)
-    lead = serializers.PrimaryKeyRelatedField(queryset=Lead.objects.all(), required=False)
-    contact = serializers.PrimaryKeyRelatedField(queryset=ContactPerson.objects.all(), required=False)
-
-    def validate(self, attrs):
-        named_targets = [attrs.get("customer"), attrs.get("lead"), attrs.get("contact")]
-        supplied = [target for target in named_targets if target is not None]
-        if len(supplied) != 1:
-            raise serializers.ValidationError(
-                "Provide exactly one of `customer`, `lead` or `contact` to message."
             )
         return attrs

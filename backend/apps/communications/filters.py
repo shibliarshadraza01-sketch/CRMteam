@@ -14,7 +14,7 @@ empty page, not another employee's rows.
 """
 import django_filters
 
-from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification, WhatsAppMessage
+from .models import Call, CommunicationLog, EmailMessage, EmailTemplate, Notification
 
 
 class EmailTemplateFilterSet(django_filters.FilterSet):
@@ -70,18 +70,3 @@ class CallFilterSet(django_filters.FilterSet):
     class Meta:
         model = Call
         fields = ["status", "direction", "owner", "content_type", "object_id"]
-
-
-class WhatsAppMessageFilterSet(django_filters.FilterSet):
-    """`WhatsAppMessage` has no generic entity link (see ``models.py`` — it
-    models a ``customer`` relation only), so ``customer`` is the
-    per-contact filter here, in place of the ``content_type``/``object_id``
-    pair the other channels use.
-    """
-
-    created_from = django_filters.DateTimeFilter(field_name="created_at", lookup_expr="gte")
-    created_to = django_filters.DateTimeFilter(field_name="created_at", lookup_expr="lte")
-
-    class Meta:
-        model = WhatsAppMessage
-        fields = ["status", "direction", "owner", "customer"]

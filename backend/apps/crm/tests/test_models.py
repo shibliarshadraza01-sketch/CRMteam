@@ -93,6 +93,49 @@ def test_lead_is_converted_true_with_converted_customer():
     assert lead.is_converted is True
 
 
+# --------------------------------------------------------------------------
+# External-ingestion readiness (Phase 6 audit): external_source_id /
+# source_metadata / received_at.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_lead_external_source_id_defaults_blank_and_is_optional():
+    lead = Lead.objects.create(company_name="Acme", contact_name="Jane")
+    assert lead.external_source_id == ""
+    assert lead.source_metadata == {}
+    assert lead.received_at is None
+
+
+@pytest.mark.django_db
+def test_two_leads_may_both_have_a_blank_external_source_id():
+    """The unique constraint is scoped to NON-blank values — every lead
+    entered directly or via the existing import leaves this blank, and a
+    second (or hundredth) one must not collide.
+    """
+    Lead.objects.create(company_name="Acme", contact_name="Jane")
+    Lead.objects.create(company_name="Beta", contact_name="Bob")
+    assert Lead.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_duplicate_external_source_id_is_rejected():
+    Lead.objects.create(company_name="Acme", contact_name="Jane", external_source_id="fb-lead-123")
+    with pytest.raises(IntegrityError):
+        Lead.objects.create(company_name="Beta", contact_name="Bob", external_source_id="fb-lead-123")
+
+
+@pytest.mark.django_db
+def test_lead_source_metadata_stores_arbitrary_campaign_info():
+    lead = Lead.objects.create(
+        company_name="Acme",
+        contact_name="Jane",
+        source_metadata={"campaign": "Spring Sale", "utm_source": "facebook", "ad_id": "998877"},
+    )
+    lead.refresh_from_db()
+    assert lead.source_metadata == {"campaign": "Spring Sale", "utm_source": "facebook", "ad_id": "998877"}
+
+
 def test_contactperson_fk_related_name():
     field = ContactPerson._meta.get_field("customer")
     assert field.remote_field.related_name == "contacts"

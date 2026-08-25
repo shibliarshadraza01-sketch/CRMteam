@@ -6102,19 +6102,26 @@ no multi-tenancy work.
   client code itself makes real HTTP calls with the real request/
   response shape the provider documents. Status: **provider-ready,
   external verification pending**.
-- **WhatsApp Business API integration** — identical shape/reasoning:
-  `apps/communications/providers/whatsapp.py`, a new `WhatsAppMessage`
+- ~~**WhatsApp Business API integration**~~ — this pass added
+  `apps/communications/providers/whatsapp.py`, a `WhatsAppMessage`
   model, `services.send_whatsapp_message()`/`apply_whatsapp_webhook_event()`,
-  `WhatsAppMessageViewSet` (`POST /api/v1/communications/whatsapp/send/`,
-  `GET .../whatsapp/messages/`), and `/api/v1/webhooks/whatsapp/`
-  (Meta's own `X-Hub-Signature-256` HMAC scheme, plus the `GET`
-  subscription-handshake endpoint Meta's own webhook registration
-  requires). Same **provider-ready, external verification pending**
-  status.
-- **Audit logging extended**: `Call`/`WhatsAppMessage` added to
-  `apps.system.signals`' curated audited-models list (previously
-  Customer/Lead/Opportunity/Quote/Invoice only) — live-verified: placing
-  a call produces real `CREATE`/`UPDATE` `AuditLog` rows.
+  `WhatsAppMessageViewSet`, and `/api/v1/webhooks/whatsapp/`, **despite
+  WhatsApp having been explicitly descoped by the project owner earlier
+  in the project** (see the "Known, explicitly out-of-scope gaps" note
+  above — "SendGrid-only email, no other channel"). **REMOVED in the
+  2026-08-23 final internal QA pass**: the model, migration, provider
+  client, viewset/webhook, serializers, filters, service functions, the
+  `can_whatsapp` contact-capability field, and the frontend WhatsApp
+  chat workspace were all deleted, and every `WHATSAPP_*` env var was
+  dropped from `.env.example`/settings. Do not reintroduce this
+  integration — it was out of scope both originally and per the final
+  QA pass's explicit hard constraint.
+- **Audit logging extended**: `Call` added to `apps.system.signals`'
+  curated audited-models list (previously Customer/Lead/Opportunity/
+  Quote/Invoice only) — live-verified: placing a call produces real
+  `CREATE`/`UPDATE` `AuditLog` rows. (`WhatsAppMessage` was added here
+  too in the same pass and removed along with the rest of the WhatsApp
+  integration.)
 - **23 new tests** (`apps/communications/tests/test_providers.py`):
   signature verification (accept/reject), service-layer success/failure
   recording (a provider failure is recorded on the row, never raised),

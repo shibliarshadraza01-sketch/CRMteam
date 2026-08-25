@@ -43,10 +43,12 @@ pytest-cov==6.0.0
 django-redis==5.4.0
 
 # --- Outbound provider HTTP clients (final production operations pass) ---
-# apps/communications/providers/{a1routes,whatsapp}.py — real HTTP calls to
-# each provider's REST API; no credentials are available in this
-# environment, so these are provider-ready and unverified against a real
-# account, the same status SendGrid had until a real API key is supplied.
+# apps/communications/providers/a1routes.py — real HTTP calls to the
+# provider's REST API; no credentials are available in this environment,
+# so this is provider-ready and unverified against a real account, the
+# same status SendGrid had until a real API key is supplied. WhatsApp
+# Business API integration was removed (explicitly descoped) and must
+# not be reintroduced.
 requests==2.34.2
 
 # --- Backup automation (final production operations pass) ---

@@ -17,6 +17,7 @@ from django.db.models.functions import Coalesce
 from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 
@@ -25,6 +26,7 @@ from apps.core.utils import stamp_audit_fields
 from apps.crm.services import resolve_owner_for_create
 from apps.crm.views import _CrmModelViewSet
 
+from .permissions import ReadOnlyOrSuperAdmin
 from .filters import InvoiceFilterSet, PaymentTransactionFilterSet, QuoteFilterSet
 from .models import Invoice, InvoiceItem, PaymentTransaction, Quote, QuoteItem
 from .serializers import (
@@ -196,6 +198,20 @@ class QuoteItemViewSet(_CrmModelViewSet):
 class InvoiceViewSet(_CrmModelViewSet):
     """CRUD plus two payment-lifecycle actions (``mark-paid``, ``cancel``),
     each a thin wrapper around ``apps/sales/services.py``.
+
+    Revenue/Payments audit pass: an ``Invoice`` is a real revenue record
+    (see ``PaymentTransactionViewSet`` below for the matching payment
+    record). Per that pass's explicit requirement, Employees and Managers
+    must never create/edit/delete revenue — only view what they already
+    have access to via ``scope_queryset_for_user()`` (their own, their
+    team's, or — for a Super Admin — everyone's). ``ReadOnlyOrSuperAdmin``
+    (re-exported from ``apps.accounts.permissions`` — see
+    ``apps.attendance.views.ShiftConfigurationViewSet`` for the identical
+    "everyone reads, only Super Admin writes" shape) replaces CP12's
+    original ``IsOwnerOrSuperAdmin`` default, which let ANY owner
+    (including a plain Employee, since ``resolve_owner_for_create``
+    defaults an unspecified owner to the requesting user) create or edit
+    invoices — a hole this pass closes.
     """
 
     base_manager = Invoice.objects
@@ -205,6 +221,20 @@ class InvoiceViewSet(_CrmModelViewSet):
     search_fields = ["invoice_number", "customer__name"]
     ordering_fields = ["created_at", "due_date", "total", "status"]
     ordering = ["-created_at"]
+    permission_classes = [IsAuthenticated, ReadOnlyOrSuperAdmin]
+
+    #: Same hole, same mechanism, as `ShiftConfigurationViewSet`: CP7's
+    #: `restore`/`hard-delete` actions carry their OWN
+    #: `permission_classes=[CanRestoreOrHardDelete]` (Manager-or-above),
+    #: which would otherwise let a Manager bypass the Super-Admin-only
+    #: rule above for these two routes on a real revenue record.
+    destructive_actions = ("restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.destructive_actions:
+            permissions = permissions + [ReadOnlyOrSuperAdmin()]
+        return permissions
 
     def get_queryset(self):
         # Annotates `amount_paid` in the same query (one LEFT JOIN + SUM,
@@ -278,11 +308,25 @@ class InvoiceViewSet(_CrmModelViewSet):
 
 
 class InvoiceItemViewSet(_CrmModelViewSet):
+    """Line items of a revenue record — same Super-Admin-only write rule
+    as ``InvoiceViewSet`` above (an Employee/Manager adding a line item
+    would change the invoice's real total, which is exactly the
+    "editing revenue" this audit pass forbids them from doing).
+    """
+
     base_manager = InvoiceItem.objects
     base_active_manager = InvoiceItem.active_objects
     serializer_class = InvoiceItemSerializer
     owner_field = "invoice__owner"
     ordering = ["invoice", "ordering"]
+    permission_classes = [IsAuthenticated, ReadOnlyOrSuperAdmin]
+    destructive_actions = ("restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.destructive_actions:
+            permissions = permissions + [ReadOnlyOrSuperAdmin()]
+        return permissions
 
     def get_queryset(self):
         return super().get_queryset().select_related("invoice", "invoice__owner")
@@ -310,10 +354,16 @@ class PaymentTransactionViewSet(_CrmModelViewSet):
     """Create/list/retrieve only — no PATCH and no soft-delete via plain
     DELETE (a recorded payment is a financial record; correcting one
     means recording an offsetting entry, not silently rewriting history).
-    ``hard-delete`` remains reachable for Managers/Super Admins via
-    CP7's mixin, same as every other CP10+ model — this narrowing only
-    removes the ordinary edit/soft-delete surface, not the existing
-    role-gated administrative override.
+    Revenue/Payments audit pass: recording a payment is THE core revenue
+    write operation this pass restricts to Super Admin only (Employees/
+    Managers keep read access — their own/their team's payment history
+    and monthly/all-time revenue views stay populated, scoped as before
+    by ``scope_queryset_for_user()``). ``hard-delete`` is now ALSO
+    Super-Admin-only (was Manager-or-above via CP7's mixin — the same
+    "action carries its own permission_classes" hole documented on
+    ``InvoiceViewSet``/``ShiftConfigurationViewSet``): a Manager
+    permanently destroying a payment record is exactly the kind of
+    revenue edit this pass forbids them from doing, "hard" or not.
     """
 
     http_method_names = ["get", "post", "head", "options"]
@@ -324,6 +374,14 @@ class PaymentTransactionViewSet(_CrmModelViewSet):
     owner_field = "invoice__owner"
     ordering_fields = ["paid_at", "amount"]
     ordering = ["-paid_at"]
+    permission_classes = [IsAuthenticated, ReadOnlyOrSuperAdmin]
+    destructive_actions = ("restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.destructive_actions:
+            permissions = permissions + [ReadOnlyOrSuperAdmin()]
+        return permissions
 
     def get_queryset(self):
         return super().get_queryset().select_related("invoice", "invoice__owner", "recorded_by")

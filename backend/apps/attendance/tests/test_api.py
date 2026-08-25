@@ -178,3 +178,107 @@ def test_shift_config_write_allowed_for_super_admin(api_client, super_admin):
     )
     assert resp.status_code == 201
     assert resp.data["shift_duration_minutes"] == 480
+
+
+# --------------------------------------------------------------------------
+# Phase 5 — system-wide configuration writes are Super-Admin-only.
+#
+# `ShiftConfiguration` is the company's ONE shift policy (see
+# `services.get_active_shift_configuration()`): it applies identically to
+# every user in the deployment, so it is SYSTEM-WIDE CONFIGURATION, not
+# Manager-scoped operational data. `permission_classes` on the viewset
+# already says so — but CP7's `restore`/`hard-delete` actions (declared on
+# `apps.core.views.SoftDeleteModelMixin`) carry their OWN
+# `permission_classes=[CanRestoreOrHardDelete]`, an `IsManagerOrSuperAdmin`
+# subclass, and a DRF `@action`'s `permission_classes` REPLACES the
+# viewset's. That left a Manager able to permanently destroy the company
+# shift policy through a back door, while the ordinary PATCH/DELETE verbs
+# were correctly refused. Same hole, same fix, as `apps.system`'s
+# `_SystemConfigModelViewSet.get_permissions()`.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_shift_config_write_forbidden_for_manager(api_client, manager, shift_config):
+    _auth(api_client, manager)
+    resp = api_client.patch(
+        f"/api/v1/attendance/shift-config/{shift_config.pk}/",
+        {"shift_duration_minutes": 60},
+        format="json",
+    )
+
+    assert resp.status_code == 403
+    shift_config.refresh_from_db()
+    assert shift_config.shift_duration_minutes == 540
+
+
+@pytest.mark.django_db
+def test_shift_config_create_by_manager_writes_nothing_to_the_database(api_client, manager):
+    from apps.attendance.models import ShiftConfiguration
+
+    before = ShiftConfiguration.objects.count()
+    _auth(api_client, manager)
+
+    resp = api_client.post(
+        "/api/v1/attendance/shift-config/", {"shift_duration_minutes": 480}, format="json"
+    )
+
+    assert resp.status_code == 403
+    assert ShiftConfiguration.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_shift_config_hard_delete_forbidden_for_manager(api_client, manager, shift_config):
+    """The back door: CP7's `hard-delete` action's own `permission_classes`
+    replaces the viewset's Super-Admin-only rule.
+    """
+    from apps.attendance.models import ShiftConfiguration
+
+    _auth(api_client, manager)
+    resp = api_client.post(f"/api/v1/attendance/shift-config/{shift_config.pk}/hard-delete/")
+
+    assert resp.status_code == 403
+    assert ShiftConfiguration.objects.filter(pk=shift_config.pk).exists()
+
+
+@pytest.mark.django_db
+def test_shift_config_restore_forbidden_for_manager(api_client, manager, shift_config):
+    shift_config.soft_delete()
+    _auth(api_client, manager)
+
+    resp = api_client.post(f"/api/v1/attendance/shift-config/{shift_config.pk}/restore/")
+
+    assert resp.status_code == 403
+    shift_config.refresh_from_db()
+    assert shift_config.is_deleted is True
+
+
+@pytest.mark.django_db
+def test_shift_config_read_still_allowed_for_manager(api_client, manager, shift_config):
+    """Phase 5 tightened WRITES only — every role still reads the policy."""
+    _auth(api_client, manager)
+    assert api_client.get("/api/v1/attendance/shift-config/").status_code == 200
+    assert api_client.get("/api/v1/attendance/shift-config/current/").status_code == 200
+
+
+@pytest.mark.django_db
+def test_shift_config_hard_delete_allowed_for_super_admin(api_client, super_admin, shift_config):
+    from apps.attendance.models import ShiftConfiguration
+
+    _auth(api_client, super_admin)
+    resp = api_client.post(f"/api/v1/attendance/shift-config/{shift_config.pk}/hard-delete/")
+
+    assert resp.status_code == 204
+    assert not ShiftConfiguration.objects.filter(pk=shift_config.pk).exists()
+
+
+@pytest.mark.django_db
+def test_shift_config_restore_allowed_for_super_admin(api_client, super_admin, shift_config):
+    shift_config.soft_delete()
+    _auth(api_client, super_admin)
+
+    resp = api_client.post(f"/api/v1/attendance/shift-config/{shift_config.pk}/restore/")
+
+    assert resp.status_code == 200
+    shift_config.refresh_from_db()
+    assert shift_config.is_deleted is False

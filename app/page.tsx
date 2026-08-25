@@ -9,7 +9,6 @@ import {
   ArrowUpDown,
   Bell,
   BellRing,
-  Building2,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -85,8 +84,40 @@ import {
   type AttendanceTimeLog,
   type GoogleSheetStatus,
   type LeadImportPreview,
-  type SecuritySettingsInfo
+  type SecuritySettingsInfo,
+  type CompanyDashboardSummary,
+  type CompanyDashboardPeriodStats
 } from "@/lib/api";
+
+// Final pre-production pass: generic "follow `next` until exhausted"
+// helper, extracted from the AuditLog load below (which already needed
+// this because AuditLog rows can genuinely exceed the server's hard
+// `page_size=100` cap) and reused for every OTHER module that holds its
+// FULL list in `recordsByModule` for client-side table pagination —
+// Leads/Customers/Users/Settings/Tasks/Communication/Payments. A single
+// `?page_size=100` fetch silently truncates any of those the exact same
+// way it truncated AuditLog before that fix: correct for an org under
+// 100 rows, silently wrong past it. `guardMax` caps the walk at 5,000
+// rows (50 pages of 100) as a sane ceiling against an unbounded loop,
+// matching the AuditLog loop's own limit.
+async function fetchAllPages<T>(
+  fetchPage: (query: string) => Promise<{ results: T[]; next: string | null }>,
+  initialQuery: string,
+  options: { guardMax?: number; shouldStop?: () => boolean } = {}
+): Promise<T[]> {
+  const { guardMax = 50, shouldStop } = options;
+  const all: T[] = [];
+  let query: string | null = initialQuery;
+  let guard = 0;
+  while (query && guard < guardMax) {
+    const page = await fetchPage(query);
+    all.push(...page.results);
+    if (shouldStop?.()) return all;
+    query = page.next ? new URL(page.next).search : null;
+    guard += 1;
+  }
+  return all;
+}
 
 type ModuleKey =
   | "users"
@@ -204,10 +235,10 @@ const modules: ModuleConfig[] = [
   {
     key: "attendance",
     title: "Attendance & Working Time",
-    subtitle: "Check-in and check-out records, effective and gross hours, and the day's time logs.",
+    subtitle: "Logged-in and logged-out times, and the day's time logs.",
     icon: AlarmClock,
     accent: "from-teal-700 to-sky-500",
-    columns: ["Employee", "Check In", "Check Out", "Effective", "Status"],
+    columns: ["Employee", "Logged In", "Logged Out", "Status"],
     rows: [],
     filters: ["All records"],
     actions: [],
@@ -219,7 +250,12 @@ const modules: ModuleConfig[] = [
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
     icon: UserCog,
     accent: "from-teal-700 to-rose-500",
-    columns: ["Name", "Role", "Email", "Phone", "Status", "Password"],
+    // "Manager" holds the assigned manager's numeric id and is a
+    // form-only entity picker; "Manager Name" is the table-only display
+    // of the same relationship (the backend returns both `manager` and
+    // `manager_name`). Same split the payments module already uses for
+    // "Customer ID" vs "Customer".
+    columns: ["Name", "Role", "Email", "Phone", "Manager", "Manager Name", "Status", "Password"],
     rows: [],
     filters: ["All roles", "Manager", "Employee", "Active", "Inactive"],
     actions: [
@@ -235,7 +271,19 @@ const modules: ModuleConfig[] = [
     accent: "from-teal-700 to-orange-500",
     columns: ["Lead", "Source", "Owner", "Status"],
     rows: [],
-    filters: ["All owners", "Unassigned", "New", "Hot", "Warm", "Cold", "Converted"],
+    filters: [
+      "All owners",
+      "Unassigned",
+      "New",
+      "Contacted",
+      "Qualified",
+      "Converted",
+      "Lost",
+      "DNC",
+      "No Answer",
+      "Not Interested",
+      "Call Back"
+    ],
     actions: [
       { label: "Assign Lead", icon: UserCheck, primary: true },
       { label: "Bulk Import", icon: Upload },
@@ -247,21 +295,25 @@ const modules: ModuleConfig[] = [
   },
   {
     key: "customers",
-    title: "Customers",
-    subtitle: "View all customers, convert qualified leads, and review complete profiles with interaction history.",
+    title: "Converted Leads",
+    subtitle: "View every converted lead, and review each one's complete profile with interaction history.",
     icon: Users,
     accent: "from-teal-700 to-pink-500",
     columns: ["Customer", "Industry", "Owner", "Status"],
     rows: [],
     filters: ["All customers", "Prospect", "Active", "Inactive", "Churned"],
-    actions: [
-      // "View Profile" and "Interaction History" used to live here and
-      // opened whichever customer happened to be first in the list, which
-      // is not a thing a user can mean. Both are now reached the only way
-      // that makes sense - opening a specific customer from the table,
-      // which shows the full profile with its interaction history inside.
-      { label: "Convert Lead", icon: Check, primary: true }
-    ],
+    // "View Profile" and "Interaction History" used to live here and
+    // opened whichever customer happened to be first in the list, which
+    // is not a thing a user can mean. Both are now reached the only way
+    // that makes sense - opening a specific customer from the table,
+    // which shows the full profile with its interaction history inside.
+    //
+    // "Convert Lead" was removed for exactly the same reason: as a
+    // top-level Customers action it had no lead to act on, so it could
+    // only ever guess. Conversion is now a contextual action on a
+    // SPECIFIC lead's own row/profile in the Leads module, where the
+    // lead being converted is unambiguous.
+    actions: [],
     formTitle: "Customer Profile",
   },
   {
@@ -281,7 +333,7 @@ const modules: ModuleConfig[] = [
   {
     key: "communication",
     title: "Communication",
-    subtitle: "Send email, send or view WhatsApp messages, inspect call logs, and open a unified communication timeline.",
+    subtitle: "Send email, inspect call logs, and open a unified communication timeline.",
     icon: MessageCircle,
     accent: "from-teal-700 to-cyan-500",
     columns: ["Recipient", "Subject", "Message", "Status"],
@@ -325,15 +377,18 @@ const modules: ModuleConfig[] = [
   {
     key: "settings",
     title: "Settings / Configuration",
-    subtitle: "Configure organization settings, Email, WhatsApp, Calling integrations, and system-wide rules.",
+    subtitle: "Configure organization settings, Email, Calling integrations, and system-wide rules.",
     icon: Settings,
     accent: "from-teal-700 to-zinc-600",
     columns: ["Setting", "Value", "Description", "Status"],
     rows: [],
     filters: ["All settings", "Active", "Inactive"],
-    actions: [
-      { label: "Add Setting", icon: Building2, primary: true }
-    ],
+    // "Add Setting" was removed: organization settings are provisioned by
+    // the backend, and the generic create form could only ever produce
+    // rows the application does not read. The legitimate settings
+    // functionality (the account security card, editing existing
+    // settings) is unaffected.
+    actions: [],
     formTitle: "Organization Setting",
   }
 ];
@@ -375,9 +430,9 @@ const ROLE_AVATAR: Record<Role, string> = {
 // is what carries the role-appropriate description.
 const EMPLOYEE_MODULE_COPY: Partial<Record<ModuleKey, { title: string; subtitle: string }>> = {
   leads: { title: "Leads", subtitle: "View leads assigned to you, add new leads manually, update status, and edit lead details." },
-  customers: { title: "Customers", subtitle: "View your customers, convert leads where permitted, and review each customer's profile and history." },
+  customers: { title: "Converted Leads", subtitle: "View your converted leads, and review each one's profile and history." },
   payments: { title: "Payments", subtitle: "Add payments for your customers, track partial payments, and view their payment history." },
-  communication: { title: "Communication", subtitle: "Send email, WhatsApp, and calls to your leads and customers, and view your own communication history." },
+  communication: { title: "Communication", subtitle: "Send email and calls to your leads and customers, and view your own communication history." },
   tasks: { title: "Tasks & Follow-ups", subtitle: "View tasks assigned to you, schedule follow-ups, set reminders, and mark tasks complete." }
 };
 
@@ -420,7 +475,7 @@ type CalendarNote = {
 // real value and this layer had to hide it; the backend now removes
 // `email`/`phone` from an Employee's response entirely
 // (apps.core.serializers.PiiMaskedSerializerMixin) and sends
-// can_email/can_call/can_whatsapp instead. Every Employee-facing surface
+// can_email/can_call instead. Every Employee-facing surface
 // therefore renders a name plus a protected-contact label
 // (see contactCapabilityLabel() below), never a masked string built from a
 // value this client no longer holds.
@@ -934,7 +989,11 @@ const LEAD_STATUS_LABELS: Record<string, string> = {
   CONTACTED: "Contacted",
   QUALIFIED: "Qualified",
   CONVERTED: "Converted",
-  LOST: "Lost"
+  LOST: "Lost",
+  DNC: "DNC",
+  NO_ANSWER: "No Answer",
+  NOT_INTERESTED: "Not Interested",
+  CALL_BACK: "Call Back"
 };
 
 function labelToEnum(value: string, labels: Record<string, string>, fallback: string): string {
@@ -964,14 +1023,13 @@ function leadToRow(lead: Record<string, unknown>): RowRecord {
     _phone: String(lead.phone ?? ""),
     // Contact CAPABILITY, not contact detail. The backend stopped sending
     // `email`/`phone` to an Employee entirely (apps.core.serializers'
-    // PiiMaskedSerializerMixin removes the keys) and sends these three
+    // PiiMaskedSerializerMixin removes the keys) and sends these two
     // booleans in their place (ContactCapabilityMixin) — so every
-    // Employee-facing "can I email/call/WhatsApp this person?" decision
-    // reads these, never `_email`/`_phone`, which are simply absent for
-    // that role and must not be treated as "no contact on file".
+    // Employee-facing "can I email/call this person?" decision reads
+    // these, never `_email`/`_phone`, which are simply absent for that
+    // role and must not be treated as "no contact on file".
     _canEmail: lead.can_email ? "1" : "",
-    _canCall: lead.can_call ? "1" : "",
-    _canWhatsapp: lead.can_whatsapp ? "1" : ""
+    _canCall: lead.can_call ? "1" : ""
   };
 }
 
@@ -1008,8 +1066,7 @@ function customerToRow(customer: Record<string, unknown>): RowRecord {
     _createdAt: typeof customer.created_at === "string" ? customer.created_at : "",
     // See leadToRow() — capability booleans, never contact detail.
     _canEmail: customer.can_email ? "1" : "",
-    _canCall: customer.can_call ? "1" : "",
-    _canWhatsapp: customer.can_whatsapp ? "1" : ""
+    _canCall: customer.can_call ? "1" : ""
   };
 }
 
@@ -1040,8 +1097,24 @@ function userToRow(user: Record<string, unknown>): RowRecord {
     Role: USER_ROLE_LABELS[role] ?? role,
     Email: String(user.email ?? ""),
     Phone: String(user.phone ?? ""),
+    // The relationship, in both the shape the form edits (the id) and the
+    // shape the table reads (the name the backend resolved for us).
+    Manager: user.manager == null ? "" : String(user.manager),
+    "Manager Name": String(user.manager_name ?? ""),
     Status: user.is_active === false ? "Inactive" : "Active"
   };
+}
+
+// `manager` is only meaningful for an Employee — the backend rejects an
+// assignment on any other role (UserCreateSerializer/UserManagementSerializer
+// .validate()). Sending `null` for a Manager/Super Admin is not merely
+// tolerated, it is the correct instruction: it clears any stale assignment
+// left over from a role change.
+function managerFieldFor(formData: Record<string, string>): number | null {
+  const role = labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE");
+  if (role !== "EMPLOYEE") return null;
+  const managerId = Number((formData.Manager ?? "").trim());
+  return Number.isInteger(managerId) && managerId > 0 ? managerId : null;
 }
 
 function rowToUserCreatePayload(formData: Record<string, string>): Record<string, unknown> {
@@ -1054,6 +1127,7 @@ function rowToUserCreatePayload(formData: Record<string, string>): Record<string
     last_name: rest.join(" "),
     phone: formData.Phone?.trim() ?? "",
     role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE"),
+    manager: managerFieldFor(formData),
     is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
   };
 }
@@ -1062,6 +1136,7 @@ function rowToUserUpdatePayload(formData: Record<string, string>): Record<string
   return {
     phone: formData.Phone?.trim() ?? "",
     role: labelToEnum(formData.Role ?? "", USER_ROLE_LABELS, "EMPLOYEE"),
+    manager: managerFieldFor(formData),
     is_active: (formData.Status ?? "Active").trim().toLowerCase() !== "inactive"
   };
 }
@@ -1236,11 +1311,40 @@ function invoiceToRow(invoice: Record<string, unknown>): RowRecord {
   };
 }
 
-function rowToInvoiceCreatePayload(formData: Record<string, string>): Record<string, unknown> {
+// Client-side validation for the invoice create form. Returns an error
+// message, or null when the form is safe to submit.
+//
+// This exists because the previous payload builder OMITTED `customer`
+// entirely when the free-text "Customer ID" box did not parse as a
+// positive number. Omitting a required key turns a plainly-wrong local
+// input into a remote 400, which is both slower and much harder to explain
+// than saying so here. The field is now a real customer picker, so this is
+// a genuine backstop rather than the primary defence.
+function validateInvoiceCreateForm(formData: Record<string, string>): string | null {
   const customerId = Number(formData["Customer ID"]?.trim());
+  if (!Number.isInteger(customerId) || customerId <= 0) {
+    return "Select a customer for this invoice.";
+  }
+  if (!(formData.Invoice ?? "").trim()) {
+    return "Invoice number is required.";
+  }
+  const total = (formData.Total ?? "").trim();
+  if (total) {
+    const totalAmount = Number(total);
+    if (!Number.isFinite(totalAmount)) return "Total must be a number.";
+    if (totalAmount < 0) return "Total cannot be negative.";
+  }
+  return null;
+}
+
+// Only the fields `InvoiceSerializer` actually accepts. `subtotal`,
+// `total`, `amount_paid`, `balance`, `paid_at` and `status` are all
+// read_only there and are deliberately NOT sent — the server computes them
+// from line items and payments (see CREATE_HIDDEN_FIELDS above).
+function rowToInvoiceCreatePayload(formData: Record<string, string>): Record<string, unknown> {
   return {
     invoice_number: formData.Invoice?.trim() ?? "",
-    ...(Number.isFinite(customerId) && customerId > 0 ? { customer: customerId } : {}),
+    customer: Number(formData["Customer ID"]?.trim()),
     tax: "0.00"
   };
 }
@@ -1278,7 +1382,6 @@ const VIEW_ACTION_LABELS = new Set([
   "View Profile",
   "Interaction History",
   "Call Logs",
-  "WhatsApp",
   "View Log"
 ]);
 
@@ -1331,7 +1434,17 @@ function employeeSafeRow(module: ModuleConfig, row: RowRecord): RowRecord {
 // column of the user table — not even masked. These columns are collected
 // by RecordModal but stripped before the table renders.
 const FORM_ONLY_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
-  users: ["Password"]
+  // "Manager" carries the raw manager id, which the form needs (it is what
+  // the API accepts) but a reader should never be shown — the table renders
+  // "Manager Name" instead.
+  users: ["Password", "Manager"]
+};
+
+// The mirror image of FORM_ONLY_COLUMNS: columns that exist to be READ in
+// the table but must never appear as form inputs, because they are
+// server-derived displays of a value the form edits under another key.
+const TABLE_ONLY_COLUMNS: Partial<Record<ModuleKey, string[]>> = {
+  users: ["Manager Name"]
 };
 
 // Spec 13/33: the payments grid shows the customer's NAME and the due
@@ -1388,7 +1501,17 @@ const FIELD_OPTIONS: Partial<Record<ModuleKey, Record<string, string[]>>> = {
     Status: ["Active", "Inactive"]
   },
   leads: {
-    Status: ["New", "Hot", "Warm", "Cold", "Converted", "Lost"]
+    Status: [
+      "New",
+      "Contacted",
+      "Qualified",
+      "Converted",
+      "Lost",
+      "DNC",
+      "No Answer",
+      "Not Interested",
+      "Call Back"
+    ]
   },
   customers: {
     Status: ["Prospect", "Active", "Inactive", "Churned"]
@@ -1421,13 +1544,103 @@ const FIELD_OPTIONS: Partial<Record<ModuleKey, Record<string, string[]>>> = {
 // `password` field (UserCreateSerializer) as a server error, instead of
 // being caught by the form's own inline validation.
 const OPTIONAL_FIELDS: Partial<Record<ModuleKey, string[]>> = {
-  users: ["Phone"],
+  // "Manager" is optional by design: an Employee may legitimately be
+  // unassigned, and a Manager/Super Admin must NOT have one (the backend
+  // rejects an assignment on those roles).
+  users: ["Phone", "Manager"],
   leads: ["Owner"],
   reports: ["Description"]
 };
 
+// Columns the BACKEND derives and therefore ignores on create. Showing
+// them as editable create-time inputs is a data-integrity lie: the user
+// types a number, the server computes its own, and the two silently
+// disagree.
+//
+// For an Invoice, `subtotal`/`total`/`amount_paid`/`balance`/`status` are
+// all `read_only=True` on `InvoiceSerializer` (backend/apps/sales/
+// serializers.py) — a new invoice is always created as DRAFT with zero
+// paid, and its money fields are computed server-side from the
+// `InvoiceItem`s and `PaymentTransaction`s recorded against it afterwards.
+// So "Paid", "Balance" and "Status" are dropped from the CREATE form.
+//
+// "Total" deliberately stays: the create handler turns it into a REAL
+// opening `InvoiceItem` via sales.addInvoiceItem(), then re-reads the
+// invoice, so the figure the user types genuinely becomes the
+// server-computed total rather than being discarded.
+//
+// EDIT mode is unaffected — there, "Paid" and "Status" are the existing,
+// deliberate triggers for record-payment / mark-paid / cancel (see the
+// payments branch of saveRecord()).
+const CREATE_HIDDEN_FIELDS: Partial<Record<ModuleKey, string[]>> = {
+  payments: ["Paid", "Balance", "Status"]
+};
+
+// VIEW mode reads; create/edit modes write. A foreign key is the one place
+// those two need genuinely different columns: the form must EDIT the id
+// (that is what the API accepts), but nobody reading a record wants to be
+// told their report's manager is "2", or an invoice's customer is "4".
+//
+// So in view mode each id-bearing column is swapped for the column naming
+// the same relationship in words. Both sides of every pair already exist —
+// the backend returns `manager` alongside `manager_name`, and the payments
+// grid resolves its customer name the same way — this just stops the view
+// modal from showing the machine half of the pair.
+const VIEW_LABEL_SUBSTITUTIONS: Partial<Record<ModuleKey, Record<string, string>>> = {
+  users: { Manager: "Manager Name" },
+  payments: { "Customer ID": "Customer" }
+};
+
+// Write-only fields, dropped from the read-only detail view. "Password" is
+// never echoed back by the backend (UserCreateSerializer declares it
+// write_only), so on a profile it could only ever render as an empty box
+// labelled Password — which reads as "this user has no password".
+const VIEW_HIDDEN_FIELDS: Partial<Record<ModuleKey, string[]>> = {
+  users: ["Password"]
+};
+
+// The columns a form actually renders for a given mode. Both RecordModal
+// and saveRecord()'s backstop validation read this ONE function, so a
+// hidden field can never be required by one and invisible to the other.
+function formColumnsFor(module: ModuleConfig, mode: "create" | "edit" | "view"): string[] {
+  if (mode === "view") {
+    // Nothing is hidden from a reader for being server-derived — a reader
+    // is exactly who those derived values are for. Two things do change:
+    // ids become their labels (above), and a write-only credential field
+    // is dropped, because a read-only, permanently-empty "Password" box on
+    // someone's profile tells the reader nothing.
+    const substitutions = VIEW_LABEL_SUBSTITUTIONS[module.key] ?? {};
+    const hidden = VIEW_HIDDEN_FIELDS[module.key] ?? [];
+    const substituted = module.columns
+      .filter((column) => !hidden.includes(column))
+      .map((column) => substitutions[column] ?? column);
+    // A substitution can collide with the label column already present in
+    // `module.columns` (users has both "Manager" and "Manager Name"), so
+    // the pair must collapse to one field rather than render twice.
+    return Array.from(new Set(substituted));
+  }
+  const tableOnly = TABLE_ONLY_COLUMNS[module.key] ?? [];
+  const hidden = mode === "create" ? CREATE_HIDDEN_FIELDS[module.key] ?? [] : [];
+  const excluded = [...tableOnly, ...hidden];
+  return excluded.length ? module.columns.filter((column) => !excluded.includes(column)) : module.columns;
+}
+
+// Explanatory helper text rendered under a specific field.
+const FIELD_HELP: Partial<Record<ModuleKey, Record<string, string>>> = {
+  users: {
+    Manager:
+      "Applies to Employees only. The assigned manager gains access to this employee's leads and customers."
+  },
+  payments: {
+    Total:
+      "Creates an opening line item for this amount. The invoice's subtotal, balance and status are then computed by the server from its line items and recorded payments."
+  }
+};
+
 function isFieldRequired(module: ModuleConfig, column: string, mode: "create" | "edit" | "view"): boolean {
   if (mode === "view") return false;
+  // A field the form does not render can never be required.
+  if (!formColumnsFor(module, mode).includes(column)) return false;
   if ((OPTIONAL_FIELDS[module.key] ?? []).includes(column)) return false;
   if (mode === "edit" && module.key === "users" && column === "Password") return false;
   return true;
@@ -1455,6 +1668,13 @@ const EMPLOYEE_BLOCKED_ACTION_PATTERN =
 // export until a real permission concept exists (do not invent one here).
 const EXPORT_ACTION_PATTERN = /export|download|google sheets/i;
 
+// Revenue/Payments audit pass: payment/revenue creation is Super-Admin-only
+// end to end (see apps.sales.views.InvoiceViewSet/PaymentTransactionViewSet
+// — a Manager's POST is now rejected server-side with 403). This blocks the
+// same action label at the UI layer too, so a Manager is never shown a
+// button that would only fail.
+const MANAGER_BLOCKED_ACTION_PATTERN = /add payment/i;
+
 // The generic "Send Email" header action opened the shared RecordModal
 // with a free-text Recipient field — a second, weaker compose box beside
 // the Communication Center's entity-addressed one, which every role now
@@ -1468,7 +1688,9 @@ function visibleActionsForRole(actions: ModuleConfig["actions"], role: Role): Mo
   const base = actions.filter((action) => !DUPLICATE_COMPOSE_ACTION_PATTERN.test(action.label));
   if (role === "superadmin") return base;
   if (role === "employee") return base.filter((action) => !EMPLOYEE_BLOCKED_ACTION_PATTERN.test(action.label));
-  return base.filter((action) => !EXPORT_ACTION_PATTERN.test(action.label));
+  return base.filter(
+    (action) => !EXPORT_ACTION_PATTERN.test(action.label) && !MANAGER_BLOCKED_ACTION_PATTERN.test(action.label)
+  );
 }
 
 function backendRoleToRole(role: BackendRole): Role {
@@ -2005,11 +2227,18 @@ function SuperAdminPage({
   // matching create/update/delete branches.
   useEffect(() => {
     let cancelled = false;
-    crm
-      .listLeads()
-      .then((page) => {
+    // The Leads table paginates client-side over this array (see
+    // DataTable's own "Showing X of Y" controls) rather than re-fetching
+    // per page, so this load must hold the WHOLE list — not just the
+    // server's default first page (StandardPagination.page_size = 20),
+    // and not just its max_page_size=100 either: walk `next` (via
+    // fetchAllPages(), the same helper the AuditLog load below uses) so
+    // an org with >100 leads is no longer silently truncated the same
+    // way >20 leads used to be.
+    fetchAllPages(crm.listLeads, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+        setRecordsByModule((current) => ({ ...current, leads: results.map(leadToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2019,11 +2248,11 @@ function SuperAdminPage({
         });
       });
 
-    crm
-      .listCustomers()
-      .then((page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(crm.listCustomers, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, customers: page.results.map(customerToRow) }));
+        setRecordsByModule((current) => ({ ...current, customers: results.map(customerToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2049,11 +2278,11 @@ function SuperAdminPage({
         // attempted with no organization available.
       });
 
-    accounts
-      .listUsers()
-      .then(async (page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(accounts.listUsers, "?page_size=100", { shouldStop: () => cancelled })
+      .then(async (allUsers) => {
         if (cancelled) return;
-        let results = page.results;
+        let results = allUsers;
         // Spec 3/12: `GET /auth/users/` is deliberately org-wide on the
         // backend ("the org chart is visible to everyone" — see
         // UserListCreateView), but a Manager's panel must only ever
@@ -2095,11 +2324,11 @@ function SuperAdminPage({
         });
       });
 
-    system
-      .listSettings()
-      .then((page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(system.listSettings, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, settings: page.results.map(settingToRow) }));
+        setRecordsByModule((current) => ({ ...current, settings: results.map(settingToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2109,11 +2338,13 @@ function SuperAdminPage({
         });
       });
 
-    system
-      .listAuditLogs()
-      .then((page) => {
+    // AuditLog rows can genuinely exceed the server's hard page_size=100
+    // cap (every mutation logs a row) — this is the original case
+    // fetchAllPages() was extracted from.
+    fetchAllPages(system.listAuditLogs, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, audit: page.results.map(auditLogToRow) }));
+        setRecordsByModule((current) => ({ ...current, audit: results.map(auditLogToRow) }));
       })
       .catch(() => {
         // Non-fatal and expected for non-Manager roles: AuditLog is
@@ -2151,11 +2382,11 @@ function SuperAdminPage({
         });
     }
 
-    activities
-      .listTasks()
-      .then((page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(activities.listTasks, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, tasks: page.results.map(taskToRow) }));
+        setRecordsByModule((current) => ({ ...current, tasks: results.map(taskToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2165,11 +2396,11 @@ function SuperAdminPage({
         });
       });
 
-    communications
-      .listEmailMessages()
-      .then((page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(communications.listEmailMessages, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, communication: page.results.map(emailMessageToRow) }));
+        setRecordsByModule((current) => ({ ...current, communication: results.map(emailMessageToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2180,11 +2411,11 @@ function SuperAdminPage({
         });
       });
 
-    sales
-      .listInvoices()
-      .then((page) => {
+    // Same pagination-truncation fix as listLeads() above.
+    fetchAllPages(sales.listInvoices, "?page_size=100", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
-        setRecordsByModule((current) => ({ ...current, payments: page.results.map(invoiceToRow) }));
+        setRecordsByModule((current) => ({ ...current, payments: results.map(invoiceToRow) }));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -2545,7 +2776,14 @@ function SuperAdminPage({
     // Owner, etc.) that a raw `activeModule.columns` read would
     // leak through the "View" action.
     const safeViewRow = role === "employee" ? employeeSafeRow(activeModule, row) : row;
-    setFormData(Object.fromEntries(formModule.columns.map((column) => [column, safeViewRow[column] ?? ""])));
+    // Read the columns the VIEW actually renders (ids swapped for their
+    // labels — see formColumnsFor), not the raw module column list, or the
+    // substituted fields would render blank.
+    setFormData(
+      Object.fromEntries(
+        formColumnsFor(formModule, "view").map((column) => [column, safeViewRow[column] ?? ""])
+      )
+    );
     setFormServerError(null);
     setModalOpen(true);
   }
@@ -2554,6 +2792,36 @@ function SuperAdminPage({
     setFormServerError(null);
     setFormData((current) => ({ ...current, [field]: value }));
   }
+
+  // Backend-sourced pickers for the foreign-key columns the generic form
+  // would otherwise render as a free-text id box. The Payments module's
+  // "Customer ID" was exactly that: a user had no way to know the numeric
+  // id, and a non-numeric entry used to be silently DROPPED from the
+  // create payload (rather than reported), producing a request missing a
+  // required field. The options come from the customers already loaded for
+  // this role, so an Employee/Manager can only ever pick a customer the
+  // backend already let them see — this narrows the choice set, it never
+  // widens it, and the server still authorizes the write independently.
+  const formEntityOptions = useMemo(() => {
+    if (formModule.key === "payments") {
+      const customers = (recordsByModule.customers ?? [])
+        .map((row) => ({ value: String(row.id), label: row.Customer || `Customer #${row.id}` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      return { "Customer ID": customers };
+    }
+    if (formModule.key === "users") {
+      // Real backend users with role = Manager — never a hardcoded list.
+      // Inactive accounts are excluded because the backend's own
+      // ManagerAssignmentField queryset excludes them, so offering one
+      // could only ever produce a validation error.
+      const managers = (recordsByModule.users ?? [])
+        .filter((row) => row.Role === USER_ROLE_LABELS.MANAGER && row.Status !== "Inactive")
+        .map((row) => ({ value: String(row.id), label: row.Name || row.Email || `User #${row.id}` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
+      return { Manager: managers };
+    }
+    return undefined;
+  }, [formModule.key, recordsByModule.customers, recordsByModule.users]);
 
   function saveRecord() {
     if (modalMode === "view") {
@@ -2564,7 +2832,7 @@ function SuperAdminPage({
     // Backstop for the inline validation RecordModal already enforces —
     // same isFieldRequired() rule, so the two can never disagree and
     // report a field as required in one place but optional in the other.
-    const missingField = formModule.columns.find(
+    const missingField = formColumnsFor(formModule, modalMode).find(
       (column) => isFieldRequired(formModule, column, modalMode) && !formData[column]?.trim()
     );
 
@@ -2639,23 +2907,11 @@ function SuperAdminPage({
         return;
       }
 
-      if (activeKey === "settings") {
-        system
-          .createSetting(rowToSettingPayload(formData))
-          .then((created) => {
-            const newRecord = settingToRow(created as Record<string, unknown>);
-            setRecordsByModule((current) => ({ ...current, settings: [newRecord, ...(current.settings ?? [])] }));
-            showToast({ type: "success", message: "Setting created." });
-            logActivity("Created a new Setting record.", "settings", newRecord);
-            setModalOpen(false);
-          })
-          .catch((err) => {
-            const message = err instanceof ApiError ? err.message : "Could not create setting.";
-            setFormServerError(message);
-            showToast({ type: "error", message });
-          });
-        return;
-      }
+      // NOTE: there is deliberately no `settings` create branch. The
+      // "Add Setting" action was removed (settings are provisioned by the
+      // backend, not authored ad-hoc in the UI), so this branch existed
+      // only to serve a button that no longer exists. Editing an existing
+      // setting still works — see the update path below.
 
       if (activeKey === "reports" || activeKey === "dashboard") {
         reportsApi
@@ -2723,6 +2979,16 @@ function SuperAdminPage({
       }
 
       if (activeKey === "payments") {
+        // Validate locally BEFORE building the payload — a missing or
+        // unparseable customer used to be dropped from the request instead
+        // of reported, so the user got a server 400 for a problem the form
+        // could plainly see.
+        const invoiceFormError = validateInvoiceCreateForm(formData);
+        if (invoiceFormError) {
+          setFormServerError(invoiceFormError);
+          showToast({ type: "error", message: invoiceFormError });
+          return;
+        }
         const totalAmount = Number(formData.Total?.trim());
         sales
           .createInvoice(rowToInvoiceCreatePayload(formData))
@@ -2975,6 +3241,47 @@ function SuperAdminPage({
     setEditingRecord(null);
   }
 
+  // Contextual lead -> customer conversion, for a SPECIFIC lead. One shared
+  // implementation for all three roles — the backend's single convert
+  // endpoint decides who may convert what, so there is deliberately no
+  // role branching here.
+  //
+  // Nothing is shown as converted unless the backend transaction actually
+  // succeeded: the lead row is only restamped, and the new customer only
+  // added to the customers list, inside .then() using the REAL response.
+  function convertLeadRecord(row: RowRecord) {
+    if (row.Status === "Converted") {
+      showToast({ type: "error", message: "This lead has already been converted." });
+      return;
+    }
+    const leadName = row.Lead || `Lead #${row.id}`;
+    const confirmed = window.confirm(
+      `Convert "${leadName}" into a customer? The lead stays on record and is marked Converted. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    crm
+      .convertLead(row.id)
+      .then((created) => {
+        const newCustomer = customerToRow(created as Record<string, unknown>);
+        setRecordsByModule((current) => ({
+          ...current,
+          customers: [newCustomer, ...(current.customers ?? [])],
+          leads: (current.leads ?? []).map((lead) =>
+            lead.id === row.id ? { ...lead, Status: "Converted" } : lead
+          )
+        }));
+        showToast({ type: "success", message: `${leadName} converted to a customer.` });
+        logActivity("Converted a Lead into a Customer.", "leads", { ...row, Status: "Converted" });
+      })
+      .catch((err) => {
+        showToast({
+          type: "error",
+          message: err instanceof ApiError ? err.message : "Could not convert this lead."
+        });
+      });
+  }
+
   function deleteRecord(row: RowRecord) {
     if (activeKey === "users") {
       const confirmed = window.confirm("Deactivate this user? They will no longer be able to log in. This is reversible.");
@@ -3166,8 +3473,10 @@ function SuperAdminPage({
           // iteration of this same loop — not an error, skip it.
         }
       }
-      const page = await crm.listLeads();
-      setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+      // Same pagination-truncation fix as the initial leads load — refresh
+      // must hold the WHOLE list, not just the first page_size=100.
+      const refreshedLeads = await fetchAllPages(crm.listLeads, "?page_size=100");
+      setRecordsByModule((current) => ({ ...current, leads: refreshedLeads.map(leadToRow) }));
       if (merged.length === 0) {
         showToast({ type: "success", message: "No duplicate leads found." });
       } else {
@@ -3204,8 +3513,9 @@ function SuperAdminPage({
     crm
       .importLeads(file)
       .then((summary) => {
-        return crm.listLeads().then((page) => {
-          setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+        // Same pagination-truncation fix as the initial leads load.
+        return fetchAllPages(crm.listLeads, "?page_size=100").then((results) => {
+          setRecordsByModule((current) => ({ ...current, leads: results.map(leadToRow) }));
           setActiveKey("leads");
           setFilter(targetModule.filters[0] ?? "All");
           setQuery("");
@@ -3349,10 +3659,10 @@ function SuperAdminPage({
 
   function applySheetImport(created: number) {
     setSheetImportOpen(false);
-    crm
-      .listLeads()
-      .then((page) => {
-        setRecordsByModule((current) => ({ ...current, leads: page.results.map(leadToRow) }));
+    // Same pagination-truncation fix as the initial leads load.
+    fetchAllPages(crm.listLeads, "?page_size=100")
+      .then((results) => {
+        setRecordsByModule((current) => ({ ...current, leads: results.map(leadToRow) }));
       })
       .catch(() => {
         // The import itself succeeded; the list refresh can be retried.
@@ -3669,7 +3979,7 @@ function SuperAdminPage({
                       // scoped for this role and every send is addressed by
                       // entity id, so the RBAC boundary is unchanged; this
                       // is presentation consistency only. It also makes the
-                      // Email/Call/WhatsApp buttons on a customer profile
+                      // Email/Call buttons on a customer profile
                       // land somewhere real for Manager/Super Admin, which
                       // they previously did not.
                       <CommunicationCenter
@@ -3724,6 +4034,7 @@ function SuperAdminPage({
                           }
                           role={role}
                           allowEdit={activeKey === "tasks"}
+                          onConvert={activeKey === "leads" ? convertLeadRecord : undefined}
                           onEdit={openEditModal}
                           onView={openViewModal}
                           onDuplicate={duplicateRecord}
@@ -3815,25 +4126,68 @@ function SuperAdminPage({
             serverError={formServerError}
             onChange={updateFormField}
             onSave={saveRecord}
+            entityOptions={formEntityOptions}
             extraContent={
-              // Lead-specific communication actions, on the lead's own
-              // detail view (spec: "from a lead's detail view, Email/Call/
-              // WhatsApp open the dedicated workspace for that lead").
-              role === "employee" && activeKey === "leads" && modalMode === "view" && editingRecord ? (
-                <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <CommProtectedNote label="Opens the Communication Center for this lead — contact details stay server-side." />
-                  <CommQuickActions
-                    contact={{
-                      key: commContactKey("lead", editingRecord.id),
-                      kind: "lead",
-                      id: editingRecord.id,
-                      name: editingRecord.Lead || `Lead #${editingRecord.id}`,
-                      canEmail: Boolean(editingRecord._canEmail),
-                      canCall: Boolean(editingRecord._canCall),
-                      canWhatsapp: Boolean(editingRecord._canWhatsapp)
-                    }}
-                    onOpen={openCommunicationFor}
-                  />
+              activeKey === "leads" && modalMode === "view" && editingRecord ? (
+                <div className="flex flex-col gap-3">
+                  {/* Conversion, on the specific lead the user opened.
+                      This is the entry point the spec asks for — the lead
+                      being converted is whichever one you are looking at,
+                      never "whatever happened to be first in the list",
+                      which is what the old global Customers-module
+                      "Convert Lead" button could only ever mean.
+
+                      Offered to all three roles from the ONE shared
+                      handler: the backend's single convert endpoint is
+                      the authority on who may convert what (a lead
+                      outside the caller's scope is already a 404), so
+                      there is deliberately no role branching here.
+
+                      An already-converted lead shows the state instead of
+                      a button — the backend refuses a second conversion,
+                      so offering one could only produce an error. */}
+                  {editingRecord.Status === "Converted" ? (
+                    <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200">
+                      This lead has been converted to a customer.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        Turn this lead into a customer. The lead stays on record and is marked Converted.
+                      </p>
+                      <button
+                        onClick={() => {
+                          setModalOpen(false);
+                          setEditingRecord(null);
+                          convertLeadRecord(editingRecord);
+                        }}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700"
+                      >
+                        <UserCheck className="size-4" />
+                        Convert Lead
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Lead-specific communication actions, on the lead's own
+                      detail view (spec: "from a lead's detail view, Email/Call
+                      open the dedicated workspace for that lead"). */}
+                  {role === "employee" ? (
+                    <div className="flex flex-col gap-3 rounded-lg border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <CommProtectedNote label="Opens the Communication Center for this lead — contact details stay server-side." />
+                      <CommQuickActions
+                        contact={{
+                          key: commContactKey("lead", editingRecord.id),
+                          kind: "lead",
+                          id: editingRecord.id,
+                          name: editingRecord.Lead || `Lead #${editingRecord.id}`,
+                          canEmail: Boolean(editingRecord._canEmail),
+                          canCall: Boolean(editingRecord._canCall)
+                        }}
+                        onOpen={openCommunicationFor}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               ) : null
             }
@@ -4209,19 +4563,28 @@ function ModuleNav({
 // profile. Renders the backend's `time_logs` array verbatim - check in,
 // work/break/idle transitions, check out - so attendance reads as a record
 // of the day rather than a single running number.
+// Spec 2-4: user-facing attendance terminology is simplified to ONLY
+// "Logged In" / "Logged Out". The intermediate WORK_START/WORK_END
+// (pause/resume) events keep being recorded by the backend for duration
+// calculations, but are never shown here — only login/logout and the
+// explicit break/idle events (which are not part of the terms this pass
+// removes) are rendered.
 const TIME_LOG_LABELS: Record<AttendanceTimeLog["type"], string> = {
-  CHECK_IN: "Checked in",
+  CHECK_IN: "Logged in",
   WORK_START: "Work resumed",
   BREAK_START: "Break started",
   BREAK_END: "Break ended",
   IDLE_START: "Went idle",
   IDLE_END: "Back from idle",
   WORK_END: "Work paused",
-  CHECK_OUT: "Checked out"
+  CHECK_OUT: "Logged out"
 };
 
+const HIDDEN_TIME_LOG_TYPES: ReadonlySet<AttendanceTimeLog["type"]> = new Set(["WORK_START", "WORK_END"]);
+
 function AttendanceTimeLogList({ logs }: { logs: AttendanceTimeLog[] }) {
-  if (logs.length === 0) {
+  const visibleLogs = logs.filter((log) => !HIDDEN_TIME_LOG_TYPES.has(log.type));
+  if (visibleLogs.length === 0) {
     return (
       <p className="rounded-lg border bg-background px-3 py-4 text-center text-sm text-muted-foreground">
         No time logs recorded for this day.
@@ -4231,7 +4594,7 @@ function AttendanceTimeLogList({ logs }: { logs: AttendanceTimeLog[] }) {
 
   return (
     <ol className="space-y-1.5">
-      {logs.map((log, index) => (
+      {visibleLogs.map((log, index) => (
         <li key={`${log.type}-${log.at}-${index}`} className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2">
           <span className="size-2 shrink-0 rounded-full bg-teal-600" />
           <span className="flex-1 text-sm font-semibold">{TIME_LOG_LABELS[log.type] ?? log.type}</span>
@@ -4329,7 +4692,12 @@ function StaffProfileModal({
                 <div className="grid gap-2 sm:grid-cols-2">
                   <DetailRow title={person.email} subtitle="Email" />
                   <DetailRow title={person.phone || "Not on file"} subtitle="Phone" />
-                  <DetailRow title={person.department || "Not assigned"} subtitle="Department" />
+                  {/* Department was removed from the user profile — it was a
+                      free-text label nothing read, and rendered as a
+                      permanent "Not assigned". The real reporting line is
+                      the manager below, resolved from the organization
+                      hierarchy the backend actually scopes access by. */}
+                  <DetailRow title={person.manager?.full_name || "Not assigned"} subtitle="Manager" />
                   <DetailRow title={formatProfileDate(person.date_joined)} subtitle="Joined" />
                   <DetailRow
                     title={person.is_active ? "Active" : "Inactive"}
@@ -4431,14 +4799,9 @@ function StaffProfileModal({
               <DetailSection title="Attendance Today">
                 {attendanceToday ? (
                   <>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <ProfileStat label="Check in" value={formatProfileTime(attendanceToday.check_in_time ?? attendanceToday.login_time)} />
-                      <ProfileStat label="Check out" value={formatProfileTime(attendanceToday.check_out_time ?? attendanceToday.logout_time)} />
-                      <ProfileStat label="Gross hours" value={formatHM(attendanceToday.gross_seconds ?? attendanceToday.session_seconds ?? 0)} />
-                      <ProfileStat
-                        label="Effective hours"
-                        value={formatHM(attendanceToday.effective_seconds ?? attendanceToday.active_working_seconds ?? 0)}
-                      />
+                    <div className="grid grid-cols-2 gap-2">
+                      <ProfileStat label="Logged in" value={formatProfileTime(attendanceToday.check_in_time ?? attendanceToday.login_time)} />
+                      <ProfileStat label="Logged out" value={formatProfileTime(attendanceToday.check_out_time ?? attendanceToday.logout_time)} />
                     </div>
                     <AttendanceTimeLogList logs={attendanceToday.time_logs ?? []} />
                   </>
@@ -4471,11 +4834,13 @@ function ProfileStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Spec 7: the dedicated Attendance / Working Time view. Attendance is a
-// RECORD of the day - Check In, Check Out, Gross Hours, Effective Hours,
-// Time Logs - not a stopwatch. The live session controls stay here (the
-// navbar keeps only the current status pill); the underlying idle/break/
-// heartbeat tracking in useAttendanceTracking is untouched.
+// Spec 2-4: the dedicated Attendance / Working Time view. Attendance is a
+// RECORD of the day - Logged In, Logged Out, Time Logs - not a stopwatch.
+// User-facing terminology is intentionally limited to "Logged In" /
+// "Logged Out"; Gross/Effective Hours are not shown here at all. The live
+// session controls stay here (the navbar keeps only the current status
+// pill); the underlying idle/break/heartbeat tracking in
+// useAttendanceTracking is untouched.
 function MyAttendanceRecord() {
   const attendanceTracking = useContext(AttendanceContext);
   const [today, setToday] = useState<DailyAttendance | null>(null);
@@ -4537,11 +4902,9 @@ function MyAttendanceRecord() {
           </div>
         ) : null}
 
-        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <ProfileStat label="Check In" value={formatProfileTime(today?.check_in_time ?? today?.login_time)} />
-          <ProfileStat label="Check Out" value={formatProfileTime(today?.check_out_time ?? today?.logout_time)} />
-          <ProfileStat label="Gross Hours" value={formatHM(today?.gross_seconds ?? today?.session_seconds ?? 0)} />
-          <ProfileStat label="Effective Hours" value={formatHM(today?.effective_seconds ?? today?.active_working_seconds ?? 0)} />
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <ProfileStat label="Logged In" value={formatProfileTime(today?.check_in_time ?? today?.login_time)} />
+          <ProfileStat label="Logged Out" value={formatProfileTime(today?.check_out_time ?? today?.logout_time)} />
         </div>
 
         {attendanceTracking ? (
@@ -4560,7 +4923,7 @@ function MyAttendanceRecord() {
               className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
-              Check Out
+              Log Out
             </button>
           </div>
         ) : null}
@@ -4852,10 +5215,19 @@ function GoogleSheetImportModal({
             </div>
           ) : !configured ? (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+              {/* Honest and ACTIONABLE: say exactly what is missing and
+                  who can supply it, rather than a dead end. The import is
+                  genuinely unavailable here — it is never faked. */}
               <p className="font-bold">Integration not configured</p>
               <p className="mt-1 leading-6">
-                The {status.provider} connection has no credentials on this deployment, so sheets cannot be read yet. CSV
-                import is unaffected and still works.
+                The {status.provider} connection has no credentials on this deployment, so sheets cannot be read yet. To
+                enable it, an administrator must set the <code className="font-mono font-semibold">GOOGLE_SHEETS_API_KEY</code>{" "}
+                environment variable on the backend and restart it. The spreadsheet must also be shared so that anyone with
+                the link can view it.
+              </p>
+              <p className="mt-2 leading-6">
+                CSV import is unaffected and still works — use <span className="font-semibold">Bulk Import</span> to upload a
+                .csv or .xlsx file instead.
               </p>
             </div>
           ) : (
@@ -4867,12 +5239,16 @@ function GoogleSheetImportModal({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="space-y-1.5">
-              <span className="text-sm font-semibold">Spreadsheet ID</span>
+              {/* The backend accepts either form (see
+                  providers/google_sheets.extract_spreadsheet_id), so the
+                  label says so rather than asking the user to dig the id
+                  out of the URL by hand. */}
+              <span className="text-sm font-semibold">Spreadsheet URL or ID</span>
               <input
                 value={spreadsheetId}
                 disabled={!configured}
                 onChange={(event) => setSpreadsheetId(event.target.value)}
-                placeholder="Spreadsheet ID from the sheet URL"
+                placeholder="Paste the sheet URL, or just its ID"
                 className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
@@ -5234,6 +5610,80 @@ function LeadAssignmentModal({
   );
 }
 
+const COMPANY_SUMMARY_METRICS: Array<{ key: keyof CompanyDashboardPeriodStats; label: string; kind: "count" | "currency" | "percent" }> = [
+  { key: "total_leads", label: "Total Leads", kind: "count" },
+  { key: "total_converted_leads", label: "Total Converted Leads", kind: "count" },
+  { key: "total_revenue", label: "Total Revenue", kind: "currency" },
+  { key: "pending_payments", label: "Pending Payments", kind: "currency" },
+  { key: "active_employees", label: "Active Employees", kind: "count" },
+  { key: "conversion_rate", label: "Conversion Rate", kind: "percent" }
+];
+
+function formatCompanySummaryValue(value: number | string, kind: "count" | "currency" | "percent"): string {
+  const numeric = typeof value === "number" ? value : Number.parseFloat(value) || 0;
+  if (kind === "currency") return formatCurrencyShort(numeric);
+  if (kind === "percent") return `${numeric}%`;
+  return numeric.toLocaleString();
+}
+
+function CompanySummaryRow({ title, stats }: { title: string; stats: CompanyDashboardPeriodStats | null }) {
+  return (
+    <div className="rounded-2xl border bg-card p-5 shadow-sm">
+      <h3 className="text-lg font-bold">{title}</h3>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        {COMPANY_SUMMARY_METRICS.map((metric) => (
+          <div key={metric.key} className="rounded-xl border bg-background p-3">
+            <p className="text-xs text-muted-foreground">{metric.label}</p>
+            <strong className="mt-1 block text-lg font-bold">
+              {stats ? formatCompanySummaryValue(stats[metric.key], metric.kind) : "—"}
+            </strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Spec 6: Super Admin Reports/Dashboard — "This Month" above "All Time",
+// both fetched from GET /api/v1/reports/dashboards/company-summary/
+// (Super Admin only server-side; see apps.reports.views.DashboardViewSet.
+// company_summary()). No client-side aggregation of any kind — this
+// component only formats and displays exactly what the backend returns.
+function CompanyDashboardSummarySection() {
+  const [summary, setSummary] = useState<CompanyDashboardSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    reportsApi
+      .companySummary()
+      .then((result) => {
+        if (!cancelled) setSummary(result);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load the company-wide monthly/all-time summary.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+        {error}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <CompanySummaryRow title="This Month" stats={summary?.this_month ?? null} />
+      <CompanySummaryRow title="All Time" stats={summary?.all_time ?? null} />
+    </div>
+  );
+}
+
 function AnalyticsDashboard({
   role,
   kpis,
@@ -5332,6 +5782,11 @@ function AnalyticsDashboard({
 
   return (
     <section className="space-y-4">
+      {/* Spec 6: Super Admin only, clearly separated "This Month" and
+          "All Time" figures — both computed server-side by
+          apps.reports.services.compute_company_dashboard_summary(), never
+          aggregated here from the records already loaded for the page. */}
+      {role === "superadmin" ? <CompanyDashboardSummarySection /> : null}
       {/* Spec 7/28: no attendance timer or attendance tables on the
           dashboard. The navbar keeps the live status pill; the record
           itself lives in the dedicated Attendance module. */}
@@ -5765,7 +6220,7 @@ function EmployeePaymentsView({
 }
 
 // ===========================================================================
-// Communication Center — Email / Calling / WhatsApp
+// Communication Center — Email / Calling
 // ===========================================================================
 //
 // Replaces the old EmployeeCommunicationView, which was built before the
@@ -5781,13 +6236,17 @@ function EmployeePaymentsView({
 // user, and every list endpoint it reads is server-scoped, so the role
 // boundary is the backend's - this component adds none of its own.
 //
-// Three channels, three genuinely separate full-width workspaces behind one
+// Two channels, two genuinely separate full-width workspaces behind one
 // channel switcher — never mixed into a single list. There is no backend
 // "conversation" resource, so conversation grouping is done ONCE here,
-// client-side, from the flat list endpoints: email/calls group on
-// `related_object` (content_type+object_id), WhatsApp on `customer`.
+// client-side, from the flat list endpoints, grouped on `related_object`
+// (content_type+object_id).
+//
+// A WhatsApp Business API channel previously existed here; it was removed
+// along with the rest of the WhatsApp integration (explicitly descoped by
+// the project owner) and must not be reintroduced.
 
-type CommChannel = "email" | "call" | "whatsapp";
+type CommChannel = "email" | "call";
 type CommEntityKind = "lead" | "customer" | "contact";
 
 type CommContact = {
@@ -5797,15 +6256,13 @@ type CommContact = {
   name: string;
   canEmail: boolean;
   canCall: boolean;
-  canWhatsapp: boolean;
 };
 
 type CommFocus = { channel: CommChannel; contactKey: string; nonce: number };
 
 const COMM_CHANNEL_META: Array<{ key: CommChannel; label: string; icon: React.ElementType; blurb: string }> = [
   { key: "email", label: "Email", icon: Mail, blurb: "Threaded email conversations with your leads and customers." },
-  { key: "call", label: "Calling", icon: Phone, blurb: "Place calls and review every call you have made." },
-  { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, blurb: "Chat with your customers without leaving the CRM." }
+  { key: "call", label: "Calling", icon: Phone, blurb: "Place calls and review every call you have made." }
 ];
 
 const COMM_STATUS_LABELS: Record<string, string> = {
@@ -5878,8 +6335,7 @@ function buildCommContacts(leads: RowRecord[], customers: RowRecord[]): CommCont
     id: row.id,
     name: row.Lead || `Lead #${row.id}`,
     canEmail: Boolean(row._canEmail),
-    canCall: Boolean(row._canCall),
-    canWhatsapp: Boolean(row._canWhatsapp)
+    canCall: Boolean(row._canCall)
   }));
   const fromCustomers = customers.map<CommContact>((row) => ({
     key: commContactKey("customer", row.id),
@@ -5887,8 +6343,7 @@ function buildCommContacts(leads: RowRecord[], customers: RowRecord[]): CommCont
     id: row.id,
     name: row.Customer || `Customer #${row.id}`,
     canEmail: Boolean(row._canEmail),
-    canCall: Boolean(row._canCall),
-    canWhatsapp: Boolean(row._canWhatsapp)
+    canCall: Boolean(row._canCall)
   }));
   return [...fromCustomers, ...fromLeads].sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -5952,8 +6407,8 @@ function CommEmptyState({ icon: Icon, title, description }: { icon: React.Elemen
 
 // Shared contact chooser for "start a new conversation / place a call".
 // Only contacts the backend says are reachable on this channel are listed —
-// capability comes from can_email/can_call/can_whatsapp, never from the
-// presence of a contact field this client no longer receives.
+// capability comes from can_email/can_call, never from the presence of a
+// contact field this client no longer receives.
 function CommContactPicker({
   title,
   contacts,
@@ -6105,10 +6560,8 @@ function CommunicationCenter({
 
       {channel === "email" ? (
         <CommEmailWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
-      ) : channel === "call" ? (
-        <CommCallWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
       ) : (
-        <CommWhatsAppWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
+        <CommCallWorkspace contacts={contacts} focusContactKey={focusContactKey} focusNonce={focusNonce} onToast={onToast} />
       )}
     </section>
   );
@@ -6189,15 +6642,22 @@ function CommEmailWorkspace({
     let cancelled = false;
     setError(null);
     setMessages(null);
-    // One flat, already-server-scoped page; the conversation grouping and
-    // the All/Sent/Received/Queued/Failed filter are computed client-side
-    // over it, matching how every other list view in this file filters.
-    communications
-      .listEmailMessages("?page_size=200&ordering=-created_at")
-      .then((page) => {
+    // Final pre-production pass: this requested page_size=200, but the
+    // server's StandardPagination.max_page_size is 100 — DRF silently
+    // caps an over-limit page_size rather than erroring, so this was
+    // ALREADY truncating past 100 email messages even before considering
+    // `next` at all. Walk every page (fetchAllPages(), same helper/fix as
+    // the main record loads above) so the conversation grouping and the
+    // All/Sent/Received/Queued/Failed filter — both computed client-side,
+    // matching how every other list view in this file filters — operate
+    // over the FULL history, not just its first 100 rows.
+    fetchAllPages(communications.listEmailMessages, "?page_size=100&ordering=-created_at", {
+      shouldStop: () => cancelled
+    })
+      .then((results) => {
         if (cancelled) return;
         setMessages(
-          page.results.map((row) => {
+          results.map((row) => {
             const entity = commEntityFromRelated(row.related_object);
             const label = entity?.label || String(row.recipient_label ?? "") || "Unlinked recipient";
             return {
@@ -6521,12 +6981,14 @@ function CommCallWorkspace({
   useEffect(() => {
     let cancelled = false;
     setError(null);
-    communications
-      .listCalls("?page_size=200&ordering=-created_at")
-      .then((page) => {
+    // Same pagination-truncation fix as the email-history load above:
+    // page_size=200 exceeded the server's max_page_size=100 and was
+    // silently capped, and now walks every page via fetchAllPages().
+    fetchAllPages(communications.listCalls, "?page_size=100&ordering=-created_at", { shouldStop: () => cancelled })
+      .then((results) => {
         if (cancelled) return;
         setCalls(
-          page.results.map((row) => {
+          results.map((row) => {
             const entity = commEntityFromRelated(row.related_object);
             const label = entity?.label || "Unlinked contact";
             return {
@@ -6807,297 +7269,6 @@ function CommCallWorkspace({
   );
 }
 
-// ---- WhatsApp workspace ---------------------------------------------------
-
-type CommWhatsAppMessage = {
-  id: string;
-  conversationKey: string;
-  conversationLabel: string;
-  target: { kind: CommEntityKind; id: string } | null;
-  message: string;
-  status: string;
-  direction: string;
-  timestamp: string;
-  error: string;
-};
-
-const COMM_WHATSAPP_FILTERS = ["All", "Unread", "Sent", "Received"] as const;
-type CommWhatsAppFilter = (typeof COMM_WHATSAPP_FILTERS)[number];
-
-function CommWhatsAppWorkspace({
-  contacts,
-  focusContactKey,
-  focusNonce,
-  onToast
-}: {
-  contacts: CommContact[];
-  focusContactKey: string | null;
-  focusNonce: number;
-  onToast: (toast: { type: "success" | "error"; message: string }) => void;
-}) {
-  const [messages, setMessages] = useState<CommWhatsAppMessage[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [filter, setFilter] = useState<CommWhatsAppFilter>("All");
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-
-  const reachable = useMemo(() => contacts.filter((contact) => contact.canWhatsapp), [contacts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    communications
-      .listWhatsAppMessages("?page_size=200&ordering=-created_at")
-      .then((page) => {
-        if (cancelled) return;
-        setMessages(
-          page.results.map((row) => {
-            // WhatsAppMessage models a `customer` relation only (see
-            // apps/communications/models.py) — a message sent to a LEAD is
-            // delivered but not back-linked, so it groups under a clearly
-            // labelled unlinked thread rather than being silently dropped.
-            const customerId = row.customer == null ? "" : String(row.customer);
-            const label = String(row.customer_name ?? "") || "Unlinked recipients";
-            return {
-              id: String(row.id),
-              conversationKey: customerId ? commContactKey("customer", customerId) : "unlinked:whatsapp",
-              conversationLabel: label,
-              target: customerId ? { kind: "customer" as CommEntityKind, id: customerId } : null,
-              message: String(row.message ?? ""),
-              status: String(row.status ?? ""),
-              direction: String(row.direction ?? "OUTBOUND"),
-              timestamp: String(row.created_at ?? ""),
-              error: String(row.error_message ?? "")
-            };
-          })
-        );
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setMessages([]);
-        setError(commApiErrorMessage(err, "Could not load your WhatsApp history"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadToken]);
-
-  useEffect(() => {
-    if (focusNonce > 0 && focusContactKey) setSelectedKey(focusContactKey);
-  }, [focusContactKey, focusNonce]);
-
-  const filtered = useMemo(() => {
-    const list = messages ?? [];
-    return list.filter((message) => {
-      if (filter === "Sent") return message.direction === "OUTBOUND";
-      if (filter === "Received") return message.direction === "INBOUND";
-      if (filter === "Unread") return message.direction === "INBOUND" && message.status !== "READ";
-      return true;
-    });
-  }, [messages, filter]);
-
-  const conversations = useMemo(() => groupCommConversations(filtered), [filtered]);
-
-  const selectedContact = selectedKey ? contacts.find((contact) => contact.key === selectedKey) ?? null : null;
-  const selectedConversation =
-    (selectedKey ? conversations.find((conversation) => conversation.key === selectedKey) : undefined) ??
-    (selectedContact
-      ? { key: selectedContact.key, label: selectedContact.name, target: { kind: selectedContact.kind, id: selectedContact.id }, messages: [] }
-      : null);
-
-  const canSend = Boolean(selectedConversation?.target) && (selectedContact ? selectedContact.canWhatsapp : true);
-
-  function handleSend() {
-    const target = selectedConversation?.target;
-    if (!target || !draft.trim()) return;
-    const payloadTarget = commTargetFromKey(commContactKey(target.kind, target.id));
-    if (!payloadTarget) return;
-    setSending(true);
-    communications
-      .sendWhatsAppMessage({ [payloadTarget.kind]: payloadTarget.id, message: draft.trim() })
-      .then(() => {
-        onToast({ type: "success", message: `WhatsApp message sent to ${selectedConversation?.label ?? "this contact"}.` });
-        setDraft("");
-        setReloadToken((value) => value + 1);
-      })
-      .catch((err) => {
-        onToast({ type: "error", message: commApiErrorMessage(err, "Could not send that WhatsApp message") });
-      })
-      .finally(() => setSending(false));
-  }
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-      <section className="flex max-h-[640px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
-        <div className="space-y-3 border-b p-4">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Chats</h4>
-            <button
-              onClick={() => setPickerOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
-            >
-              <Plus className="size-3.5" />
-              New chat
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {COMM_WHATSAPP_FILTERS.map((item) => (
-              <button
-                key={item}
-                onClick={() => setFilter(item)}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
-                  filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
-                )}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {messages === null ? (
-            <CommPanelSkeleton />
-          ) : error ? (
-            <p className="p-6 text-center text-sm text-red-600 dark:text-red-400">{error}</p>
-          ) : conversations.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground">
-              No WhatsApp chats yet. Use <span className="font-semibold">New chat</span> to start one.
-            </p>
-          ) : (
-            <div className="divide-y">
-              {conversations.map((conversation) => {
-                const last = conversation.messages[conversation.messages.length - 1];
-                const active = conversation.key === selectedKey;
-                return (
-                  <button
-                    key={conversation.key}
-                    onClick={() => setSelectedKey(conversation.key)}
-                    className={cn("flex w-full items-center gap-3 p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
-                  >
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
-                      {conversation.label.slice(0, 2).toUpperCase()}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-semibold">{conversation.label}</span>
-                        <CommStatusBadge status={last?.status ?? ""} />
-                      </span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">{last?.message || "No messages"}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="flex min-h-[420px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
-        {!selectedConversation ? (
-          <CommEmptyState
-            icon={MessageCircle}
-            title="No chat selected"
-            description="Pick a chat on the left, or start a new one with any customer who has a WhatsApp-capable number on file."
-          />
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-              <div className="min-w-0">
-                <h4 className="truncate text-base font-bold">{selectedConversation.label}</h4>
-                <CommProtectedNote label="Protected contact — the WhatsApp number never reaches this screen" />
-              </div>
-              <button
-                onClick={() => setReloadToken((value) => value + 1)}
-                className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition hover:bg-muted"
-              >
-                <RefreshCw className="size-3.5" />
-                Refresh
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-muted/30 p-4">
-              {selectedConversation.messages.length === 0 ? (
-                <p className="rounded-lg border bg-background p-6 text-center text-sm text-muted-foreground">
-                  No messages in this chat yet — say hello below.
-                </p>
-              ) : (
-                selectedConversation.messages.map((message) => {
-                  const outbound = message.direction !== "INBOUND";
-                  return (
-                    <div key={message.id} className={cn("flex", outbound ? "justify-end" : "justify-start")}>
-                      <div
-                        className={cn(
-                          "max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[70%]",
-                          outbound
-                            ? "rounded-br-sm bg-teal-600 text-white"
-                            : "rounded-bl-sm border bg-card text-foreground"
-                        )}
-                      >
-                        <p className="whitespace-pre-wrap break-words">{message.message}</p>
-                        <p className={cn("mt-1 flex items-center gap-1.5 text-[10px]", outbound ? "text-white/75" : "text-muted-foreground")}>
-                          {outbound ? "You" : selectedConversation.label} · {commTimestampLabel(message.timestamp)} · {commStatusLabel(message.status)}
-                        </p>
-                        {message.error ? (
-                          <p className={cn("mt-1 text-[10px] font-semibold", outbound ? "text-red-100" : "text-red-600 dark:text-red-400")}>
-                            {commFailureNote(message.status, message.error)}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="border-t p-4">
-              {canSend ? (
-                <div className="flex items-end gap-2">
-                  <textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    placeholder={`Message ${selectedConversation.label}...`}
-                    rows={2}
-                    className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={sending || !draft.trim()}
-                    className="inline-flex h-11 shrink-0 items-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                    Send
-                  </button>
-                </div>
-              ) : (
-                <p className="rounded-lg border bg-background p-3 text-center text-xs text-muted-foreground">
-                  These messages are not linked to one of your customers, so a reply cannot be addressed from here.
-                </p>
-              )}
-            </div>
-          </>
-        )}
-      </section>
-
-      <AnimatePresence>
-        {pickerOpen ? (
-          <CommContactPicker
-            title="New WhatsApp chat"
-            contacts={reachable}
-            onSelect={(contact) => {
-              setSelectedKey(contact.key);
-              setPickerOpen(false);
-            }}
-            onClose={() => setPickerOpen(false)}
-          />
-        ) : null}
-      </AnimatePresence>
-    </div>
-  );
-}
 
 // Per-lead / per-customer channel buttons, shown on that record's own
 // detail view. Each one deep-links into the Communication Center's matching
@@ -7113,8 +7284,7 @@ function CommQuickActions({
 }) {
   const buttons: Array<{ channel: CommChannel; label: string; icon: React.ElementType; enabled: boolean }> = [
     { channel: "email", label: "Email", icon: Mail, enabled: contact.canEmail },
-    { channel: "call", label: "Call", icon: Phone, enabled: contact.canCall },
-    { channel: "whatsapp", label: "WhatsApp", icon: MessageCircle, enabled: contact.canWhatsapp }
+    { channel: "call", label: "Call", icon: Phone, enabled: contact.canCall }
   ];
   return (
     <div className="flex flex-wrap gap-2">
@@ -7193,8 +7363,7 @@ function CustomerProfileModal({
     id: customer.id,
     name: customer.Customer || `Customer #${customer.id}`,
     canEmail: Boolean(customer._canEmail),
-    canCall: Boolean(customer._canCall),
-    canWhatsapp: Boolean(customer._canWhatsapp)
+    canCall: Boolean(customer._canCall)
   };
   const custPayments = payments.filter((row) => row["Customer ID"] === customer.id);
   // `Recipient` is the backend's safe `recipient_label` (the related
@@ -7269,7 +7438,7 @@ function CustomerProfileModal({
             <h4 className="mb-2 text-sm font-bold uppercase tracking-wide text-muted-foreground">Interaction History</h4>
             {custComms.length === 0 && custNotes.length === 0 ? (
               <p className="rounded-lg border bg-background p-4 text-center text-sm text-muted-foreground">
-                No calls, emails, WhatsApp, or notes recorded for this customer yet.
+                No calls, emails, or notes recorded for this customer yet.
               </p>
             ) : (
               <div className="space-y-2">
@@ -7671,7 +7840,7 @@ function SuperAdminAttendanceSection() {
 // them on timestamp — the same client-side merge the customer profile's
 // Interaction History already does, and one less privileged surface to secure.
 
-type CommAuditChannel = "Email" | "Call" | "WhatsApp";
+type CommAuditChannel = "Email" | "Call";
 
 type CommAuditEvent = {
   key: string;
@@ -7687,7 +7856,7 @@ type CommAuditEvent = {
   duration: string;
 };
 
-const COMM_AUDIT_CHANNELS: CommAuditChannel[] = ["Email", "Call", "WhatsApp"];
+const COMM_AUDIT_CHANNELS: CommAuditChannel[] = ["Email", "Call"];
 
 // Each channel's own status vocabulary (see apps/communications/models.py).
 // A status is only ever sent to the endpoints that accept it — django-filter
@@ -7695,8 +7864,7 @@ const COMM_AUDIT_CHANNELS: CommAuditChannel[] = ["Email", "Call", "WhatsApp"];
 // must not be forwarded to the email endpoint.
 const COMM_AUDIT_STATUSES: Record<CommAuditChannel, string[]> = {
   Email: ["QUEUED", "SENT", "FAILED"],
-  Call: ["QUEUED", "RINGING", "IN_PROGRESS", "COMPLETED", "FAILED", "NO_ANSWER", "BUSY"],
-  WhatsApp: ["QUEUED", "SENT", "DELIVERED", "READ", "FAILED"]
+  Call: ["QUEUED", "RINGING", "IN_PROGRESS", "COMPLETED", "FAILED", "NO_ANSWER", "BUSY"]
 };
 
 const COMM_AUDIT_ALL_STATUSES = Array.from(
@@ -7705,8 +7873,7 @@ const COMM_AUDIT_ALL_STATUSES = Array.from(
 
 const COMM_AUDIT_CHANNEL_ICON: Record<CommAuditChannel, React.ElementType> = {
   Email: Mail,
-  Call: Phone,
-  WhatsApp: MessageCircle
+  Call: Phone
 };
 
 // Local to this section on purpose: the shared `badgeStyles` map is keyed by
@@ -7746,7 +7913,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const [events, setEvents] = useState<CommAuditEvent[] | null>(null);
-  const [totals, setTotals] = useState<Record<CommAuditChannel, number>>({ Email: 0, Call: 0, WhatsApp: 0 });
+  const [totals, setTotals] = useState<Record<CommAuditChannel, number>>({ Email: 0, Call: 0 });
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CommAuditEvent | null>(null);
 
@@ -7786,10 +7953,9 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
 
     Promise.all([
       wants("Email") ? communications.listEmailMessages(queryFor("Email")) : empty,
-      wants("Call") ? communications.listCalls(queryFor("Call")) : empty,
-      wants("WhatsApp") ? communications.listWhatsAppMessages(queryFor("WhatsApp")) : empty
+      wants("Call") ? communications.listCalls(queryFor("Call")) : empty
     ])
-      .then(([emailPage, callPage, whatsappPage]) => {
+      .then(([emailPage, callPage]) => {
         if (cancelled) return;
 
         const emailEvents: CommAuditEvent[] = emailPage.results.map((row) => ({
@@ -7820,23 +7986,9 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
           duration: row.duration_seconds == null ? "" : `${row.duration_seconds}s`
         }));
 
-        const whatsappEvents: CommAuditEvent[] = whatsappPage.results.map((row) => ({
-          key: `whatsapp-${row.id}`,
-          channel: "WhatsApp",
-          direction: String(row.direction ?? ""),
-          status: String(row.status ?? ""),
-          timestamp: String(row.created_at ?? ""),
-          employeeId: row.owner == null ? "" : String(row.owner),
-          contact: String(row.customer_name ?? "") || String(row.receiver ?? "") || "—",
-          summary: String(row.message ?? "").slice(0, 120),
-          detail: String(row.error_message ?? "") || String(row.message ?? ""),
-          providerId: String(row.provider_message_id ?? ""),
-          duration: ""
-        }));
-
-        setTotals({ Email: emailPage.count, Call: callPage.count, WhatsApp: whatsappPage.count });
+        setTotals({ Email: emailPage.count, Call: callPage.count });
         setEvents(
-          [...emailEvents, ...callEvents, ...whatsappEvents].sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+          [...emailEvents, ...callEvents].sort((a, b) => b.timestamp.localeCompare(a.timestamp))
         );
       })
       .catch((err) => {
@@ -7864,7 +8016,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
     );
   }, [events, search, employeeName]);
 
-  const loadedTotal = totals.Email + totals.Call + totals.WhatsApp;
+  const loadedTotal = totals.Email + totals.Call;
   const truncated = (events?.length ?? 0) < loadedTotal;
 
   return (
@@ -7877,8 +8029,8 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
               Communication Audit Trail
             </h3>
             <p className="text-sm text-muted-foreground">
-              Every email, call and WhatsApp message between an employee and a customer or lead, merged into one
-              timeline. Super Admin only — enforced server-side.
+              Every email and call between an employee and a customer or lead, merged into one timeline. Super
+              Admin only — enforced server-side.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 text-xs font-semibold">
@@ -8662,7 +8814,7 @@ function DayContent({
       ) : null}
 
       {day.communication.length > 0 ? (
-        <DetailSection title="Calls, WhatsApp & email history">
+        <DetailSection title="Calls & email history">
           {day.communication.map((row) => (
             <DetailRow key={row.id} title={`${row.Recipient ?? row.id}`} subtitle={row.Subject ?? ""} badge={row.Status} />
           ))}
@@ -9185,8 +9337,14 @@ function GaugeChart({ value, label }: { value: number; label: string }) {
   const r = 82;
   const needleAngle = 180 - (clamped / 100) * 180;
   const needleEnd = polarPoint(cx, cy, 66, needleAngle);
-  const bands = [
-    { from: 180, to: 120, color: "#E2E8F0" },
+  // The lowest band is the "inactive track" of the gauge, so it must follow
+  // the theme rather than being a fixed light grey: hardcoded #E2E8F0 read
+  // as a bright near-white arc against the dark card, louder than the two
+  // meaningful bands above it. `currentColor` + a token class makes it
+  // recede correctly in both themes. The teal/sky bands carry real meaning
+  // and are legible on either background, so they stay fixed.
+  const bands: Array<{ from: number; to: number; color?: string; className?: string }> = [
+    { from: 180, to: 120, className: "text-muted" },
     { from: 120, to: 60, color: "#7DD3FC" },
     { from: 60, to: 0, color: "#0F766E" }
   ];
@@ -9199,10 +9357,11 @@ function GaugeChart({ value, label }: { value: number; label: string }) {
           const p2 = polarPoint(cx, cy, r, band.to);
           return (
             <path
-              key={band.color}
+              key={`${band.from}-${band.to}`}
               d={`M ${p1.x} ${p1.y} A ${r} ${r} 0 0 1 ${p2.x} ${p2.y}`}
               fill="none"
-              stroke={band.color}
+              stroke={band.color ?? "currentColor"}
+              className={band.className}
               strokeWidth="18"
             />
           );
@@ -9220,6 +9379,35 @@ function PieChart({ data, donut }: { data: Array<{ label: string; value: number;
   const [tip, setTip] = useState<string | null>(null);
   const total = data.reduce((sum, item) => sum + item.value, 0);
   let offset = 25;
+
+  // An honest empty state, and a real division-by-zero guard. When every
+  // slice is zero — a brand new deployment with no leads/customers yet, or
+  // a filter that matched nothing — `item.value / total` is 0/0 = NaN. That
+  // NaN flowed straight into `strokeDasharray`/`strokeDashoffset`, which
+  // React reports as "Received NaN for the strokeDashoffset attribute" (it
+  // was the one console error this app produced at runtime) and which the
+  // browser renders as a full, undifferentiated ring — a chart that looks
+  // like 100% of something when the truth is that there is nothing to
+  // show. No fabricated placeholder slice: the ring is drawn once in the
+  // muted token colour and labelled for what it is.
+  if (total <= 0) {
+    return (
+      <div className="relative grid min-h-56 place-items-center gap-3">
+        <svg viewBox="0 0 220 220" className="h-48 w-48 -rotate-90" aria-hidden="true">
+          <circle
+            cx="110"
+            cy="110"
+            r="70"
+            fill="none"
+            stroke="currentColor"
+            className="text-muted"
+            strokeWidth={donut ? 32 : 70}
+          />
+        </svg>
+        <p className="text-xs font-medium text-muted-foreground">No data to chart yet.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="relative grid min-h-56 place-items-center">
@@ -9340,10 +9528,20 @@ function DataTable({
   onSort,
   role,
   allowEdit = false,
-  onOpenProfile
+  onOpenProfile,
+  onConvert
 }: {
   module: ModuleConfig;
   rows: RowRecord[];
+  // Contextual lead -> customer conversion, on the specific lead's own row.
+  // Passed only for the Leads module (there is no such thing as converting
+  // "a customer" or "a task"), and offered to EVERY role: the backend's one
+  // convert endpoint authorizes per-lead, so an employee converting their
+  // own lead is legitimate and a lead outside anyone's scope is already
+  // invisible to them here. Rendered as a first-class row button rather
+  // than inside the overflow menu, because that menu is hidden entirely
+  // from employees.
+  onConvert?: (row: RowRecord) => void;
   onEdit: (row: RowRecord) => void;
   onView: (row: RowRecord) => void;
   onDuplicate: (row: RowRecord) => void;
@@ -9359,7 +9557,14 @@ function DataTable({
   // Follow-ups render branch, the only caller that passes allowEdit.
   allowEdit?: boolean;
 }) {
-  const isEmployeeViewOnly = role === "employee";
+  // Revenue/Payments audit pass: Payments/Invoices are Super-Admin-only to
+  // write now (the backend rejects a Manager's or Employee's PATCH/DELETE
+  // with 403 — see apps.sales.views.InvoiceViewSet/PaymentTransactionViewSet).
+  // A Manager is otherwise NOT generically view-only the way an Employee is,
+  // so the payments module specifically forces the same view-only row
+  // controls for a Manager as for an Employee, instead of showing an
+  // Edit/Delete control that could only ever produce a 403.
+  const isEmployeeViewOnly = role === "employee" || (role === "manager" && module.key === "payments");
   // Spec 10: on staff tables the destructive action is a deactivation, not
   // a deletion, and cloning a person is meaningless - so the row menu says
   // "Deactivate" and drops "Duplicate" there.
@@ -9473,6 +9678,19 @@ function DataTable({
                       <Pencil className="size-4" />
                     </button>
                   ) : null}
+                  {/* Already-converted leads show no Convert control at all:
+                      the backend refuses a second conversion, so offering it
+                      could only ever produce an error. */}
+                  {onConvert && row.Status !== "Converted" ? (
+                    <button
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-300"
+                      aria-label={`Convert ${row[module.columns[0]] ?? "lead"} to a customer`}
+                      title="Convert to customer"
+                      onClick={() => onConvert(row)}
+                    >
+                      <UserCheck className="size-4" />
+                    </button>
+                  ) : null}
                   {!isEmployeeViewOnly ? (
                     <button
                       className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
@@ -9572,7 +9790,8 @@ function RecordModal({
   onSave,
   onClose,
   serverError,
-  extraContent
+  extraContent,
+  entityOptions
 }: {
   module: ModuleConfig;
   mode: "create" | "edit" | "view";
@@ -9580,12 +9799,18 @@ function RecordModal({
   onChange: (field: string, value: string) => void;
   onSave: () => void;
   onClose: () => void;
+  // Real, backend-sourced pickers for columns that hold a FOREIGN KEY.
+  // Keyed by column name; each entry is the id the payload must carry plus
+  // the human label to show. A raw free-text id box is never acceptable for
+  // these: the user cannot know the number, and a typo either silently
+  // omits a required field or points at someone else's record.
+  entityOptions?: Partial<Record<string, Array<{ value: string; label: string }>>>;
   // Errors the backend rejected the submission with. Kept separate from
   // the inline required-field messages below so a server error is never
   // mistaken for a validation state this form owns (spec 23).
   serverError?: string | null;
   // Optional per-record actions rendered under the field grid (used by the
-  // Employee lead detail view for its Email/Call/WhatsApp quick actions).
+  // Employee lead detail view for its Email/Call quick actions).
   extraContent?: React.ReactNode;
 }) {
   const isView = mode === "view";
@@ -9596,7 +9821,8 @@ function RecordModal({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  const missingFields = module.columns.filter(
+  const visibleColumns = formColumnsFor(module, mode);
+  const missingFields = visibleColumns.filter(
     (column) => isFieldRequired(module, column, mode) && !(formData[column] ?? "").trim()
   );
 
@@ -9651,12 +9877,17 @@ function RecordModal({
         ) : null}
 
         <div className="grid gap-4 p-5 sm:grid-cols-2">
-          {module.columns.map((column) => {
+          {visibleColumns.map((column) => {
             const value = formData[column] ?? "";
             const required = isFieldRequired(module, column, mode);
+            // A real backend-sourced picker takes precedence over a static
+            // enum list, which takes precedence over free text.
+            const entities = entityOptions?.[column];
             const options = FIELD_OPTIONS[module.key]?.[column];
+            const help = FIELD_HELP[module.key]?.[column];
             const showError = required && !value.trim() && (submitAttempted || touched[column]);
             const errorId = `${module.key}-${column}-error`;
+            const helpId = `${module.key}-${column}-help`;
             const fieldClass = cn(
               "h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4",
               isView && "cursor-default bg-muted text-muted-foreground",
@@ -9669,7 +9900,28 @@ function RecordModal({
                   {column}
                   {required ? <span className="ml-0.5 text-red-600 dark:text-red-400">*</span> : null}
                 </span>
-                {options && !isView ? (
+                {entities && !isView ? (
+                  <select
+                    value={value}
+                    aria-invalid={showError}
+                    aria-describedby={showError ? errorId : help ? helpId : undefined}
+                    onChange={(event) => {
+                      setTouched((current) => ({ ...current, [column]: true }));
+                      onChange(column, event.target.value);
+                    }}
+                    onBlur={() => setTouched((current) => ({ ...current, [column]: true }))}
+                    className={fieldClass}
+                  >
+                    <option value="">
+                      {entities.length ? `Select ${column.toLowerCase()}` : `No ${column.toLowerCase()} available`}
+                    </option>
+                    {entities.map((entity) => (
+                      <option key={entity.value} value={entity.value}>
+                        {entity.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : options && !isView ? (
                   <select
                     value={value}
                     aria-invalid={showError}
@@ -9706,7 +9958,11 @@ function RecordModal({
                 )}
                 {showError ? (
                   <span id={errorId} className="block text-xs font-medium text-red-600 dark:text-red-400">
-                    {options ? `Select a ${column.toLowerCase()}.` : `${column} is required.`}
+                    {entities || options ? `Select a ${column.toLowerCase()}.` : `${column} is required.`}
+                  </span>
+                ) : help && !isView ? (
+                  <span id={helpId} className="block text-xs text-muted-foreground">
+                    {help}
                   </span>
                 ) : null}
               </label>

@@ -9,9 +9,8 @@ from apps.communications.filters import (
     CommunicationLogFilterSet,
     EmailMessageFilterSet,
     NotificationFilterSet,
-    WhatsAppMessageFilterSet,
 )
-from apps.communications.models import Call, CommunicationLog, EmailMessage, Notification, WhatsAppMessage
+from apps.communications.models import Call, CommunicationLog, EmailMessage, Notification
 
 # --------------------------------------------------------------------------
 # No database required
@@ -28,10 +27,6 @@ def test_call_filterset_declares_expected_fields():
     assert set(CallFilterSet.Meta.fields) == {"status", "direction", "owner", "content_type", "object_id"}
 
 
-def test_whatsapp_filterset_declares_expected_fields():
-    assert set(WhatsAppMessageFilterSet.Meta.fields) == {"status", "direction", "owner", "customer"}
-
-
 def test_every_communications_filterset_exposes_a_date_range_pair():
     """The audit spec's "filter by date/time range" requirement, asserted
     per FilterSet so a future channel can't quietly ship without one.
@@ -39,7 +34,6 @@ def test_every_communications_filterset_exposes_a_date_range_pair():
     expected = {
         EmailMessageFilterSet: ["created_from", "created_to", "sent_from", "sent_to"],
         CallFilterSet: ["started_from", "started_to", "created_from", "created_to"],
-        WhatsAppMessageFilterSet: ["created_from", "created_to"],
         CommunicationLogFilterSet: ["occurred_from", "occurred_to"],
     }
     for filterset_class, names in expected.items():
@@ -117,32 +111,6 @@ def test_call_filterset_narrows_by_status_direction_and_owner(employee, other_em
     )
 
     assert list(filterset.qs) == [mine]
-
-
-@pytest.mark.django_db
-def test_whatsapp_filterset_narrows_by_status_and_direction(employee):
-    delivered = WhatsAppMessage.objects.create(
-        owner=employee,
-        direction=WhatsAppMessage.Direction.OUTBOUND,
-        sender="1",
-        receiver="2",
-        message="hi",
-        status=WhatsAppMessage.Status.DELIVERED,
-    )
-    WhatsAppMessage.objects.create(
-        owner=employee,
-        direction=WhatsAppMessage.Direction.INBOUND,
-        sender="2",
-        receiver="1",
-        message="hello",
-        status=WhatsAppMessage.Status.DELIVERED,
-    )
-
-    filterset = WhatsAppMessageFilterSet(
-        data={"status": "DELIVERED", "direction": "OUTBOUND"}, queryset=WhatsAppMessage.objects.all()
-    )
-
-    assert list(filterset.qs) == [delivered]
 
 
 @pytest.mark.django_db

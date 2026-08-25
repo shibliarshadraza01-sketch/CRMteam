@@ -12,6 +12,7 @@ from CP10 rather than reimplemented — see BACKEND_LEARNING_GUIDE.md CP12,
 "reusing managed_user_ids() across apps", for why a cross-app import is the
 right call here rather than a copy.
 """
+from django.db import transaction
 from django.utils import timezone
 
 from apps.crm.services import assign_owner  # noqa: F401  (re-exported for apps.sales callers)
@@ -118,6 +119,7 @@ def reject_quote(quote):
     return quote
 
 
+@transaction.atomic
 def convert_quote_to_invoice(quote, invoice_number, *, due_date=None, owner=None):
     """Convert an ``APPROVED`` quote into an ``Invoice`` — CP12's
     "conversion creates invoice / quote becomes CONVERTED / invoice starts
@@ -133,6 +135,21 @@ def convert_quote_to_invoice(quote, invoice_number, *, due_date=None, owner=None
     Copies the quote's (active) line items onto the new invoice and
     recalculates the invoice's totals from them, carrying `tax` over from
     the quote unchanged (see ``recalculate_invoice_totals()``).
+
+    ATOMICITY (Phase 4 transaction-safety audit). This is the widest
+    multi-row write in the sales domain — one ``Invoice``, one
+    ``InvoiceItem`` per quote line, a totals recalculation, and the
+    ``Quote`` status/link update — and it is reached through a custom
+    ``@action`` (``QuoteViewSet.convert``), which is NOT covered by
+    ``AuditStampedModelMixin.create()``'s transaction and, with
+    ``ATOMIC_REQUESTS`` off, ran with no transaction at all. A failure
+    partway through left an invoice holding only some of the quote's line
+    items, with totals summing only those, while the quote still read as
+    ``APPROVED`` — so a retry (the documented, idempotent-looking thing to
+    do) created a SECOND invoice rather than finding the first. Wrapping
+    the whole sequence makes the "idempotent on an already-converted
+    quote" promise in this docstring actually true: either the quote is
+    converted and a complete invoice exists, or neither.
     """
     if quote.status == Quote.Status.CONVERTED and quote.converted_invoice_id is not None:
         return quote.converted_invoice
@@ -265,35 +282,75 @@ def record_payment(invoice, amount, *, method=PaymentTransaction.Method.OTHER, r
       to ``PAID`` (and ``paid_at`` is set, mirroring
       ``mark_invoice_paid()``); a smaller running total moves it to
       ``PARTIAL`` instead of leaving it at ``DRAFT``/``SENT``.
+
+    ATOMICITY AND CONCURRENCY (Phase 4 transaction-safety audit). Recording
+    a payment is TWO writes that must agree — the ``PaymentTransaction``
+    row and the parent invoice's recalculated ``status``/``paid_at``. Two
+    separate problems were fixed here:
+
+    1. *Partial write.* Without a transaction, a failure between the two
+       writes leaves a real payment recorded against an invoice still
+       showing ``SENT`` with a stale balance — a financial record and its
+       ledger disagreeing. The HTTP create path happened to be covered
+       already (``AuditStampedModelMixin.create()`` is atomic), but every
+       non-HTTP caller — management commands, other services, future
+       bulk-payment code — was not. The guarantee belongs to the operation,
+       not to one of its callers.
+
+    2. *Overpayment race.* ``remaining`` was read, checked, and then acted
+       on with nothing holding the invoice still in between. Two concurrent
+       payments could each independently observe the same remaining balance,
+       each pass the "no overpayment, ever" check, and both commit —
+       overpaying the invoice by exactly the amount the rule exists to
+       prevent. The invoice row is now re-fetched under
+       ``select_for_update()``, so the second request blocks until the first
+       commits and then re-reads a balance that already includes it.
+
+    Re-fetching also drops any ``_amount_paid_annotated`` value the caller's
+    instance may be carrying (see ``Invoice.amount_paid``): that annotation
+    is computed once when the queryset is evaluated and does NOT update when
+    this function inserts a payment, so reading it back to decide the new
+    status would compare against a pre-payment total and could leave a
+    fully-paid invoice stuck at ``SENT``. The locked instance always
+    aggregates live.
     """
-    if invoice.status == Invoice.Status.CANCELLED:
-        raise ValueError("Cannot record a payment against a cancelled invoice.")
     if amount is None or amount <= 0:
         raise ValueError("Payment amount must be greater than zero.")
 
-    remaining = invoice.total - invoice.amount_paid
-    if amount > remaining:
-        raise ValueError(f"Payment of {amount} exceeds the remaining balance of {remaining}.")
+    with transaction.atomic():
+        # Locked, annotation-free view of the invoice — see the docstring.
+        locked_invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
 
-    transaction = PaymentTransaction.objects.create(
-        invoice=invoice,
-        amount=amount,
-        method=method,
-        paid_at=paid_at or timezone.now(),
-        recorded_by=recorded_by,
-        notes=notes,
-    )
+        if locked_invoice.status == Invoice.Status.CANCELLED:
+            raise ValueError("Cannot record a payment against a cancelled invoice.")
 
-    new_total_paid = invoice.amount_paid
-    if new_total_paid >= invoice.total:
-        invoice.status = Invoice.Status.PAID
-        invoice.paid_at = transaction.paid_at
-        invoice.save(update_fields=["status", "paid_at", "updated_at"])
-    elif new_total_paid > 0:
-        invoice.status = Invoice.Status.PARTIAL
-        invoice.save(update_fields=["status", "updated_at"])
+        remaining = locked_invoice.total - locked_invoice.amount_paid
+        if amount > remaining:
+            raise ValueError(f"Payment of {amount} exceeds the remaining balance of {remaining}.")
 
-    return transaction
+        payment = PaymentTransaction.objects.create(
+            invoice=locked_invoice,
+            amount=amount,
+            method=method,
+            paid_at=paid_at or timezone.now(),
+            recorded_by=recorded_by,
+            notes=notes,
+        )
+
+        new_total_paid = locked_invoice.amount_paid
+        if new_total_paid >= locked_invoice.total:
+            locked_invoice.status = Invoice.Status.PAID
+            locked_invoice.paid_at = payment.paid_at
+            locked_invoice.save(update_fields=["status", "paid_at", "updated_at"])
+        elif new_total_paid > 0:
+            locked_invoice.status = Invoice.Status.PARTIAL
+            locked_invoice.save(update_fields=["status", "updated_at"])
+
+    # Keep the caller's own instance consistent with what was just written,
+    # so a view that goes on to serialize it doesn't report a stale status.
+    invoice.status = locked_invoice.status
+    invoice.paid_at = locked_invoice.paid_at
+    return payment
 
 
 __all__ = [

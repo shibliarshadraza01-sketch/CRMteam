@@ -1,8 +1,13 @@
 """Staff-management pass: the Super Admin's User/Staff Management surface.
 
-Covers the new profile fields (username/phone/department/joining date/
-status), the non-destructive delete semantics, the consolidated staff
-profile endpoint, and the security-change verification placeholder.
+Covers the profile fields (username/phone/joining date/status), MANAGER
+ASSIGNMENT via the apps.organization Team/Membership hierarchy, the
+non-destructive delete semantics, the consolidated staff profile endpoint,
+and the security-change verification placeholder.
+
+`department` was removed from the User model — it was a free-text label
+nothing in the application read or scoped by. (apps.organization.Department,
+the org-hierarchy model, is a different concept and is unaffected.)
 """
 import pytest
 from rest_framework.test import APIClient
@@ -61,7 +66,6 @@ def test_super_admin_creates_a_staff_account_with_all_profile_fields(api_client,
             "first_name": "New",
             "last_name": "Hire",
             "phone": "+15550100",
-            "department": "Sales",
             "role": django_user_model.Role.EMPLOYEE,
             "is_active": True,
         },
@@ -72,7 +76,7 @@ def test_super_admin_creates_a_staff_account_with_all_profile_fields(api_client,
     created = django_user_model.objects.get(email="new-hire@example.com")
     assert created.username == "newhire"
     assert created.phone == "+15550100"
-    assert created.department == "Sales"
+    assert not hasattr(created, "department")
     assert created.role == django_user_model.Role.EMPLOYEE
     # The password is never echoed back.
     assert "password" not in response.data
@@ -360,3 +364,328 @@ def test_unknown_provider_name_falls_back_to_the_safe_default(monkeypatch):
     monkeypatch.setenv("SECURITY_VERIFICATION_PROVIDER", "totally-made-up")
 
     assert describe_security_verification()["method"] == "current_password"
+
+
+# --------------------------------------------------------------------------
+# Manager assignment
+#
+# An Employee's manager is stored as an apps.organization Membership on a
+# Team that Manager leads — the SAME rows apps.crm.services.managed_user_ids()
+# scopes every list query by. These tests assert the assignment is genuinely
+# persisted and RBAC-effective, not merely displayed.
+# --------------------------------------------------------------------------
+
+
+def test_super_admin_can_assign_a_manager_at_creation(api_client, super_admin, manager, django_user_model):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.post(
+        USERS_URL,
+        {
+            "email": "assigned@example.com",
+            "password": "a-strong-password",
+            "first_name": "Assigned",
+            "last_name": "Employee",
+            "role": django_user_model.Role.EMPLOYEE,
+            "manager": manager.pk,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    from apps.accounts.services import get_manager_for_user
+
+    created = django_user_model.objects.get(email="assigned@example.com")
+    assert get_manager_for_user(created) == manager
+
+
+def test_super_admin_can_assign_a_manager_on_edit(api_client, super_admin, manager, employee):
+    from apps.accounts.services import get_manager_for_user
+
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    assert response.status_code == 200
+    assert response.data["manager"] == manager.pk
+    employee.refresh_from_db()
+    assert get_manager_for_user(employee) == manager
+
+
+def test_assignment_is_visible_in_both_directions(api_client, super_admin, manager, employee):
+    from apps.accounts.services import get_employees_for_manager, get_manager_for_user
+
+    api_client.force_authenticate(super_admin)
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    assert get_manager_for_user(employee) == manager
+    assert list(get_employees_for_manager(manager)) == [employee]
+
+
+def test_assignment_actually_widens_that_managers_rbac_scope(api_client, super_admin, manager, employee):
+    """The point of reusing Team/Membership: the assignment must take
+    effect in the one scoping mechanism the whole app already uses.
+    """
+    from apps.crm.services import managed_user_ids
+
+    assert employee.pk not in managed_user_ids(manager)
+
+    api_client.force_authenticate(super_admin)
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    assert employee.pk in managed_user_ids(manager)
+
+
+def test_assigning_null_clears_the_manager(api_client, super_admin, manager, employee):
+    from apps.accounts.services import get_manager_for_user
+
+    api_client.force_authenticate(super_admin)
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+    assert get_manager_for_user(employee) == manager
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": None}, format="json")
+
+    assert response.status_code == 200
+    assert get_manager_for_user(employee) is None
+
+
+def test_reassignment_does_not_leave_the_employee_on_two_teams(
+    api_client, super_admin, manager, employee, django_user_model
+):
+    from apps.accounts.services import get_employees_for_manager, get_manager_for_user
+
+    other_manager = django_user_model.objects.create_user(
+        email="second-manager@example.com", password="manager-pass-123", role=django_user_model.Role.MANAGER
+    )
+    api_client.force_authenticate(super_admin)
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": other_manager.pk}, format="json")
+
+    assert get_manager_for_user(employee) == other_manager
+    # The previous manager must lose visibility, not keep it alongside.
+    assert list(get_employees_for_manager(manager)) == []
+    assert list(get_employees_for_manager(other_manager)) == [employee]
+
+
+def test_a_nonexistent_manager_is_rejected(api_client, super_admin, employee):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": 999999}, format="json")
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+
+
+def test_a_non_manager_user_cannot_be_used_as_a_manager(api_client, super_admin, employee, django_user_model):
+    other_employee = django_user_model.objects.create_user(
+        email="peer@example.com", password="employee-pass-123", role=django_user_model.Role.EMPLOYEE
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": other_employee.pk}, format="json")
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+
+
+def test_a_user_cannot_be_their_own_manager(api_client, super_admin, manager):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{manager.pk}/", {"manager": manager.pk}, format="json")
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+
+
+def test_an_employee_cannot_assign_a_manager(api_client, employee, manager):
+    """RBAC is not weakened to make the feature work."""
+    api_client.force_authenticate(employee)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    assert response.status_code == 403
+
+
+def test_staff_profile_reports_the_manager_and_no_department(api_client, super_admin, manager, employee):
+    api_client.force_authenticate(super_admin)
+    api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": manager.pk}, format="json")
+
+    response = api_client.get(f"{USERS_URL}{employee.pk}/profile/")
+
+    assert response.status_code == 200
+    assert "department" not in response.data["profile"]
+    assert response.data["profile"]["manager"]["id"] == manager.pk
+
+
+def test_user_list_no_longer_exposes_department(api_client, super_admin, employee):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.get(f"{USERS_URL}{employee.pk}/")
+
+    assert response.status_code == 200
+    assert "department" not in response.data
+    assert "manager" in response.data
+
+
+# --------------------------------------------------------------------------
+# Manager-assignment ERROR MESSAGES
+#
+# Every rejection above used to answer with one identical, factually false
+# sentence: `Invalid pk "4" - object does not exist.` — about a manager the
+# Super Admin could plainly see in the very list they picked from. The cause
+# was ManagerAssignmentField restricting its own queryset, so
+# PrimaryKeyRelatedField rejected the pk before the specific checks in
+# validate() could run at all (they were unreachable dead code).
+#
+# These tests pin the messages, not just the 400, because "the request was
+# rejected" was never the part that was broken.
+# --------------------------------------------------------------------------
+
+
+def _manager_error(response):
+    return " ".join(str(message) for message in response.data["manager"])
+
+
+def test_assigning_a_peer_employee_says_they_are_not_a_manager(
+    api_client, super_admin, employee, django_user_model
+):
+    peer = django_user_model.objects.create_user(
+        email="peer-msg@example.com",
+        password="employee-pass-123",
+        role=django_user_model.Role.EMPLOYEE,
+        first_name="Peer",
+        last_name="Person",
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": peer.pk}, format="json")
+
+    assert response.status_code == 400
+    message = _manager_error(response)
+    assert "not a manager" in message
+    assert "does not exist" not in message
+    # The offending user is named, so the admin knows which pick was wrong.
+    assert "Peer Person" in message
+
+
+def test_assigning_a_deactivated_manager_says_so_and_how_to_fix_it(
+    api_client, super_admin, employee, django_user_model
+):
+    """The message an admin most needs: the account is real, it is simply
+    deactivated, and here is what to do about it.
+    """
+    dormant = django_user_model.objects.create_user(
+        email="dormant@example.com",
+        password="manager-pass-123",
+        role=django_user_model.Role.MANAGER,
+        first_name="Dormant",
+        last_name="Manager",
+        is_active=False,
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": dormant.pk}, format="json")
+
+    assert response.status_code == 400
+    message = _manager_error(response)
+    assert "deactivated" in message
+    assert "Reactivate" in message
+    assert "does not exist" not in message
+
+
+def test_self_assignment_says_so_rather_than_denying_the_user_exists(
+    api_client, super_admin, employee
+):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(
+        f"{USERS_URL}{employee.pk}/", {"manager": employee.pk}, format="json"
+    )
+
+    assert response.status_code == 400
+    message = _manager_error(response)
+    assert "their own manager" in message
+    assert "does not exist" not in message
+
+
+def test_does_not_exist_is_reserved_for_a_pk_that_really_does_not_exist(
+    api_client, super_admin, employee
+):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{employee.pk}/", {"manager": 999999}, format="json")
+
+    assert response.status_code == 400
+    assert "does not exist" in _manager_error(response)
+
+
+def test_a_deactivated_manager_is_rejected_at_CREATE_time_too(
+    api_client, super_admin, django_user_model
+):
+    """Create and edit must enforce the SAME rules — the create path used
+    to be the looser of the two by simply having fewer checks written out.
+    """
+    dormant = django_user_model.objects.create_user(
+        email="dormant-create@example.com",
+        password="manager-pass-123",
+        role=django_user_model.Role.MANAGER,
+        is_active=False,
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.post(
+        USERS_URL,
+        {
+            "email": "new-report@example.com",
+            "password": "a-strong-password",
+            "role": django_user_model.Role.EMPLOYEE,
+            "manager": dormant.pk,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "deactivated" in _manager_error(response)
+    assert not django_user_model.objects.filter(email="new-report@example.com").exists()
+
+
+def test_a_peer_employee_is_rejected_at_CREATE_time_too(
+    api_client, super_admin, employee, django_user_model
+):
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.post(
+        USERS_URL,
+        {
+            "email": "new-report-2@example.com",
+            "password": "a-strong-password",
+            "role": django_user_model.Role.EMPLOYEE,
+            "manager": employee.pk,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "not a manager" in _manager_error(response)
+
+
+def test_the_offered_manager_choices_exclude_deactivated_accounts(
+    manager, django_user_model
+):
+    """The list the API advertises and the list it accepts must be the
+    same list — that is the whole point of `selectable_managers()`.
+    """
+    from apps.accounts.serializers import selectable_managers
+
+    dormant = django_user_model.objects.create_user(
+        email="dormant-choices@example.com",
+        password="manager-pass-123",
+        role=django_user_model.Role.MANAGER,
+        is_active=False,
+    )
+
+    selectable = list(selectable_managers())
+
+    assert manager in selectable
+    assert dormant not in selectable

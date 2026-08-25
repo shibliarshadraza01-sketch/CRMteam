@@ -168,15 +168,17 @@ def test_employee_cannot_hard_delete_even_their_own_customer(api_client, organiz
     assert response.status_code == 403
 
 
-def test_any_manager_can_hard_delete_regardless_of_team(api_client, organization, employee, django_user_model):
-    # CanRestoreOrHardDelete (CP7) gates restore/hard-delete by ROLE alone
-    # (Manager-or-above), not by object-level ownership/team membership —
-    # unlike ordinary retrieve/update/destroy, which DO go through
-    # IsOwnerOrSuperAdmin's per-object check. This is CP7's existing,
-    # unmodified design (reused here per CP10's "no duplicated permission
-    # logic" instruction), not a CP10 regression — documented explicitly
-    # rather than silently assumed. See BACKEND_PROGRESS.md CP10,
-    # "Problems encountered".
+def test_manager_cannot_hard_delete_another_teams_customer(api_client, organization, employee, django_user_model):
+    # Final pre-production pass: CanRestoreOrHardDelete (CP7) still gates
+    # restore/hard-delete by ROLE (Manager-or-above), but the underlying
+    # queryset is now ALSO scoped via scope_queryset_for_user(), same as
+    # every other action — a Manager may no longer restore/hard-delete a
+    # record outside their own managed scope just by knowing its id. This
+    # replaces the old "any Manager can hard-delete regardless of team"
+    # test, which was asserting the bug this pass fixes (product decision:
+    # Manager restore/hard-delete is scoped to their own team, not
+    # company-wide). An out-of-scope object 404s, matching how
+    # out-of-scope objects are hidden everywhere else in this codebase.
     unrelated_manager = django_user_model.objects.create_user(
         email="unrelated-manager@example.com", password="x", role=django_user_model.Role.MANAGER
     )
@@ -185,4 +187,52 @@ def test_any_manager_can_hard_delete_regardless_of_team(api_client, organization
 
     response = api_client.post(f"{_detail(theirs.pk)}hard-delete/")
 
+    assert response.status_code == 404
+
+
+def test_manager_can_hard_delete_their_own_teams_customer(api_client, organization, managed_team, manager, employee):
+    # Positive counterpart: a Manager CAN hard-delete a record owned by a
+    # member of their own team (managed_team fixture: manager manages a
+    # team that employee belongs to).
+    theirs = Customer.objects.create(organization=organization, name="TeamMembers", slug="team-members-2", owner=employee)
+    api_client.force_authenticate(manager)
+
+    response = api_client.post(f"{_detail(theirs.pk)}hard-delete/")
+
     assert response.status_code == 204
+
+
+def test_manager_cannot_restore_another_teams_customer(api_client, organization, employee, django_user_model):
+    unrelated_manager = django_user_model.objects.create_user(
+        email="unrelated-manager-2@example.com", password="x", role=django_user_model.Role.MANAGER
+    )
+    theirs = Customer.objects.create(organization=organization, name="TeamMembers3", slug="team-members-3", owner=employee)
+    theirs.soft_delete(updated_by=None)
+    api_client.force_authenticate(unrelated_manager)
+
+    response = api_client.post(f"{_detail(theirs.pk)}restore/")
+
+    assert response.status_code == 404
+
+
+def test_manager_can_restore_their_own_teams_customer(api_client, organization, managed_team, manager, employee):
+    theirs = Customer.objects.create(organization=organization, name="TeamMembers4", slug="team-members-4", owner=employee)
+    theirs.soft_delete(updated_by=None)
+    api_client.force_authenticate(manager)
+
+    response = api_client.post(f"{_detail(theirs.pk)}restore/")
+
+    assert response.status_code == 200
+
+
+def test_super_admin_can_restore_and_hard_delete_any_teams_customer(api_client, organization, employee, super_admin):
+    a = Customer.objects.create(organization=organization, name="AdminScopeA", slug="admin-scope-a", owner=employee)
+    a.soft_delete(updated_by=None)
+    b = Customer.objects.create(organization=organization, name="AdminScopeB", slug="admin-scope-b", owner=employee)
+    api_client.force_authenticate(super_admin)
+
+    restore_response = api_client.post(f"{_detail(a.pk)}restore/")
+    hard_delete_response = api_client.post(f"{_detail(b.pk)}hard-delete/")
+
+    assert restore_response.status_code == 200
+    assert hard_delete_response.status_code == 204

@@ -15,6 +15,7 @@ config/urls.py.
     POST              /api/v1/reports/dashboards/<id>/restore/
     POST              /api/v1/reports/dashboards/<id>/hard-delete/
     POST              /api/v1/reports/dashboards/<id>/set-default/
+    GET               /api/v1/reports/dashboards/company-summary/   (Super Admin only)
 
     GET/POST          /api/v1/reports/dashboard-widgets/
     GET/PATCH/DELETE  /api/v1/reports/dashboard-widgets/<id>/

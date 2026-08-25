@@ -16,6 +16,7 @@ or via ``Customer``/``Lead.manager_has_access()`` for a Manager overseeing
 the owner's team), or being a Super Admin — enforced by CP6's
 ``IsOwnerOrSuperAdmin``, unchanged.
 """
+from django.db import transaction
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
@@ -28,6 +29,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from apps.core.serializers import pii_masking_required, super_admin_only_masking_required
 from apps.core.utils import stamp_audit_fields
 from apps.core.views import PiiSafeSearchMixin, SoftDeleteAuditModelViewSetMixin
+from apps.organization.models import Organization
 
 from .filters import (
     AddressFilterSet,
@@ -69,6 +71,7 @@ from .services import (
     advance_stage,
     assign_leads,
     assign_owner,
+    convert_lead,
     create_customer,
     create_opportunity,
     find_duplicate_leads,
@@ -104,29 +107,33 @@ class _CrmModelViewSet(SoftDeleteAuditModelViewSetMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         """List results are scoped to *active* (not soft-deleted) rows;
         every other action (retrieve/update/destroy/restore/hard-delete)
-        deliberately uses the UNFILTERED manager so a soft-deleted row
-        remains reachable for ``restore``/``hard-delete`` — see CP7's
+        uses the UNFILTERED manager so a soft-deleted row remains
+        reachable for ``restore``/``hard-delete`` — see CP7's
         ``SoftDeleteModelMixin.restore()`` docstring for why this can't be
         left implicit.
 
-        ``restore``/``hard-delete`` skip ``scope_queryset_for_user()``
-        entirely: those two actions are gated by CP7's
-        ``CanRestoreOrHardDelete`` (Manager-or-above, role only — see its
-        own docstring), not by ``IsOwnerOrSuperAdmin``'s per-object
-        ownership check. Applying ownership scoping here too would make
-        the object invisible to ``get_object()`` (a 404) for exactly the
-        cross-team case ``CanRestoreOrHardDelete`` exists to allow, before
-        that permission class ever gets a chance to authorize it — the
-        queryset would silently defeat the permission class's own
-        contract. Every other action keeps the ownership scope: an
-        Employee, Manager, or Super Admin never sees rows outside what
-        they're allowed to when browsing a list or looking up a specific
-        ID directly for retrieve/update/destroy.
+        Final pre-production pass: ``restore``/``hard-delete`` now go
+        through ``scope_queryset_for_user()`` exactly like every other
+        action, instead of the unfiltered manager. Previously those two
+        actions were deliberately left unscoped — gated only by CP7's
+        ``CanRestoreOrHardDelete`` (Manager-or-above, role only) — on the
+        theory that ownership scoping here would make the object
+        invisible (a 404) before that permission class got a chance to
+        authorize a legitimate cross-team restore. That was wrong: there
+        is no legitimate cross-team case for a Manager. Product decision:
+        a Manager may only restore/hard-delete records within their own
+        managed scope (themselves + their teams' members, exactly what
+        ``scope_queryset_for_user()`` already computes for every other
+        action); a Super Admin is unaffected since
+        ``scope_queryset_for_user()`` returns everything unfiltered for
+        them. An out-of-scope soft-deleted row is now a 404 on restore/
+        hard-delete, matching how out-of-scope objects are hidden
+        everywhere else in this codebase (never leaking existence via a
+        403), while a Manager's own-team rows and a Super Admin's
+        everything remain fully reachable.
         """
         base_manager = self.base_active_manager if self.action == "list" else self.base_manager
         queryset = base_manager.all()
-        if self.action in ("restore", "hard_delete"):
-            return queryset
         return scope_queryset_for_user(queryset, self.request.user, owner_field=self.owner_field)
 
 
@@ -257,6 +264,91 @@ class LeadViewSet(PiiSafeSearchMixin, _CrmModelViewSet):
         queryset = scope_queryset_for_user(find_duplicate_leads(lead), request.user, owner_field=self.owner_field)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @extend_schema(request=None, responses={201: CustomerSerializer, 400: dict})
+    @action(detail=True, methods=["post"], url_path="convert")
+    def convert(self, request, *args, **kwargs):
+        """``POST /leads/<id>/convert/`` — turn this lead into a real
+        ``Customer`` (see ``services.convert_lead()``).
+
+        ``services.convert_lead()`` has existed and been tested since CP9,
+        but was never exposed over HTTP — so "convert lead" was an action
+        the UI offered and the API had no way to perform. This is that
+        missing endpoint.
+
+        Authorization is the ordinary one for this viewset and is NOT
+        widened here: ``self.get_object()`` runs through
+        ``get_queryset()``'s ``scope_queryset_for_user()``, so a Super
+        Admin may convert any lead, a Manager one belonging to their own
+        scope, and an Employee only their own — anything else is a 404
+        (never a 403), exactly like every other detail route here. That is
+        what makes ONE endpoint correct for all three roles rather than
+        three divergent implementations.
+
+        Converting an already-converted lead is a 400 with a real message,
+        not a second Customer: ``convert_lead()`` refuses it, and the
+        model's own ``converted_customer`` link is the source of truth.
+
+        ATOMICITY (Phase 4 transaction-safety audit). The whole conversion
+        — the new ``Customer``, the ``Lead`` update pointing at it, and the
+        audit stamping below — runs inside ONE transaction, and the lead row
+        is taken under ``select_for_update()`` first.
+
+        A custom ``@action`` is not covered by
+        ``AuditStampedModelMixin.create()``'s transaction (that wraps DRF's
+        ``create``, which this route never goes through) and this project
+        does not enable ``ATOMIC_REQUESTS``, so this endpoint genuinely ran
+        unwrapped. Two things could go wrong:
+
+        - The audit-stamping ``customer.save()`` after ``convert_lead()``
+          failing left a converted lead pointing at a customer with no
+          ``created_by``/``updated_by`` attribution — a half-applied
+          conversion that no retry could repair, since the lead now reads
+          as already converted.
+        - Two concurrent convert requests for the same lead (a double-click,
+          a retried request) could both read ``is_converted == False`` and
+          both create a Customer — two customers for one lead, the second
+          silently overwriting ``converted_customer``, the first orphaned.
+          The row lock makes the second request wait and then correctly
+          answer "This lead has already been converted."
+        """
+        lead = self.get_object()
+
+        # The Customer being created needs an Organization. Accept an
+        # explicit one (validated against the real table) and otherwise
+        # fall back to the deployment's single organization, rather than
+        # forcing every caller to look it up first.
+        organization_id = request.data.get("organization")
+        if organization_id:
+            organization = Organization.objects.filter(pk=organization_id).first()
+            if organization is None:
+                return Response(
+                    {"organization": [f'Invalid pk "{organization_id}" - object does not exist.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            organization = Organization.objects.order_by("id").first()
+            if organization is None:
+                return Response(
+                    {"detail": "No organization exists to create a customer under."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        try:
+            with transaction.atomic():
+                locked_lead = Lead.objects.select_for_update().get(pk=lead.pk)
+                customer = convert_lead(locked_lead, organization)
+                stamp_audit_fields(customer, request.user, creating=True)
+                customer.save()
+        except ValueError as exc:
+            # e.g. "This lead has already been converted." — a real,
+            # actionable message, and the reason a duplicate conversion
+            # cannot create a second customer. Raised inside the atomic
+            # block, so the Customer created moments earlier (if any) is
+            # rolled back rather than orphaned.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(CustomerSerializer(customer).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(request=None, responses={200: LeadSerializer})
     @action(detail=True, methods=["post"], url_path="merge")

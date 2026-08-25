@@ -3,7 +3,9 @@
 ``ShiftConfigurationViewSet`` — Super Admin configures, everyone else
 reads (``ReadOnlyOrSuperAdmin``, same class ``apps.organization`` already
 uses for an identical "everyone reads company policy, only Super Admin
-edits it" shape).
+edits it" shape). Since Phase 5 that boundary is extended by
+``get_permissions()`` to CP7's ``restore``/``hard-delete`` actions, whose
+own ``permission_classes`` would otherwise replace it — see the viewset.
 
 ``AttendanceSessionViewSet`` — read-only list/retrieve (own sessions, or
 a Manager's team's, or Super Admin's company-wide, via the same
@@ -68,6 +70,33 @@ class ShiftConfigurationViewSet(SoftDeleteAuditModelViewSetMixin, viewsets.Model
     serializer_class = ShiftConfigurationSerializer
     ordering = ["-created_at"]
 
+    #: Phase 5: CP7's `restore`/`hard-delete` actions carry their OWN
+    #: `permission_classes=[CanRestoreOrHardDelete]` (an
+    #: `IsManagerOrSuperAdmin` subclass), declared on the shared
+    #: `SoftDeleteModelMixin` in `apps.core.views`. A DRF `@action`'s
+    #: `permission_classes` REPLACES the viewset's, so the Super-Admin-only
+    #: rule above never reached those two routes: a Manager could
+    #: `POST /attendance/shift-config/<id>/hard-delete/` and permanently
+    #: destroy the company's one shift policy, while the ordinary
+    #: PATCH/DELETE verbs on the same object were correctly refused.
+    #:
+    #: `ShiftConfiguration` is SYSTEM-WIDE configuration — one policy that
+    #: applies identically to every user in the deployment (see
+    #: `services.get_active_shift_configuration()`), not per-team
+    #: operational data a Manager administers. Re-adding
+    #: `ReadOnlyOrSuperAdmin` for those two actions restores the intended
+    #: boundary WITHOUT touching `CanRestoreOrHardDelete` itself, which
+    #: stays correctly Manager-level for every owner-shaped CRM record
+    #: elsewhere. Same hole, same mechanism, as `apps.system`'s
+    #: `_SystemConfigModelViewSet.get_permissions()`.
+    destructive_actions = ("restore", "hard_delete")
+
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.action in self.destructive_actions:
+            permissions = permissions + [ReadOnlyOrSuperAdmin()]
+        return permissions
+
     def get_queryset(self):
         base_manager = self.base_active_manager if self.action == "list" else self.base_manager
         return base_manager.all()
@@ -128,17 +157,32 @@ class AttendanceSessionViewSet(
     def _current_open_session(self, employee):
         return AttendanceSession.active_objects.for_employee(employee).open().order_by("-login_at").first()
 
-    @extend_schema(request=None, responses={201: AttendanceSessionSerializer})
+    @extend_schema(request=None, responses={200: CurrentSessionSerializer, 201: CurrentSessionSerializer})
     @action(detail=False, methods=["post"])
     def start(self, request, *args, **kwargs):
         """``POST .../sessions/start/`` — called by the frontend right
         after a successful login (never by the login view itself; auth
         is deliberately untouched — see this app's own module docstring).
+
+        Idempotent, because the frontend calls it on every mount of its
+        attendance hook — i.e. on every page refresh and in every new
+        tab. If a session is already open it is RESUMED, not replaced
+        (see ``services.start_session()``), so a reload can never forge a
+        check-out/check-in pair. 201 means a real new session was opened;
+        200 means an existing one was resumed.
         """
+        existing = self._current_open_session(request.user)
         session = start_session(request.user)
-        stamp_audit_fields(session, request.user, creating=True)
-        session.save()
-        return Response(_serialize_current(session), status=status.HTTP_201_CREATED)
+        if existing is None:
+            # Only a genuinely new session gets creation audit stamps —
+            # re-stamping a resumed one would overwrite its real
+            # created_by/created_at with those of an incidental reload.
+            stamp_audit_fields(session, request.user, creating=True)
+            session.save()
+        return Response(
+            _serialize_current(session),
+            status=status.HTTP_201_CREATED if existing is None else status.HTTP_200_OK,
+        )
 
     @extend_schema(request=None, responses={200: CurrentSessionSerializer})
     @action(detail=False, methods=["post"])

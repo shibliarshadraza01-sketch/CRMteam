@@ -23,6 +23,7 @@ identity; they don't build HTTP responses themselves.
 """
 from django.contrib.auth import authenticate, get_user_model
 from django.core import signing
+from django.db import transaction
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import TokenError
@@ -30,9 +31,132 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .challenge import read_super_admin_challenge
 from .models import UserSession
-from .services import deactivate_session_by_jti
+from .services import assign_user_to_manager, deactivate_session_by_jti, get_manager_for_user
 
 User = get_user_model()
+
+
+#: Roles that may stand at the top of a reporting line.
+MANAGERIAL_ROLES = (User.Role.MANAGER, User.Role.SUPER_ADMIN)
+
+
+def selectable_managers():
+    """The users a Super Admin may legitimately pick as someone's manager.
+
+    ONE definition, read by the API's own choice metadata
+    (``ManagerAssignmentField.get_choices()``) and mirrored by the
+    frontend's picker — so the list a user is shown and the list the
+    server accepts cannot drift apart.
+
+    Deactivated accounts are excluded on purpose: a deactivated manager
+    cannot log in, so pointing a reporting line at one silently orphans
+    the employee.
+    """
+    return User.objects.filter(is_active=True, role__in=MANAGERIAL_ROLES).order_by("email")
+
+
+def validate_manager_assignment(manager, *, role, instance=None):
+    """Every business rule about WHO may manage WHOM, in one place, each
+    with its own actionable message.
+
+    Shared by ``UserCreateSerializer`` and ``UserManagementSerializer`` so
+    creating a user and editing one can never enforce different rules —
+    the create path used to be the looser of the two simply by having
+    fewer checks written out.
+
+    ``role`` is the role the user will HAVE once this request is applied
+    (which the same request may be changing). ``instance`` is the user
+    being edited, or ``None`` on create.
+
+    Raises ``serializers.ValidationError`` keyed on ``manager``; returns
+    ``None`` when the assignment is allowed. ``manager=None`` (clear the
+    assignment) is always allowed.
+    """
+    if manager is None:
+        return
+
+    if instance is not None and manager.pk == instance.pk:
+        raise serializers.ValidationError({"manager": "A user cannot be their own manager."})
+    if role != User.Role.EMPLOYEE:
+        raise serializers.ValidationError(
+            {"manager": "Only an Employee can be assigned to a manager."}
+        )
+    if manager.role not in MANAGERIAL_ROLES:
+        raise serializers.ValidationError(
+            {
+                "manager": (
+                    f"{manager.full_name or manager.email} is not a manager, so this "
+                    "employee cannot report to them."
+                )
+            }
+        )
+    if not manager.is_active:
+        raise serializers.ValidationError(
+            {
+                "manager": (
+                    f"{manager.full_name or manager.email} is deactivated and cannot be "
+                    "assigned as a manager. Reactivate that account first, or choose "
+                    "another manager."
+                )
+            }
+        )
+
+
+class ManagerAssignmentField(serializers.PrimaryKeyRelatedField):
+    """The "assign this employee to a Manager" field.
+
+    Writable by primary key, nullable (``null`` clears the assignment).
+
+    The queryset deliberately spans ALL users rather than only the
+    assignable ones. Narrowing it here looks like stricter validation but
+    is actually worse: ``PrimaryKeyRelatedField`` reports anything outside
+    its queryset as ``Invalid pk "4" - object does not exist``, so
+    picking a real-but-deactivated manager, picking a peer Employee, and
+    picking yourself all produced that one identical, factually FALSE
+    message about a user the admin can plainly see in the list — and the
+    precise per-case checks in ``validate()`` below became unreachable
+    dead code. Resolution stays honest here ("does not exist" means it
+    really does not exist) and every business rule about WHO may be a
+    manager is enforced in ``validate()``, each with its own actionable
+    message.
+
+    Which users are offered as choices is unchanged — see
+    ``selectable_managers()``, which the browsable API / OPTIONS metadata
+    and the frontend picker both read.
+
+    Not a model field: reads resolve through
+    ``services.get_manager_for_user()`` and writes through
+    ``services.assign_user_to_manager()``, both of which use the existing
+    ``apps.organization`` Team/Membership hierarchy that RBAC scoping
+    already enforces. See those functions for why no parallel
+    ``User.manager`` FK was introduced.
+    """
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("required", False)
+        kwargs.setdefault("allow_null", True)
+        kwargs.setdefault("queryset", User.objects.none())
+        super().__init__(**kwargs)
+
+    def get_queryset(self):
+        # Every user, so an unknown pk is the ONLY thing reported as
+        # "does not exist". See the class docstring.
+        return User.objects.all().order_by("email")
+
+    def get_choices(self, cutoff=None):
+        # Browsable-API / OPTIONS metadata still advertises only the users
+        # who may actually be picked, matching the frontend's picker.
+        queryset = selectable_managers()
+        if cutoff is not None:
+            queryset = queryset[:cutoff]
+        return {
+            str(self.to_representation(item)): self.display_value(item) for item in queryset
+        }
+
+    def get_attribute(self, instance):
+        # Return the User instance itself; to_representation turns it into
+        # a pk. Returning None here yields a null `manager` in the payload.
+        return get_manager_for_user(instance)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -61,14 +185,16 @@ class UserManagementSerializer(serializers.ModelSerializer):
     """
 
     full_name = serializers.CharField(read_only=True)
+    manager = ManagerAssignmentField()
+    manager_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             "id", "email", "username", "first_name", "last_name", "full_name",
-            "phone", "department", "role", "is_active", "date_joined",
+            "phone", "manager", "manager_name", "role", "is_active", "date_joined",
         ]
-        read_only_fields = ["id", "full_name"]
+        read_only_fields = ["id", "full_name", "manager_name"]
         extra_kwargs = {
             # A blank submission means "no username", stored as NULL — see
             # ``User.save()``. Without allow_null/required=False a PATCH that
@@ -79,6 +205,50 @@ class UserManagementSerializer(serializers.ModelSerializer):
     def validate_username(self, value):
         return value or None
 
+    def get_manager_name(self, obj) -> str:
+        # Return type annotated so drf-spectacular can resolve the schema
+        # without falling back to a guess (apps/*/tests/test_openapi.py
+        # asserts the generated schema produces NO warnings).
+        manager = get_manager_for_user(obj)
+        return (manager.full_name or manager.email) if manager is not None else ""
+
+    def validate(self, attrs):
+        # Same reporting-line invariant as UserCreateSerializer — literally
+        # the same function — evaluated against the role this PATCH will
+        # leave the user with (which may itself be changing in this same
+        # request).
+        validate_manager_assignment(
+            attrs.get("manager"),
+            role=attrs.get("role", self.instance.role if self.instance else User.Role.EMPLOYEE),
+            instance=self.instance,
+        )
+        return attrs
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        # `manager` is not a model field — it is persisted through the
+        # apps.organization Membership hierarchy, so it must be popped
+        # before ModelSerializer tries to setattr it onto the User.
+        # `None` is a meaningful value here (clear the assignment), so
+        # presence is tested with a sentinel rather than truthiness.
+        #
+        # Atomic (Phase 4 transaction-safety audit) because this is TWO
+        # writes to two different tables: the User's own columns, then the
+        # Membership row behind `manager`. A failure in the second half
+        # previously left the profile edit applied (a changed role, email,
+        # or is_active) with the reporting-line change silently dropped,
+        # while the caller saw an error and assumed nothing was saved.
+        # Role and manager are especially dangerous to split: `role` is
+        # what `validate_manager_assignment()` checks the manager against,
+        # so a half-applied edit can persist exactly the combination
+        # validation exists to reject.
+        sentinel = object()
+        manager = validated_data.pop("manager", sentinel)
+        user = super().update(instance, validated_data)
+        if manager is not sentinel:
+            assign_user_to_manager(user, manager)
+        return user
+
 
 class UserCreateSerializer(serializers.ModelSerializer):
     """Write-only ``password`` — create only, via
@@ -88,17 +258,20 @@ class UserCreateSerializer(serializers.ModelSerializer):
     Staff-management pass: carries the full "User/Staff Management"
     creation form — Full Name (``first_name``/``last_name``), Username
     (a PROFILE field only; authentication stays email+password),
-    Email, Phone, Role, Department, Joining date (``date_joined``),
+    Email, Phone, Role, Manager, Joining date (``date_joined``),
     Status (``is_active``), Credentials (``password``).
+
+    ``department`` was removed — see ``apps/accounts/models.py``.
     """
 
     password = serializers.CharField(write_only=True, trim_whitespace=False, min_length=8)
+    manager = ManagerAssignmentField()
 
     class Meta:
         model = User
         fields = [
             "id", "email", "password", "username", "first_name", "last_name",
-            "phone", "department", "role", "date_joined", "is_active",
+            "phone", "manager", "role", "date_joined", "is_active",
         ]
         read_only_fields = ["id"]
         extra_kwargs = {
@@ -109,6 +282,16 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
     def validate_username(self, value):
         return value or None
+
+    def validate(self, attrs):
+        # A Manager or Super Admin does not report to a Manager through the
+        # employee->team hierarchy; silently accepting one would create a
+        # reporting line the rest of the app does not model. Shared with
+        # UserManagementSerializer so create and edit enforce identically.
+        validate_manager_assignment(
+            attrs.get("manager"), role=attrs.get("role", User.Role.EMPLOYEE)
+        )
+        return attrs
 
 
 class LoginSerializer(serializers.Serializer):

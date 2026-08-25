@@ -49,10 +49,39 @@ def test_system_config_write_permission_employee_cannot_write():
     assert perm.has_permission(DummyRequest(employee, "POST"), DummyView()) is False
 
 
-def test_system_config_write_permission_manager_can_write():
+def test_system_config_write_permission_manager_can_read():
+    """Phase 5 tightened WRITES only — Manager read access is preserved."""
     perm = SystemConfigWritePermission()
     manager = _user(User.Role.MANAGER, "m2@example.com")
-    assert perm.has_permission(DummyRequest(manager, "POST"), DummyView()) is True
+    assert perm.has_permission(DummyRequest(manager, "GET"), DummyView()) is True
+
+
+def test_system_config_write_permission_manager_cannot_write():
+    """Phase 5: `SystemSetting`/`FeatureFlag` are system-wide config, so
+    the write boundary is Super Admin — this used to be `True` under the
+    old `ReadOnlyOrSuperAdmin | IsManagerOrSuperAdmin` composition, which
+    is the bug this change fixes.
+    """
+    perm = SystemConfigWritePermission()
+    manager = _user(User.Role.MANAGER, "m2@example.com")
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        assert perm.has_permission(DummyRequest(manager, method), DummyView()) is False
+
+
+def test_system_config_write_permission_super_admin_can_write():
+    perm = SystemConfigWritePermission()
+    super_admin = _user(User.Role.SUPER_ADMIN, "sa@example.com")
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        assert perm.has_permission(DummyRequest(super_admin, method), DummyView()) is True
+
+
+def test_system_config_write_permission_is_the_shared_read_only_class():
+    """Deliberately CP6's `ReadOnlyOrSuperAdmin` itself, not a new class —
+    the same object `apps.organization.OrganizationWritePermission` and
+    `apps.communications.NotificationWritePermission` already alias for
+    company-wide policy data.
+    """
+    assert SystemConfigWritePermission is accounts_permissions.ReadOnlyOrSuperAdmin
 
 
 def test_system_config_write_permission_anonymous_denied():

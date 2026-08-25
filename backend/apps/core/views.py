@@ -7,6 +7,7 @@ with a concrete ``queryset``/``serializer_class`` so "DELETE means soft
 delete, not a real SQL DELETE" and "who created/last touched this" are
 handled consistently everywhere, rather than re-derived per app.
 """
+from django.db import transaction
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,7 +25,48 @@ class AuditStampedModelMixin:
     it overrides ``perform_create``/``perform_update``, not
     ``create``/``update``, so it composes with DRF's own mixins rather than
     replacing them.
+
+    ATOMICITY. ``create()``/``update()`` below wrap the WHOLE write
+    handler — DRF's own method, this mixin's ``perform_create``, and any
+    subclass override of it — in a single transaction, so a request that
+    is ultimately refused leaves no row behind.
+
+    That is not theoretical tidiness. Nearly every owner-having viewset in
+    this project (Lead, Customer, Opportunity, Quote, Invoice, Task,
+    Event, SavedReport, Dashboard, Workflow, Integration, BackgroundJob)
+    validates ownership in a post-save step:
+
+        super().perform_create(serializer)                      # writes
+        resolve_owner_for_create(self.request.user, obj.owner)  # may RAISE
+
+    ``resolve_owner_for_create()`` raises ``OwnerAssignmentNotAllowed``
+    (a 403) when a caller tries to attribute a new record to somebody
+    else. Without a transaction around the pair, the row is already
+    committed by the time the check fires: the API correctly answers 403
+    while the database quietly keeps a record the requester was told they
+    could not create — and, worse, keeps it attributed to the user they
+    named. An Employee could POST a Task with ``owner: <super-admin-id>``,
+    receive "You are not allowed to assign this record to that owner",
+    and still have planted a row that shows up in the Super Admin's own
+    scoped lists. (Verified against the running dev backend during the
+    Phase 3 audit: HTTP 403, and the row present with the forged owner.)
+
+    Fixing it here rather than in each of the twelve viewsets is
+    deliberate — the flaw is in the shared save-then-validate SHAPE, so a
+    thirteenth viewset written to the same pattern tomorrow is covered
+    too, and no future author has to remember a rule. The individual
+    ``perform_create`` overrides are left as they are: they read clearly,
+    and with the transaction in place their ordering is no longer a
+    correctness problem.
     """
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         user = getattr(self.request, "user", None)
