@@ -3794,7 +3794,7 @@ function SuperAdminPage({
         />
 
         <div className="flex">
-          <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-rose-900 py-4 lg:flex">
+          <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-blue-900 py-4 lg:flex">
             <SidebarRail activeKey={activeKey} onSelect={selectModule} modules={visibleModules} />
           </aside>
 
@@ -4207,7 +4207,7 @@ function SuperAdminPage({
 
 function Brand({ role }: { role: Role }) {
   return (
-    <div className="mb-6 flex items-center gap-3 rounded-xl bg-rose-600 p-3 text-white shadow-soft">
+    <div className="mb-6 flex items-center gap-3 rounded-xl bg-blue-600 p-3 text-white shadow-soft">
       <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-white/25">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
@@ -4498,7 +4498,7 @@ function SidebarRail({
             aria-label={module.title}
             className={cn(
               "flex size-12 items-center justify-center rounded-xl transition",
-              active ? "bg-white text-rose-700 shadow-soft" : "text-rose-100/80 hover:bg-white/10 hover:text-white"
+              active ? "bg-white text-blue-700 shadow-soft" : "text-blue-100/80 hover:bg-white/10 hover:text-white"
             )}
           >
             <Icon className="size-5" />
@@ -4529,10 +4529,10 @@ function ModuleNav({
             onClick={() => onSelect(module.key)}
             className={cn(
               "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition",
-              active ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950 dark:text-rose-100 dark:ring-rose-900" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              active ? "bg-blue-50 text-blue-700 ring-1 ring-blue-100 dark:bg-blue-950 dark:text-blue-100 dark:ring-blue-900" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <span className={cn("flex size-8 items-center justify-center rounded-lg", active ? "bg-rose-600 text-white" : "bg-muted text-muted-foreground")}>
+            <span className={cn("flex size-8 items-center justify-center rounded-lg", active ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground")}>
               <Icon className="size-4" />
             </span>
             <span className="min-w-0 flex-1 truncate">
@@ -4697,7 +4697,13 @@ function StaffProfileModal({
                       permanent "Not assigned". The real reporting line is
                       the manager below, resolved from the organization
                       hierarchy the backend actually scopes access by. */}
-                  <DetailRow title={person.manager?.full_name || "Not assigned"} subtitle="Manager" />
+                  {/* A Manager and Super Admin report to no one in this
+                      hierarchy (only an Employee has a manager) — showing
+                      "Manager: Not assigned" on their own profile would be
+                      a structurally meaningless field, not a true blank. */}
+                  {person.role === "EMPLOYEE" ? (
+                    <DetailRow title={person.manager?.full_name || "Not assigned"} subtitle="Manager" />
+                  ) : null}
                   <DetailRow title={formatProfileDate(person.date_joined)} subtitle="Joined" />
                   <DetailRow
                     title={person.is_active ? "Active" : "Inactive"}
@@ -9821,7 +9827,17 @@ function RecordModal({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  const visibleColumns = formColumnsFor(module, mode);
+  // A Manager selector only makes sense for an Employee — a Manager never
+  // reports to another Manager and a Super Admin reports to no one. This
+  // reads the CURRENT Role value on every render (not a snapshot from when
+  // the modal opened), so picking a different role in the dropdown removes
+  // the field from the DOM immediately, in both create and edit, without a
+  // page reload. (Manager Name is the read-only view-mode counterpart of
+  // the same relationship — see VIEW_LABEL_SUBSTITUTIONS.)
+  const visibleColumns = formColumnsFor(module, mode).filter((column) => {
+    if (module.key !== "users" || (column !== "Manager" && column !== "Manager Name")) return true;
+    return (formData.Role ?? "") === "Employee";
+  });
   const missingFields = visibleColumns.filter(
     (column) => isFieldRequired(module, column, mode) && !(formData[column] ?? "").trim()
   );
@@ -9929,6 +9945,15 @@ function RecordModal({
                     onChange={(event) => {
                       setTouched((current) => ({ ...current, [column]: true }));
                       onChange(column, event.target.value);
+                      // Leaving Employee removes the Manager field from the
+                      // DOM (see visibleColumns above); also drop its stale
+                      // value from form state so it can never resurface —
+                      // either in the payload (managerFieldFor already
+                      // guards that server-side) or if the role is switched
+                      // back to Employee later in this same session.
+                      if (module.key === "users" && column === "Role" && event.target.value !== "Employee") {
+                        onChange("Manager", "");
+                      }
                     }}
                     onBlur={() => setTouched((current) => ({ ...current, [column]: true }))}
                     className={fieldClass}

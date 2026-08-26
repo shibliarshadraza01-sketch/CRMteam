@@ -498,6 +498,64 @@ def test_a_user_cannot_be_their_own_manager(api_client, super_admin, manager):
     assert "manager" in response.data
 
 
+def test_a_manager_cannot_be_assigned_to_another_manager(api_client, super_admin, manager, django_user_model):
+    """A Manager never reports to another Manager. Distinct from
+    ``test_a_user_cannot_be_their_own_manager`` above: this exercises the
+    role check (``role != EMPLOYEE``), not the self-assignment check — the
+    target manager here is a genuinely different user.
+    """
+    other_manager = django_user_model.objects.create_user(
+        email="other-manager@example.com", password="manager-pass-123", role=django_user_model.Role.MANAGER
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(f"{USERS_URL}{manager.pk}/", {"manager": other_manager.pk}, format="json")
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+
+
+def test_a_super_admin_cannot_be_assigned_a_manager(api_client, super_admin, manager, django_user_model):
+    """Super Admin reports to no one."""
+    other_super_admin = django_user_model.objects.create_user(
+        email="other-admin@example.com", password="admin-pass-123", role=django_user_model.Role.SUPER_ADMIN
+    )
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.patch(
+        f"{USERS_URL}{other_super_admin.pk}/", {"manager": manager.pk}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+
+
+def test_assigning_a_manager_role_with_a_manager_at_creation_is_rejected(
+    api_client, super_admin, manager, django_user_model
+):
+    """Same rule, but on the CREATE path — the manager field arriving
+    alongside ``role: MANAGER`` in a single POST, rather than an edit.
+    """
+    api_client.force_authenticate(super_admin)
+
+    response = api_client.post(
+        USERS_URL,
+        {
+            "email": "new-manager@example.com",
+            "password": "a-strong-password",
+            "first_name": "New",
+            "last_name": "Manager",
+            "role": django_user_model.Role.MANAGER,
+            "manager": manager.pk,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert "manager" in response.data
+    assert not django_user_model.objects.filter(email="new-manager@example.com").exists()
+
+
 def test_an_employee_cannot_assign_a_manager(api_client, employee, manager):
     """RBAC is not weakened to make the feature work."""
     api_client.force_authenticate(employee)
