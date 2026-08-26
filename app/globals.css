@@ -9,15 +9,17 @@
   --card-foreground: 200 50% 10%;
   --muted: 190 30% 95%;
   --muted-foreground: 199 18% 44%;
-  --accent: 173 80% 30%;
+  --accent: 355 78% 46%;
   --accent-foreground: 0 0% 100%;
-  --primary: 173 80% 30%;
+  --primary: 355 78% 46%;
   --primary-foreground: 0 0% 100%;
+  --secondary: 217 70% 40%;
+  --secondary-foreground: 0 0% 100%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
   --border: 199 25% 90%;
   --input: 199 25% 90%;
-  --ring: 173 80% 30%;
+  --ring: 355 78% 46%;
   --radius: 0.875rem;
 }
 
@@ -28,15 +30,17 @@
   --card-foreground: 190 40% 96%;
   --muted: 199 33% 15%;
   --muted-foreground: 195 20% 70%;
-  --accent: 173 70% 40%;
+  --accent: 355 72% 58%;
   --accent-foreground: 0 0% 100%;
-  --primary: 173 70% 40%;
+  --primary: 355 72% 58%;
   --primary-foreground: 0 0% 100%;
+  --secondary: 217 65% 58%;
+  --secondary-foreground: 0 0% 100%;
   --destructive: 0 63% 45%;
   --destructive-foreground: 0 0% 98%;
   --border: 199 33% 18%;
   --input: 199 33% 18%;
-  --ring: 173 70% 40%;
+  --ring: 355 72% 58%;
 }
 
 * {
@@ -50,7 +54,7 @@ body {
 }
 
 ::selection {
-  background: rgba(13, 148, 136, 0.18);
+  background: rgba(209, 26, 41, 0.18);
 }
 
 /* Spec 23 (dark-mode audit): the browser-drawn parts of date/time inputs
@@ -76,7 +80,7 @@ body {
 
 .glass-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(13, 148, 136, 0.4) transparent;
+  scrollbar-color: rgba(209, 26, 41, 0.4) transparent;
 }
 
 .glass-scrollbar::-webkit-scrollbar {
@@ -85,6 +89,6 @@ body {
 }
 
 .glass-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(13, 148, 136, 0.4);
+  background: rgba(209, 26, 41, 0.4);
   border-radius: 999px;
 }

@@ -180,7 +180,7 @@ const modules: ModuleConfig[] = [
     title: "Reports & Dashboard",
     subtitle: "Monitor full company performance, revenue, and lead conversion rates.",
     icon: FileSpreadsheet,
-    accent: "from-teal-700 to-emerald-500",
+    accent: "from-rose-700 to-blue-500",
     columns: ["Report", "Type", "Description", "Status"],
     rows: [],
     filters: ["All reports", "Productivity", "Lead Conversion", "Sales Pipeline", "Customer Activity", "Custom"],
@@ -192,7 +192,7 @@ const modules: ModuleConfig[] = [
     title: "Team Management",
     subtitle: "View your team, assign or reassign leads, and open a team member to see their performance.",
     icon: Users,
-    accent: "from-teal-700 to-indigo-500",
+    accent: "from-rose-700 to-indigo-500",
     columns: ["Name", "Role", "Status"],
     rows: [],
     filters: ["All employees", "Active", "Inactive"],
@@ -213,7 +213,7 @@ const modules: ModuleConfig[] = [
     title: "My Dashboard",
     subtitle: "Track your assigned leads, customers, tasks, and personal performance.",
     icon: Activity,
-    accent: "from-teal-700 to-sky-500",
+    accent: "from-rose-700 to-sky-500",
     columns: ["Item", "Type", "Status", "Updated"],
     rows: [],
     filters: ["All items", "Leads", "Customers", "Tasks", "Follow-ups"],
@@ -225,7 +225,7 @@ const modules: ModuleConfig[] = [
     title: "Smart Calendar",
     subtitle: "Month, week, and day views with reminders, notes, and a full activity timeline for every date.",
     icon: CalendarDays,
-    accent: "from-teal-700 to-violet-500",
+    accent: "from-rose-700 to-violet-500",
     columns: ["Event", "Type", "Date", "Priority"],
     rows: [],
     filters: ["All events"],
@@ -237,7 +237,7 @@ const modules: ModuleConfig[] = [
     title: "Attendance & Working Time",
     subtitle: "Logged-in and logged-out times, and the day's time logs.",
     icon: AlarmClock,
-    accent: "from-teal-700 to-sky-500",
+    accent: "from-rose-700 to-sky-500",
     columns: ["Employee", "Logged In", "Logged Out", "Status"],
     rows: [],
     filters: ["All records"],
@@ -249,7 +249,7 @@ const modules: ModuleConfig[] = [
     title: "User Management",
     subtitle: "Create, invite, activate, deactivate, assign roles, and set user permissions.",
     icon: UserCog,
-    accent: "from-teal-700 to-rose-500",
+    accent: "from-rose-700 to-fuchsia-500",
     // "Manager" holds the assigned manager's numeric id and is a
     // form-only entity picker; "Manager Name" is the table-only display
     // of the same relationship (the backend returns both `manager` and
@@ -268,7 +268,7 @@ const modules: ModuleConfig[] = [
     title: "Leads",
     subtitle: "View every lead, assign ownership, import files, capture Meta leads, update status, and merge duplicates.",
     icon: Sparkles,
-    accent: "from-teal-700 to-orange-500",
+    accent: "from-rose-700 to-orange-500",
     columns: ["Lead", "Source", "Owner", "Status"],
     rows: [],
     filters: [
@@ -298,7 +298,7 @@ const modules: ModuleConfig[] = [
     title: "Converted Leads",
     subtitle: "View every converted lead, and review each one's complete profile with interaction history.",
     icon: Users,
-    accent: "from-teal-700 to-pink-500",
+    accent: "from-rose-700 to-pink-500",
     columns: ["Customer", "Industry", "Owner", "Status"],
     rows: [],
     filters: ["All customers", "Prospect", "Active", "Inactive", "Churned"],
@@ -321,7 +321,7 @@ const modules: ModuleConfig[] = [
     title: "Payments",
     subtitle: "See all customer payments, add or edit payments, track partials, set reminders, and review company revenue.",
     icon: CircleDollarSign,
-    accent: "from-teal-700 to-amber-500",
+    accent: "from-rose-700 to-amber-500",
     columns: ["Invoice", "Customer ID", "Total", "Paid", "Balance", "Status"],
     rows: [],
     filters: ["All payments", "Draft", "Sent", "Partial", "Paid", "Cancelled"],
@@ -335,7 +335,7 @@ const modules: ModuleConfig[] = [
     title: "Communication",
     subtitle: "Send email, inspect call logs, and open a unified communication timeline.",
     icon: MessageCircle,
-    accent: "from-teal-700 to-cyan-500",
+    accent: "from-rose-700 to-cyan-500",
     columns: ["Recipient", "Subject", "Message", "Status"],
     rows: [],
     filters: ["All channels", "Queued", "Sent", "Failed"],
@@ -349,7 +349,7 @@ const modules: ModuleConfig[] = [
     title: "Tasks & Follow-ups",
     subtitle: "Assign tasks to any employee or manager, view the full team's follow-up calendar, and set reminders.",
     icon: ListChecks,
-    accent: "from-teal-700 to-violet-500",
+    accent: "from-rose-700 to-violet-500",
     columns: ["Task", "Priority", "Status", "Due"],
     rows: [],
     filters: ["All tasks", "Pending", "In Progress", "Completed", "Cancelled"],
@@ -365,7 +365,7 @@ const modules: ModuleConfig[] = [
     title: "Activity Log",
     subtitle: "A protected record of who did what, and when.",
     icon: ShieldCheck,
-    accent: "from-teal-700 to-slate-600",
+    accent: "from-rose-700 to-slate-600",
     columns: ["Actor", "Action", "Description", "Time", "IP"],
     rows: [],
     filters: ["All actions", "Created", "Updated", "Removed", "Signed in", "Other"],
@@ -379,7 +379,7 @@ const modules: ModuleConfig[] = [
     title: "Settings / Configuration",
     subtitle: "Configure organization settings, Email, Calling integrations, and system-wide rules.",
     icon: Settings,
-    accent: "from-teal-700 to-zinc-600",
+    accent: "from-rose-700 to-zinc-600",
     columns: ["Setting", "Value", "Description", "Status"],
     rows: [],
     filters: ["All settings", "Active", "Inactive"],
@@ -609,7 +609,7 @@ function createInitialNotes(): CalendarNote[] {
 // ring as well as a dark background/text. Without `dark:ring-*` the light
 // 200-level ring stayed on the dark badge, which read as a bright halo.
 const badgeStyles: Record<string, string> = {
-  Active: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Active: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   Invited: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
   Inactive: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   Hot: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
@@ -617,29 +617,29 @@ const badgeStyles: Record<string, string> = {
   Cold: "bg-sky-50 text-sky-700 ring-sky-200 dark:bg-sky-950 dark:text-sky-200 dark:ring-sky-900",
   Lost: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   New: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
-  Converted: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Converted: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   Prospect: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   Churned: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   Draft: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   Sent: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
-  Paid: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Paid: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   Cancelled: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   Queued: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
   Failed: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
   Pending: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
   "In Progress": "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
-  Completed: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  Completed: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   High: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
   Medium: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
   Partial: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:ring-amber-900",
   Open: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
-  Done: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
-  Connected: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
-  Configured: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900"
+  Done: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Connected: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  Configured: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900"
 };
 
-const CHART_PALETTE = ["#0F766E", "#14B8A6", "#F97316", "#0EA5E9", "#8B5CF6", "#F59E0B"];
+const CHART_PALETTE = ["#D11A29", "#1F55AD", "#F97316", "#0EA5E9", "#8B5CF6", "#F59E0B"];
 
 const REMINDER_PRIORITY_STYLES: Record<ReminderPriority, string> = {
   Low: "bg-zinc-100 text-zinc-700 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:ring-zinc-700",
@@ -1716,7 +1716,7 @@ const ATTENDANCE_ACTIVITY_THROTTLE_MS = 3_000;
 const ATTENDANCE_DEFAULT_IDLE_TIMEOUT_MINUTES = 5;
 
 const ATTENDANCE_STATUS_META: Record<CurrentAttendance["display_state"], { label: string; dot: string; text: string }> = {
-  WORKING: { label: "Working", dot: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-400" },
+  WORKING: { label: "Working", dot: "bg-blue-500", text: "text-blue-600 dark:text-blue-400" },
   ON_BREAK: { label: "On Break", dot: "bg-amber-500", text: "text-amber-600 dark:text-amber-400" },
   IDLE: { label: "Idle", dot: "bg-orange-500", text: "text-orange-600 dark:text-orange-400" },
   OFFLINE: { label: "Offline", dot: "bg-red-500", text: "text-red-600 dark:text-red-400" }
@@ -2026,7 +2026,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
         <div className="w-full max-w-md">
           <div className="mb-6 flex flex-col items-center text-center">
             <div className="mb-4 flex size-16 items-center justify-center overflow-hidden rounded-full bg-white shadow-soft ring-1 ring-border">
-              <ShieldCheck className="size-8 text-teal-600" />
+              <ShieldCheck className="size-8 text-rose-600" />
             </div>
             <h1 className="text-2xl font-bold">Super Admin verification</h1>
             <p className="mt-1 text-sm text-muted-foreground">Enter your secondary access code to continue</p>
@@ -2042,7 +2042,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
                     onChange={(event) => setAccessCode(event.target.value)}
                     placeholder="Enter your access code"
                     autoComplete="one-time-code"
-                    className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                    className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                   />
                 </div>
               </label>
@@ -2052,7 +2052,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
               <button
                 type="submit"
                 disabled={submitting}
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-rose-600 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {submitting ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
                 Verify
@@ -2088,7 +2088,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
                   onChange={(event) => setUsername(event.target.value)}
                   placeholder="Enter Username"
                   autoComplete="username"
-                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                 />
               </div>
             </label>
@@ -2103,7 +2103,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
                   onChange={(event) => setPassword(event.target.value)}
                   placeholder="Enter Password"
                   autoComplete="current-password"
-                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-10 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                  className="h-11 w-full rounded-lg border bg-background pl-9 pr-10 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                 />
                 <button
                   type="button"
@@ -2126,7 +2126,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(event) => setRememberMe(event.target.checked)}
-                  className="size-4 rounded border-input accent-teal-600"
+                  className="size-4 rounded border-input accent-rose-600"
                 />
                 Remember me
               </label>
@@ -2135,7 +2135,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (user: BackendUser) => void }) 
             <button
               type="submit"
               disabled={submitting}
-              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-600 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
+              className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-rose-600 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {submitting ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
               Login
@@ -3794,7 +3794,7 @@ function SuperAdminPage({
         />
 
         <div className="flex">
-          <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-teal-900 py-4 lg:flex">
+          <aside className="sticky top-16 hidden h-[calc(100vh-4rem)] w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-rose-900 py-4 lg:flex">
             <SidebarRail activeKey={activeKey} onSelect={selectModule} modules={visibleModules} />
           </aside>
 
@@ -3825,7 +3825,7 @@ function SuperAdminPage({
             <div className="border-b bg-background/60 px-4 py-4 xl:px-8">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-600 dark:text-teal-300">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-600 dark:text-rose-300">
                     Qualify Learn | {ROLE_LABEL[role]}
                   </p>
                   <h1 className="truncate text-xl font-bold sm:text-2xl">Complete CRM Control Panel</h1>
@@ -3836,7 +3836,7 @@ function SuperAdminPage({
                     onClick={refreshCurrentModule}
                     aria-label="Refresh data"
                   >
-                    <RefreshCw className="size-4 text-teal-600" />
+                    <RefreshCw className="size-4 text-rose-600" />
                   </button>
                 </div>
               </div>
@@ -3872,7 +3872,7 @@ function SuperAdminPage({
                               onClick={() => handleModuleAction(action)}
                               className={cn(
                                 "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm transition hover:-translate-y-0.5",
-                                action.primary ? "bg-white text-teal-700" : "bg-white/14 text-white ring-1 ring-white/25"
+                                action.primary ? "bg-white text-rose-700" : "bg-white/14 text-white ring-1 ring-white/25"
                               )}
                             >
                               <ActionIcon className="size-4" />
@@ -3895,7 +3895,7 @@ function SuperAdminPage({
                         <p className="text-sm text-muted-foreground">{stat.label}</p>
                         <div className="mt-2 flex items-end justify-between gap-3">
                           <strong className="text-2xl font-bold">{stat.value}</strong>
-                          <span className="rounded-full bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                          <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                             {stat.change}
                           </span>
                         </div>
@@ -4005,13 +4005,13 @@ function SuperAdminPage({
                                 value={query}
                                 onChange={(event) => setQuery(event.target.value)}
                                 placeholder="Search records..."
-                                className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                                className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                               />
                             </label>
                             <select
                               value={filter}
                               onChange={(event) => setFilter(event.target.value)}
-                              className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+                              className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-rose-600/20 transition focus:ring-4"
                             >
                               {activeModule.filters.map((item) => (
                                 <option key={item}>{item}</option>
@@ -4057,7 +4057,7 @@ function SuperAdminPage({
                           >
                             <ChevronLeft className="size-4" />
                           </button>
-                          <span className="rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">{page}</span>
+                          <span className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">{page}</span>
                           <span className="text-sm text-muted-foreground">of {totalPages}</span>
                           <button
                             onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
@@ -4147,7 +4147,7 @@ function SuperAdminPage({
                       a button — the backend refuses a second conversion,
                       so offering one could only produce an error. */}
                   {editingRecord.Status === "Converted" ? (
-                    <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200">
+                    <div className="rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm font-semibold text-blue-800 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-200">
                       This lead has been converted to a customer.
                     </div>
                   ) : (
@@ -4161,7 +4161,7 @@ function SuperAdminPage({
                           setEditingRecord(null);
                           convertLeadRecord(editingRecord);
                         }}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700"
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700"
                       >
                         <UserCheck className="size-4" />
                         Convert Lead
@@ -4207,7 +4207,7 @@ function SuperAdminPage({
 
 function Brand({ role }: { role: Role }) {
   return (
-    <div className="mb-6 flex items-center gap-3 rounded-xl bg-teal-600 p-3 text-white shadow-soft">
+    <div className="mb-6 flex items-center gap-3 rounded-xl bg-rose-600 p-3 text-white shadow-soft">
       <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-white/25">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/qualify-learn-logo.jpeg" alt="Qualify Learn" className="size-full object-cover" />
@@ -4280,7 +4280,7 @@ function TopNavbar({
           onClick={onNewClick}
           className="hidden shrink-0 items-center gap-1.5 rounded-full border bg-background px-3 py-1.5 text-sm font-semibold shadow-sm transition hover:bg-muted sm:inline-flex"
         >
-          <Plus className="size-4 text-teal-600" />
+          <Plus className="size-4 text-rose-600" />
           New
         </button>
       ) : null}
@@ -4296,7 +4296,7 @@ function TopNavbar({
             }}
             onFocus={() => setSearchOpen(true)}
             placeholder="Search for anything..."
-            className="h-10 w-full rounded-full border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+            className="h-10 w-full rounded-full border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
           />
         </label>
         {searchOpen && searchValue.trim() ? (
@@ -4317,7 +4317,7 @@ function TopNavbar({
                       className="flex w-full items-center justify-between gap-3 border-b px-4 py-3 text-left text-sm last:border-b-0 hover:bg-muted"
                     >
                       <span className="truncate font-semibold">{result.label}</span>
-                      <span className="shrink-0 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                         {result.moduleTitle}
                       </span>
                     </button>
@@ -4365,7 +4365,7 @@ function TopNavbar({
                                   if (item.row) onViewActivity(item.moduleKey, item.row);
                                   setNotifOpen(false);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                               >
                                 <Eye className="size-3" />
                                 View
@@ -4375,7 +4375,7 @@ function TopNavbar({
                                   if (item.row) onEditActivity(item.moduleKey, item.row);
                                   setNotifOpen(false);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                                className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                               >
                                 <Pencil className="size-3" />
                                 Edit
@@ -4398,7 +4398,7 @@ function TopNavbar({
                                 onCreateForModule(item.moduleKey);
                                 setNotifOpen(false);
                               }}
-                              className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-teal-600 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950"
+                              className="ml-auto inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950"
                             >
                               <Plus className="size-3" />
                               New
@@ -4425,7 +4425,7 @@ function TopNavbar({
         <div className="relative">
           <button
             onClick={() => setProfileOpen((value) => !value)}
-            className="flex size-9 items-center justify-center rounded-full bg-teal-700 text-xs font-bold text-white"
+            className="flex size-9 items-center justify-center rounded-full bg-rose-700 text-xs font-bold text-white"
             aria-label="Profile menu"
             title={ROLE_LABEL[role]}
           >
@@ -4498,7 +4498,7 @@ function SidebarRail({
             aria-label={module.title}
             className={cn(
               "flex size-12 items-center justify-center rounded-xl transition",
-              active ? "bg-white text-teal-700 shadow-soft" : "text-teal-100/80 hover:bg-white/10 hover:text-white"
+              active ? "bg-white text-rose-700 shadow-soft" : "text-rose-100/80 hover:bg-white/10 hover:text-white"
             )}
           >
             <Icon className="size-5" />
@@ -4529,10 +4529,10 @@ function ModuleNav({
             onClick={() => onSelect(module.key)}
             className={cn(
               "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition",
-              active ? "bg-teal-50 text-teal-700 ring-1 ring-teal-100 dark:bg-teal-950 dark:text-teal-100 dark:ring-teal-900" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              active ? "bg-rose-50 text-rose-700 ring-1 ring-rose-100 dark:bg-rose-950 dark:text-rose-100 dark:ring-rose-900" : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <span className={cn("flex size-8 items-center justify-center rounded-lg", active ? "bg-teal-600 text-white" : "bg-muted text-muted-foreground")}>
+            <span className={cn("flex size-8 items-center justify-center rounded-lg", active ? "bg-rose-600 text-white" : "bg-muted text-muted-foreground")}>
               <Icon className="size-4" />
             </span>
             <span className="min-w-0 flex-1 truncate">
@@ -4596,7 +4596,7 @@ function AttendanceTimeLogList({ logs }: { logs: AttendanceTimeLog[] }) {
     <ol className="space-y-1.5">
       {visibleLogs.map((log, index) => (
         <li key={`${log.type}-${log.at}-${index}`} className="flex items-center gap-3 rounded-lg border bg-background px-3 py-2">
-          <span className="size-2 shrink-0 rounded-full bg-teal-600" />
+          <span className="size-2 shrink-0 rounded-full bg-rose-600" />
           <span className="flex-1 text-sm font-semibold">{TIME_LOG_LABELS[log.type] ?? log.type}</span>
           <span className="shrink-0 text-xs text-muted-foreground">{formatProfileTime(log.at)}</span>
         </li>
@@ -4661,7 +4661,7 @@ function StaffProfileModal({
       >
         <div className="flex items-start justify-between gap-4 border-b p-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-sm font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
               {initialsFor(person?.full_name || displayName)}
             </div>
             <div className="min-w-0">
@@ -4920,7 +4920,7 @@ function MyAttendanceRecord() {
             <button
               onClick={() => runControl(attendanceTracking.fullLogout)}
               disabled={offline || busy}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}
               Log Out
@@ -5043,7 +5043,7 @@ function AccountSecurityCard({ role }: { role: Role }) {
         </div>
       ) : null}
       {success ? (
-        <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-200">
+        <div className="mt-4 flex items-start gap-2 rounded-lg border border-blue-300 bg-blue-50 p-3 text-sm text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-200">
           <Check className="mt-0.5 size-4 shrink-0" />
           <span>{success}</span>
         </div>
@@ -5063,7 +5063,7 @@ function AccountSecurityCard({ role }: { role: Role }) {
                 setForm((current) => ({ ...current, [field.key]: event.target.value }));
               }}
               placeholder="Leave blank to keep unchanged"
-              className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+              className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4"
             />
           </label>
         ))}
@@ -5071,7 +5071,7 @@ function AccountSecurityCard({ role }: { role: Role }) {
 
       <div className="mt-4 rounded-xl border bg-background p-4">
         <div className="flex items-center gap-2">
-          <LockKeyhole className="size-4 text-teal-600" />
+          <LockKeyhole className="size-4 text-rose-600" />
           <p className="text-sm font-bold">Verification required</p>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -5092,7 +5092,7 @@ function AccountSecurityCard({ role }: { role: Role }) {
                   setError(null);
                   setVerification((current) => ({ ...current, [field]: event.target.value }));
                 }}
-                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4"
               />
             </label>
           ))}
@@ -5103,7 +5103,7 @@ function AccountSecurityCard({ role }: { role: Role }) {
         <button
           onClick={submit}
           disabled={!canSave}
-          className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
           Save changes
@@ -5249,7 +5249,7 @@ function GoogleSheetImportModal({
                 disabled={!configured}
                 onChange={(event) => setSpreadsheetId(event.target.value)}
                 placeholder="Paste the sheet URL, or just its ID"
-                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
             <label className="space-y-1.5">
@@ -5259,7 +5259,7 @@ function GoogleSheetImportModal({
                 disabled={!configured}
                 onChange={(event) => setSheetRange(event.target.value)}
                 placeholder="Sheet1!A1:F500"
-                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4 disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
           </div>
@@ -5299,7 +5299,7 @@ function GoogleSheetImportModal({
           <button
             onClick={() => run(true)}
             disabled={!configured || !preview || busy}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
             Import
@@ -5463,14 +5463,14 @@ function LeadAssignmentModal({
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search leads"
-                  className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                  className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4"
                 />
               </div>
               <button
                 onClick={() => setOnlyUnassigned((current) => !current)}
                 className={cn(
                   "inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold",
-                  onlyUnassigned ? "border-teal-600 bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200" : "bg-background"
+                  onlyUnassigned ? "border-rose-600 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200" : "bg-background"
                 )}
               >
                 <Filter className="size-4" />
@@ -5494,7 +5494,7 @@ function LeadAssignmentModal({
                       type="checkbox"
                       checked={selectedIds.includes(lead.id)}
                       onChange={() => toggleLead(lead.id)}
-                      className="size-4 accent-teal-600"
+                      className="size-4 accent-rose-600"
                     />
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold">{lead.Lead || `Lead #${lead.id}`}</span>
                     <span className="shrink-0 text-xs text-muted-foreground">{lead.Owner || "Unassigned"}</span>
@@ -5524,7 +5524,7 @@ function LeadAssignmentModal({
                     className={cn(
                       "rounded-lg border px-3 py-2 text-sm font-semibold capitalize",
                       targetType === option
-                        ? "border-teal-600 bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                        ? "border-rose-600 bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200"
                         : "bg-card"
                     )}
                   >
@@ -5540,7 +5540,7 @@ function LeadAssignmentModal({
                 <select
                   value={viaManagerId}
                   onChange={(event) => setViaManagerId(event.target.value)}
-                  className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                  className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4"
                 >
                   <option value="">All employees</option>
                   {managers.map((manager) => (
@@ -5567,7 +5567,7 @@ function LeadAssignmentModal({
               <select
                 value={targetUserId}
                 onChange={(event) => setTargetUserId(event.target.value)}
-                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4"
+                className="h-11 w-full rounded-lg border bg-card px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4"
               >
                 <option value="">{`Select ${targetType}`}</option>
                 {targetOptions.map((option) => (
@@ -5599,7 +5599,7 @@ function LeadAssignmentModal({
           <button
             onClick={submit}
             disabled={!canSubmit}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <UserCheck className="size-4" />}
             Assign
@@ -5797,14 +5797,14 @@ function AnalyticsDashboard({
             return (
               <article
                 key={kpi.label}
-                className={cn("rounded-xl p-4 shadow-sm", highlighted ? "bg-teal-700 text-white" : "border bg-card")}
+                className={cn("rounded-xl p-4 shadow-sm", highlighted ? "bg-rose-700 text-white" : "border bg-card")}
               >
                 <p className={cn("text-sm", highlighted ? "text-white/80" : "text-muted-foreground")}>{kpi.label}</p>
                 <strong className="mt-2 block text-2xl font-bold">{kpi.value}</strong>
                 <span
                   className={cn(
                     "mt-3 inline-flex rounded-full px-2 py-1 text-xs font-bold",
-                    highlighted ? "bg-white/15 text-white" : "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                    highlighted ? "bg-white/15 text-white" : "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200"
                   )}
                 >
                   {kpi.change}
@@ -5830,7 +5830,7 @@ function AnalyticsDashboard({
               className={cn(
                 "rounded-full px-4 py-1.5 text-sm font-semibold transition",
                 activeTab === tab
-                  ? "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                  ? "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
@@ -5846,7 +5846,7 @@ function AnalyticsDashboard({
             <Star className={cn("size-4", favorited ? "fill-amber-400 text-amber-400" : "text-muted-foreground")} />
           </button>
           <button onClick={onRefresh} aria-label="Refresh dashboard">
-            <RefreshCw className="size-4 text-muted-foreground transition hover:text-teal-600 dark:hover:text-teal-300" />
+            <RefreshCw className="size-4 text-muted-foreground transition hover:text-rose-600 dark:hover:text-rose-300" />
           </button>
         </div>
       </div>
@@ -5861,7 +5861,7 @@ function AnalyticsDashboard({
                 {topPerformers.map((person) => (
                   <div key={person.label} className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <span className="flex size-9 items-center justify-center rounded-full bg-teal-50 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      <span className="flex size-9 items-center justify-center rounded-full bg-rose-50 text-sm font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                         {person.label.slice(0, 2).toUpperCase()}
                       </span>
                       <span className="text-sm font-semibold">{person.label}</span>
@@ -5891,7 +5891,7 @@ function AnalyticsDashboard({
               ) : (
                 openRequests.map((row) => (
                   <div key={row.id} className="flex items-center gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-200">
                       <CircleDollarSign className="size-4" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -5943,7 +5943,7 @@ function AnalyticsDashboard({
               <h3 className="text-lg font-bold">Recent Leads</h3>
               <p className="text-sm text-muted-foreground">The newest leads in your scope.</p>
             </div>
-            <button onClick={onQuickAdd} className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white">
+            <button onClick={onQuickAdd} className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">
               <Plus className="size-4" />
               Quick Add
             </button>
@@ -5998,15 +5998,15 @@ function AnalyticsDashboard({
             <h3 className="text-lg font-bold">Quick Actions</h3>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <button onClick={onImportLeads} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-                <Upload className="size-4 text-teal-600" />
+                <Upload className="size-4 text-rose-600" />
                 Import Leads
               </button>
               <button onClick={onSendReminder} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-                <Bell className="size-4 text-teal-600" />
+                <Bell className="size-4 text-rose-600" />
                 Send Reminder
               </button>
               <button onClick={onAssignTask} className="flex items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-                <CalendarDays className="size-4 text-teal-600" />
+                <CalendarDays className="size-4 text-rose-600" />
                 Assign Task
               </button>
             </div>
@@ -6037,7 +6037,7 @@ function AnalyticsDashboard({
               <h3 className="text-lg font-bold">Upcoming Reminders</h3>
               <p className="text-sm text-muted-foreground">Reminders, meetings, and follow-ups from your Smart Calendar.</p>
             </div>
-            <span className="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+            <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
               {upcomingReminders.length} pending
             </span>
           </div>
@@ -6054,7 +6054,7 @@ function AnalyticsDashboard({
                         "rounded-lg px-2 py-1 text-xs font-bold",
                         overdue
                           ? "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-200"
-                          : "bg-teal-50 text-teal-700 dark:bg-teal-950 dark:text-teal-200"
+                          : "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-200"
                       )}
                     >
                       {reminder.date} - {reminder.time}
@@ -6070,14 +6070,14 @@ function AnalyticsDashboard({
                     </span>
                     <button
                       onClick={() => onCompleteReminder(reminder.id)}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                       aria-label="Mark reminder complete"
                     >
                       <Check className="size-4" />
                     </button>
                     <button
                       onClick={() => onSnoozeReminder(reminder.id)}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                       aria-label="Snooze reminder"
                     >
                       <BellRing className="size-4" />
@@ -6121,7 +6121,7 @@ function EmployeeAllTimeStats({
         <article key={card.label} className="rounded-xl border bg-card p-4 shadow-sm">
           <p className="text-sm text-muted-foreground">{card.label}</p>
           <strong className="mt-2 block text-2xl font-bold">{card.value}</strong>
-          <span className="mt-3 inline-flex rounded-full bg-teal-50 px-2 py-1 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+          <span className="mt-3 inline-flex rounded-full bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
             {card.change}
           </span>
         </article>
@@ -6182,7 +6182,7 @@ function EmployeePaymentsView({
                 ) : null}
                 <button
                   onClick={() => onSendReminder(row)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                  className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:text-rose-200 dark:hover:bg-rose-950"
                 >
                   <Bell className="size-3.5" />
                   Send Reminder
@@ -6396,7 +6396,7 @@ function CommPanelSkeleton() {
 function CommEmptyState({ icon: Icon, title, description }: { icon: React.ElementType; title: string; description: string }) {
   return (
     <div className="flex min-h-56 flex-col items-center justify-center gap-2 p-8 text-center">
-      <div className="mb-1 flex size-12 items-center justify-center rounded-xl bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-200">
+      <div className="mb-1 flex size-12 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-200">
         <Icon className="size-5" />
       </div>
       <h4 className="text-base font-bold">{title}</h4>
@@ -6457,7 +6457,7 @@ function CommContactPicker({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search by name..."
-              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
             />
           </label>
         </div>
@@ -6477,7 +6477,7 @@ function CommContactPicker({
                   onClick={() => onSelect(contact)}
                   className="flex w-full items-center gap-3 p-3 text-left transition hover:bg-muted/60"
                 >
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-rose-50 text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                     {contact.name.slice(0, 2).toUpperCase()}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -6546,7 +6546,7 @@ function CommunicationCenter({
                 className={cn(
                   "inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition",
                   active
-                    ? "border-teal-600 bg-teal-600 text-white shadow-sm"
+                    ? "border-rose-600 bg-rose-600 text-white shadow-sm"
                     : "bg-background text-foreground hover:-translate-y-0.5 hover:bg-muted"
                 )}
               >
@@ -6747,7 +6747,7 @@ function CommEmailWorkspace({
             <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Conversations</h4>
             <button
               onClick={() => setPickerOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700"
             >
               <Plus className="size-3.5" />
               New
@@ -6759,7 +6759,7 @@ function CommEmailWorkspace({
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search conversations..."
-              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
             />
           </label>
           <div className="flex flex-wrap gap-1.5">
@@ -6769,7 +6769,7 @@ function CommEmailWorkspace({
                 onClick={() => setFilter(item)}
                 className={cn(
                   "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
-                  filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
+                  filter === item ? "border-rose-600 bg-rose-600 text-white" : "bg-background hover:bg-muted"
                 )}
               >
                 {item}
@@ -6795,7 +6795,7 @@ function CommEmailWorkspace({
                   <button
                     key={conversation.key}
                     onClick={() => setSelectedKey(conversation.key)}
-                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
+                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-rose-50 dark:bg-rose-950/60")}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold">{conversation.label}</span>
@@ -6849,7 +6849,7 @@ function CommEmailWorkspace({
                       key={message.id}
                       className={cn(
                         "rounded-xl border bg-background p-3",
-                        outbound ? "border-l-4 border-l-teal-600" : "border-l-4 border-l-muted-foreground/40"
+                        outbound ? "border-l-4 border-l-rose-600" : "border-l-4 border-l-muted-foreground/40"
                       )}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -6871,7 +6871,7 @@ function CommEmailWorkspace({
                       {!outbound ? (
                         <button
                           onClick={() => setSubject(message.subject.startsWith("Re:") ? message.subject : `Re: ${message.subject}`)}
-                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:text-rose-200 dark:hover:bg-rose-950"
                         >
                           <Mail className="size-3.5" />
                           Reply
@@ -6890,21 +6890,21 @@ function CommEmailWorkspace({
                     value={subject}
                     onChange={(event) => setSubject(event.target.value)}
                     placeholder="Subject"
-                    className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                    className="h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                   />
                   <textarea
                     value={body}
                     onChange={(event) => setBody(event.target.value)}
                     placeholder={`Write your message to ${selectedConversation.label}...`}
                     rows={3}
-                    className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+                    className="w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
                   />
                   <div className="flex items-center justify-between gap-3">
                     <CommProtectedNote label="No recipient field — the message goes to this contact only" />
                     <button
                       onClick={handleSend}
                       disabled={sending || !subject.trim() || !body.trim()}
-                      className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                       {sending ? "Sending..." : "Send Email"}
@@ -7080,7 +7080,7 @@ function CommCallWorkspace({
           <h4 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Recent calls</h4>
           <button
             onClick={() => setPickerOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-teal-700"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700"
           >
             <PhoneCall className="size-3.5" />
             New call
@@ -7101,7 +7101,7 @@ function CommCallWorkspace({
                   <button
                     key={call.conversationKey}
                     onClick={() => setSelectedKey(call.conversationKey)}
-                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-teal-50 dark:bg-teal-950/60")}
+                    className={cn("w-full p-3 text-left transition hover:bg-muted/60", active && "bg-rose-50 dark:bg-rose-950/60")}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold">{call.conversationLabel}</span>
@@ -7147,7 +7147,7 @@ function CommCallWorkspace({
                   <button
                     onClick={handlePlaceCall}
                     disabled={placing || !selectedContact?.canCall}
-                    className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {placing ? <Loader2 className="size-4 animate-spin" /> : <PhoneCall className="size-4" />}
                     {placing ? "Placing call..." : "Start Call"}
@@ -7170,7 +7170,7 @@ function CommCallWorkspace({
                   <div>
                     <p className="text-xs text-muted-foreground">Status</p>
                     <div className="mt-1 flex items-center gap-2">
-                      {CALL_IN_FLIGHT_STATUSES.has(activeCall.status) ? <Loader2 className="size-4 animate-spin text-teal-600" /> : null}
+                      {CALL_IN_FLIGHT_STATUSES.has(activeCall.status) ? <Loader2 className="size-4 animate-spin text-rose-600" /> : null}
                       <CommStatusBadge status={activeCall.status} />
                     </div>
                   </div>
@@ -7205,7 +7205,7 @@ function CommCallWorkspace({
                   onClick={() => setFilter(item)}
                   className={cn(
                     "rounded-full border px-2.5 py-1 text-xs font-semibold transition",
-                    filter === item ? "border-teal-600 bg-teal-600 text-white" : "bg-background hover:bg-muted"
+                    filter === item ? "border-rose-600 bg-rose-600 text-white" : "bg-background hover:bg-muted"
                   )}
                 >
                   {item}
@@ -7231,7 +7231,7 @@ function CommCallWorkspace({
             <div className="max-h-72 divide-y overflow-y-auto">
               {historyForSelected.map((call) => (
                 <div key={call.id} className="flex flex-wrap items-center gap-3 p-3">
-                  <Phone className="size-4 shrink-0 text-teal-700 dark:text-teal-300" />
+                  <Phone className="size-4 shrink-0 text-rose-700 dark:text-rose-300" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">{call.conversationLabel}</p>
                     <p className="text-[11px] text-muted-foreground">
@@ -7299,7 +7299,7 @@ function CommQuickActions({
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold transition",
               button.enabled
-                ? "text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                ? "text-rose-700 hover:bg-rose-50 dark:text-rose-200 dark:hover:bg-rose-950"
                 : "cursor-not-allowed text-muted-foreground opacity-60"
             )}
           >
@@ -7477,7 +7477,7 @@ function CustomerProfileModal({
                       {row.Status !== "Paid" && row.Status !== "Cancelled" ? (
                         <button
                           onClick={() => onSendReminder(row)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50 dark:text-teal-200 dark:hover:bg-teal-950"
+                          className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:text-rose-200 dark:hover:bg-rose-950"
                         >
                           <Bell className="size-3.5" />
                           Send Reminder
@@ -7583,7 +7583,7 @@ function ManagerTeamAttendanceSection() {
                   <tr key={row.employee_id} className="border-b last:border-b-0">
                     <td className="py-2.5 pr-4 font-semibold">{row.employee_name}</td>
                     <td className="py-2.5 pr-4">
-                      <span className="rounded-full bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                         {row.status}
                       </span>
                     </td>
@@ -7711,7 +7711,7 @@ function SuperAdminAttendanceSection() {
             <h3 className="text-lg font-bold">Company-Wide Attendance</h3>
             <p className="text-sm text-muted-foreground">Today&apos;s working hours across every employee.</p>
           </div>
-          <div className="rounded-lg bg-teal-50 px-3 py-2 text-sm font-bold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+          <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
             Avg active hours: {averageActiveHours.toFixed(1)}h
           </div>
         </div>
@@ -7752,7 +7752,7 @@ function SuperAdminAttendanceSection() {
                     <td className="py-2.5 pr-4">{row.overtime_minutes > 0 ? `${Math.round(row.overtime_minutes)}m` : "—"}</td>
                     <td className="py-2.5 pr-4">{row.short_minutes > 0 ? `${Math.round(row.short_minutes)}m` : "—"}</td>
                     <td className="py-2.5 pr-4">
-                      <span className="rounded-full bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-950 dark:text-teal-200">
+                      <span className="rounded-full bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-200">
                         {row.status}
                       </span>
                     </td>
@@ -7882,9 +7882,9 @@ const COMM_AUDIT_CHANNEL_ICON: Record<CommAuditChannel, React.ElementType> = {
 // map other modules depend on.
 const COMM_AUDIT_STATUS_STYLES: Record<string, string> = {
   SENT: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
-  DELIVERED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
-  READ: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
-  COMPLETED: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950 dark:text-emerald-200 dark:ring-emerald-900",
+  DELIVERED: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  READ: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
+  COMPLETED: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950 dark:text-blue-200 dark:ring-blue-900",
   FAILED: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-950 dark:text-red-200 dark:ring-red-900",
   NO_ANSWER: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
   BUSY: "bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-950 dark:text-orange-200 dark:ring-orange-900",
@@ -8025,7 +8025,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h3 className="flex items-center gap-2 text-lg font-bold">
-              <ShieldCheck className="size-4 text-teal-700 dark:text-teal-300" />
+              <ShieldCheck className="size-4 text-rose-700 dark:text-rose-300" />
               Communication Audit Trail
             </h3>
             <p className="text-sm text-muted-foreground">
@@ -8049,13 +8049,13 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search conversations..."
-              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+              className="h-10 w-full rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
             />
           </label>
           <select
             value={channel}
             onChange={(event) => setChannel(event.target.value as "All" | CommAuditChannel)}
-            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-rose-600/20 transition focus:ring-4"
             aria-label="Filter by channel"
           >
             <option value="All">All channels</option>
@@ -8068,7 +8068,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
           <select
             value={employeeId}
             onChange={(event) => setEmployeeId(event.target.value)}
-            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-rose-600/20 transition focus:ring-4"
             aria-label="Filter by employee"
           >
             <option value="">All employees</option>
@@ -8081,7 +8081,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
           <select
             value={direction}
             onChange={(event) => setDirection(event.target.value)}
-            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-rose-600/20 transition focus:ring-4"
             aria-label="Filter by direction"
           >
             <option value="">Any direction</option>
@@ -8091,7 +8091,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
           <select
             value={status}
             onChange={(event) => setStatus(event.target.value)}
-            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-teal-600/20 transition focus:ring-4"
+            className="h-10 rounded-lg border bg-background px-3 text-sm font-medium outline-none ring-rose-600/20 transition focus:ring-4"
             aria-label="Filter by status"
           >
             <option value="">Any status</option>
@@ -8176,7 +8176,7 @@ function SuperAdminCommunicationAuditSection({ users }: { users: RowRecord[] }) 
                     </td>
                     <td className="px-4 py-2.5">
                       <span className="inline-flex items-center gap-1.5 font-semibold">
-                        <ChannelIcon className="size-3.5 text-teal-700 dark:text-teal-300" />
+                        <ChannelIcon className="size-3.5 text-rose-700 dark:text-rose-300" />
                         {event.channel}
                       </span>
                     </td>
@@ -8496,7 +8496,7 @@ function SmartCalendarModule({
               <ChevronRight className="size-4" />
             </button>
             <button onClick={goToday} className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-2 text-sm font-semibold">
-              <CalendarDays className="size-4 text-teal-600" />
+              <CalendarDays className="size-4 text-rose-600" />
               Today
             </button>
             <h3 className="ml-1 text-lg font-bold">
@@ -8514,7 +8514,7 @@ function SmartCalendarModule({
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search events..."
-                className="h-10 w-44 rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4 sm:w-56"
+                className="h-10 w-44 rounded-lg border bg-background pl-9 pr-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4 sm:w-56"
               />
             </label>
             <input
@@ -8523,7 +8523,7 @@ function SmartCalendarModule({
               onChange={(event) => {
                 if (event.target.value) setCursor(parseDateKey(event.target.value));
               }}
-              className="h-10 rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 transition focus:ring-4"
+              className="h-10 rounded-lg border bg-background px-3 text-sm outline-none ring-rose-600/20 transition focus:ring-4"
             />
             <div className="flex rounded-lg border bg-background p-1">
               {(["month", "week", "day"] as const).map((option) => (
@@ -8532,7 +8532,7 @@ function SmartCalendarModule({
                   onClick={() => setView(option)}
                   className={cn(
                     "rounded-md px-3 py-1.5 text-sm font-semibold capitalize transition",
-                    view === option ? "bg-teal-600 text-white" : "text-muted-foreground hover:text-foreground"
+                    view === option ? "bg-rose-600 text-white" : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {option}
@@ -8565,10 +8565,10 @@ function SmartCalendarModule({
                   className={cn(
                     "min-h-24 border-b border-r p-2 text-left transition hover:bg-muted/50",
                     !inMonth && "bg-muted/20 text-muted-foreground",
-                    matched && "ring-2 ring-inset ring-teal-500"
+                    matched && "ring-2 ring-inset ring-rose-500"
                   )}
                 >
-                  <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs font-bold", isToday && "bg-teal-600 text-white")}>
+                  <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs font-bold", isToday && "bg-rose-600 text-white")}>
                     {date.getDate()}
                   </span>
                   <DayBadges dateKey={key} />
@@ -8595,7 +8595,7 @@ function SmartCalendarModule({
                 onClick={() => setSelectedDate(key)}
                 className={cn(
                   "min-h-40 rounded-2xl border bg-card p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-soft",
-                  isToday && "ring-2 ring-teal-500"
+                  isToday && "ring-2 ring-rose-500"
                 )}
               >
                 <p className="text-xs font-bold uppercase text-muted-foreground">{date.toLocaleDateString("en-US", { weekday: "short" })}</p>
@@ -8713,7 +8713,7 @@ function DateDetailsPanel({
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-teal-600 dark:text-teal-300">Date Details</p>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-rose-600 dark:text-rose-300">Date Details</p>
             <h3 className="text-lg font-bold">{parseDateKey(dateKey).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
           </div>
           <button onClick={onClose} className="inline-flex size-8 items-center justify-center rounded-lg border" aria-label="Close">
@@ -8864,7 +8864,7 @@ function DayContent({
         <DetailSection title="Activity timeline">
           {timeline.map((item, index) => (
             <div key={index} className="flex items-start gap-3 border-b py-2 text-sm last:border-b-0">
-              <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-teal-600" />
+              <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-rose-600" />
               <div className="min-w-0">
                 <p className="font-semibold">{item.label}</p>
                 {item.sub ? <p className="text-xs text-muted-foreground">{item.sub}</p> : null}
@@ -8889,7 +8889,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h4 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-600 dark:text-teal-300">{title}</h4>
+      <h4 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-rose-600 dark:text-rose-300">{title}</h4>
       <div className="space-y-2">{children}</div>
     </div>
   );
@@ -8990,21 +8990,21 @@ function ReminderSection({
           <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               onClick={() => onToggleComplete(reminder.id)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
             >
               <Check className="size-3" />
               {reminder.completed ? "Completed" : "Mark Complete"}
             </button>
             <button
               onClick={() => onSnooze(reminder.id)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
             >
               <AlarmClock className="size-3" />
               Snooze
             </button>
             <button
               onClick={() => startEdit(reminder)}
-              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+              className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
             >
               <Pencil className="size-3" />
               Edit
@@ -9026,19 +9026,19 @@ function ReminderSection({
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           placeholder="Reminder title"
-          className="h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          className="h-9 w-full rounded-lg border bg-background px-3 text-sm outline-none ring-rose-600/20 focus:ring-4"
         />
         <div className="grid grid-cols-2 gap-2">
           <input
             type="time"
             value={time}
             onChange={(event) => setTime(event.target.value)}
-            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
           />
           <select
             value={kind}
             onChange={(event) => setKind(event.target.value as ReminderKind)}
-            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
           >
             {(["Reminder", "Meeting", "Follow-up", "Task"] as ReminderKind[]).map((option) => (
               <option key={option}>{option}</option>
@@ -9047,7 +9047,7 @@ function ReminderSection({
           <select
             value={priority}
             onChange={(event) => setPriority(event.target.value as ReminderPriority)}
-            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
           >
             {(["Low", "Medium", "High", "Urgent"] as ReminderPriority[]).map((option) => (
               <option key={option}>{option}</option>
@@ -9056,7 +9056,7 @@ function ReminderSection({
           <select
             value={repeat}
             onChange={(event) => setRepeat(event.target.value as ReminderRepeat)}
-            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
           >
             {(["None", "Daily", "Weekly", "Monthly"] as ReminderRepeat[]).map((option) => (
               <option key={option}>{option}</option>
@@ -9067,7 +9067,7 @@ function ReminderSection({
           <select
             value={assignedTo}
             onChange={(event) => setAssignedTo(event.target.value)}
-            className="h-9 w-full rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+            className="h-9 w-full rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
           >
             {assigneeOptions.map((option) => (
               <option key={option}>{option}</option>
@@ -9079,7 +9079,7 @@ function ReminderSection({
         <div className="flex gap-2">
           <button
             onClick={handleSubmit}
-            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white"
+            className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white"
           >
             <Plus className="size-4" />
             {editingId ? "Save Reminder" : "Add Reminder"}
@@ -9168,7 +9168,7 @@ function NoteSection({
           onChange={(event) => setText(event.target.value)}
           placeholder="Write a note for this date..."
           rows={3}
-          className="w-full rounded-lg border bg-background p-2.5 text-sm outline-none ring-teal-600/20 focus:ring-4"
+          className="w-full rounded-lg border bg-background p-2.5 text-sm outline-none ring-rose-600/20 focus:ring-4"
         />
         {attachments.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -9185,7 +9185,7 @@ function NoteSection({
             <select
               value={visibility}
               onChange={(event) => setVisibility(event.target.value as NoteVisibility)}
-              className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-teal-600/20 focus:ring-4"
+              className="h-9 rounded-lg border bg-background px-2 text-sm outline-none ring-rose-600/20 focus:ring-4"
             >
               <option value="private">Private</option>
               <option value="team">Shared with team</option>
@@ -9200,7 +9200,7 @@ function NoteSection({
           </button>
           <button
             onClick={handleSubmit}
-            className="ml-auto inline-flex items-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-sm font-semibold text-white"
+            className="ml-auto inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white"
           >
             <Plus className="size-4" />
             Add Note
@@ -9244,10 +9244,10 @@ function LineChart({ data, prefix = "", suffix = "" }: { data: Array<{ label: st
     <div className="relative">
       {tip ? <ChartTooltip text={tip} /> : null}
       <svg viewBox="0 0 320 170" className="h-56 w-full overflow-visible">
-        <path d={path} fill="none" stroke="#0F766E" strokeWidth="3" strokeLinecap="round" />
+        <path d={path} fill="none" stroke="#D11A29" strokeWidth="3" strokeLinecap="round" />
         {points.map((point) => (
           <g key={point.label} onMouseEnter={() => setTip(`${point.label}: ${prefix}${point.value}${suffix}`)} onMouseLeave={() => setTip(null)}>
-            <circle cx={point.x} cy={point.y} r="5" fill="#0F766E" />
+            <circle cx={point.x} cy={point.y} r="5" fill="#D11A29" />
             <text x={point.x} y="164" textAnchor="middle" className="fill-muted-foreground text-[10px]">
               {point.label}
             </text>
@@ -9268,10 +9268,10 @@ function AreaChart({ data }: { data: Array<{ label: string; value: number }> }) 
     <div className="relative">
       {tip ? <ChartTooltip text={tip} /> : null}
       <svg viewBox="0 0 320 170" className="h-56 w-full overflow-visible">
-        <path d={area} fill="rgba(15, 118, 110, 0.14)" />
-        <path d={line} fill="none" stroke="#0F766E" strokeWidth="3" strokeLinecap="round" />
+        <path d={area} fill="rgba(209, 26, 41, 0.14)" />
+        <path d={line} fill="none" stroke="#D11A29" strokeWidth="3" strokeLinecap="round" />
         {points.map((point) => (
-          <circle key={point.label} cx={point.x} cy={point.y} r="6" fill="#0F766E" onMouseEnter={() => setTip(`${point.label}: ${point.value} leads`)} onMouseLeave={() => setTip(null)} />
+          <circle key={point.label} cx={point.x} cy={point.y} r="6" fill="#D11A29" onMouseEnter={() => setTip(`${point.label}: ${point.value} leads`)} onMouseLeave={() => setTip(null)} />
         ))}
       </svg>
     </div>
@@ -9341,12 +9341,12 @@ function GaugeChart({ value, label }: { value: number; label: string }) {
   // the theme rather than being a fixed light grey: hardcoded #E2E8F0 read
   // as a bright near-white arc against the dark card, louder than the two
   // meaningful bands above it. `currentColor` + a token class makes it
-  // recede correctly in both themes. The teal/sky bands carry real meaning
+  // recede correctly in both themes. The rose/sky bands carry real meaning
   // and are legible on either background, so they stay fixed.
   const bands: Array<{ from: number; to: number; color?: string; className?: string }> = [
     { from: 180, to: 120, className: "text-muted" },
     { from: 120, to: 60, color: "#7DD3FC" },
-    { from: 60, to: 0, color: "#0F766E" }
+    { from: 60, to: 0, color: "#D11A29" }
   ];
 
   return (
@@ -9369,7 +9369,7 @@ function GaugeChart({ value, label }: { value: number; label: string }) {
         <line x1={cx} y1={cy} x2={needleEnd.x} y2={needleEnd.y} stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="text-foreground" />
         <circle cx={cx} cy={cy} r="6" fill="currentColor" className="text-foreground" />
       </svg>
-      <strong className="-mt-4 text-2xl font-bold text-teal-700 dark:text-teal-300">{clamped.toFixed(1)}%</strong>
+      <strong className="-mt-4 text-2xl font-bold text-rose-700 dark:text-rose-300">{clamped.toFixed(1)}%</strong>
       {label ? <p className="text-xs text-muted-foreground">{label}</p> : null}
     </div>
   );
@@ -9472,7 +9472,7 @@ function TimelineCard({
       <div className="mt-4 space-y-4">
         {items.map((item) => (
           <div key={item.id} className="flex gap-3">
-            <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-teal-600 ring-4 ring-teal-100 dark:ring-teal-950" />
+            <span className="mt-1.5 size-2.5 shrink-0 rounded-full bg-rose-600 ring-4 ring-rose-100 dark:ring-rose-950" />
             <div className="min-w-0 flex-1">
               <p className="text-sm text-muted-foreground">{item.message}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -9480,14 +9480,14 @@ function TimelineCard({
                   <>
                     <button
                       onClick={() => item.row && onView(item.moduleKey, item.row)}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                     >
                       <Eye className="size-3" />
                       View
                     </button>
                     <button
                       onClick={() => item.row && onEdit(item.moduleKey, item.row)}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                     >
                       <Pencil className="size-3" />
                       Edit
@@ -9503,7 +9503,7 @@ function TimelineCard({
                 ) : null}
                 <button
                   onClick={() => onCreate(item.moduleKey)}
-                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-teal-600 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950"
+                  className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-0.5 text-xs font-semibold text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950"
                 >
                   <Plus className="size-3" />
                   New
@@ -9592,7 +9592,7 @@ function DataTable({
   if (rows.length === 0) {
     return (
       <div className="flex min-h-72 flex-col items-center justify-center p-8 text-center">
-        <div className="mb-4 flex size-14 items-center justify-center rounded-xl bg-teal-50 text-teal-600 dark:bg-teal-950">
+        <div className="mb-4 flex size-14 items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950">
           <Search className="size-6" />
         </div>
         <h3 className="text-lg font-bold">No records found</h3>
@@ -9615,7 +9615,7 @@ function DataTable({
                     onClick={() => onSort(column)}
                     className={cn(
                       "inline-flex items-center gap-1 transition hover:text-foreground",
-                      isSorted && "text-teal-700 dark:text-teal-300"
+                      isSorted && "text-rose-700 dark:text-rose-300"
                     )}
                   >
                     {column}
@@ -9650,7 +9650,7 @@ function DataTable({
                     ) : isProfileLink ? (
                       <button
                         onClick={() => onOpenProfile?.(row)}
-                        className="rounded text-left font-semibold text-teal-700 underline-offset-4 hover:underline dark:text-teal-300"
+                        className="rounded text-left font-semibold text-rose-700 underline-offset-4 hover:underline dark:text-rose-300"
                       >
                         {value}
                       </button>
@@ -9663,7 +9663,7 @@ function DataTable({
               <td className="px-4 py-4">
                 <div className="relative flex justify-end gap-2">
                   <button
-                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                    className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                     aria-label="View record"
                     onClick={() => onView(row)}
                   >
@@ -9671,7 +9671,7 @@ function DataTable({
                   </button>
                   {!isEmployeeViewOnly || allowEdit ? (
                     <button
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                       aria-label="Edit record"
                       onClick={() => onEdit(row)}
                     >
@@ -9683,7 +9683,7 @@ function DataTable({
                       could only ever produce an error. */}
                   {onConvert && row.Status !== "Converted" ? (
                     <button
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-emerald-600 dark:hover:text-emerald-300"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-blue-600 dark:hover:text-blue-300"
                       aria-label={`Convert ${row[module.columns[0]] ?? "lead"} to a customer`}
                       title="Convert to customer"
                       onClick={() => onConvert(row)}
@@ -9693,7 +9693,7 @@ function DataTable({
                   ) : null}
                   {!isEmployeeViewOnly ? (
                     <button
-                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-teal-600 dark:hover:text-teal-300"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border bg-background text-muted-foreground hover:text-rose-600 dark:hover:text-rose-300"
                       aria-label="More actions"
                       onClick={(event) => toggleMenu(row.id, event)}
                     >
@@ -9773,7 +9773,7 @@ function Toast({ toast }: { toast: { type: "success" | "error"; message: string 
       exit={{ opacity: 0, y: 24, x: "-50%" }}
       className={cn(
         "fixed bottom-6 left-1/2 z-[70] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-soft",
-        isSuccess ? "bg-emerald-600" : "bg-red-600"
+        isSuccess ? "bg-blue-600" : "bg-red-600"
       )}
     >
       {isSuccess ? <Check className="size-4" /> : <X className="size-4" />}
@@ -9889,7 +9889,7 @@ function RecordModal({
             const errorId = `${module.key}-${column}-error`;
             const helpId = `${module.key}-${column}-help`;
             const fieldClass = cn(
-              "h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-teal-600/20 focus:ring-4",
+              "h-11 w-full rounded-lg border bg-background px-3 text-sm text-foreground outline-none ring-rose-600/20 focus:ring-4",
               isView && "cursor-default bg-muted text-muted-foreground",
               showError && "border-red-500"
             );
@@ -9977,7 +9977,7 @@ function RecordModal({
           {!isView ? (
             <button
               onClick={handleSave}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700"
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700"
             >
               <Check className="size-4" />
               {mode === "edit" ? "Save Changes" : "Save Record"}
